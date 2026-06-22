@@ -104,11 +104,11 @@ func Fork(row Row, options ResumeOptions) error {
 }
 
 func Handoff(row Row, target Provider, resumeOptions ResumeOptions, handoffOptions HandoffOptions) error {
-	prompt, err := HandoffPrompt(row, target, handoffOptions)
+	converted, err := Convert(row, target, handoffOptions)
 	if err != nil {
 		return err
 	}
-	return launch(row.CWD, startCommand(target, prompt, resumeOptions))
+	return Resume(converted, resumeOptions)
 }
 
 func Delete(row Row) error {
@@ -129,23 +129,6 @@ func Delete(row Row) error {
 		return os.Remove(row.File)
 	default:
 		return fmt.Errorf("unsupported provider %q", row.Provider)
-	}
-}
-
-func startCommand(provider Provider, prompt string, options ResumeOptions) []string {
-	switch provider {
-	case ProviderClaude:
-		command := []string{"claude"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-skip-permissions")
-		}
-		return append(command, prompt)
-	default:
-		command := []string{"codex"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(command, prompt)
 	}
 }
 

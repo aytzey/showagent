@@ -116,60 +116,110 @@ func TestForkCommandDangerousMode(t *testing.T) {
 	}
 }
 
-func TestStartCommandDangerousMode(t *testing.T) {
-	if got := strings.Join(startCommand(ProviderCodex, "continue here", ResumeOptions{Dangerous: true}), " "); got != "codex --dangerously-bypass-approvals-and-sandbox continue here" {
-		t.Fatalf("codex handoff command = %q", got)
-	}
-	if got := strings.Join(startCommand(ProviderClaude, "continue here", ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions continue here" {
-		t.Fatalf("claude handoff command = %q", got)
-	}
-}
-
-func TestHandoffPromptIncludesTranscript(t *testing.T) {
+func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "session.jsonl")
-	writeFile(t, path, `
+	codexHome := filepath.Join(root, "codex")
+	claudeHome := filepath.Join(root, "claude")
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAUDE_HOME", claudeHome)
+
+	sourcePath := filepath.Join(root, "source-codex.jsonl")
+	writeFile(t, sourcePath, `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
 {"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"build the feature"}]}}
 {"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"implemented it"}]}}
+{"timestamp":"2026-06-01T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship it"}]}}
 `)
 
-	prompt, err := HandoffPrompt(Row{
+	converted, err := Convert(Row{
 		Provider: ProviderCodex,
 		ID:       "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
-		CWD:      "/work/codex",
-		File:     path,
+		CWD:      "/work/app",
+		File:     sourcePath,
 	}, ProviderClaude, HandoffOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"taking over", "Transfer scope: all", "Transcript, oldest to newest", "Source session: aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "[USER]\nbuild the feature", "[ASSISTANT]\nimplemented it"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("handoff prompt missing %q:\n%s", want, prompt)
-		}
+	if converted.Provider != ProviderClaude {
+		t.Fatalf("converted provider = %s, want claude", converted.Provider)
 	}
-}
+	if converted.ID == "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb" {
+		t.Fatal("converted session reused source id")
+	}
+	if _, err := os.Stat(converted.File); err != nil {
+		t.Fatalf("converted file missing: %v", err)
+	}
+	if !strings.Contains(converted.File, filepath.Join(claudeHome, "projects", "-work-app")) {
+		t.Fatalf("converted claude path = %q", converted.File)
+	}
 
-func TestHandoffPromptCanLimitTransferredTurns(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "session.jsonl")
-	writeFile(t, path, `
-{"timestamp":"2026-06-01T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]}}
-{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}}
-{"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"third"}]}}
-`)
-
-	prompt, err := HandoffPrompt(Row{Provider: ProviderCodex, ID: "id", CWD: "/work", File: path}, ProviderClaude, HandoffOptions{MaxTurns: 2})
+	turns, err := Transcript(converted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(prompt, "first") {
-		t.Fatalf("limited handoff included old turn:\n%s", prompt)
+	if len(turns) != 3 {
+		t.Fatalf("converted turns = %d, want 3: %#v", len(turns), turns)
 	}
-	for _, want := range []string{"Transfer scope: last 2", "Transcript excerpt", "[ASSISTANT]\nsecond", "[USER]\nthird"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("limited handoff missing %q:\n%s", want, prompt)
-		}
+	if turns[0] != (Turn{Role: "user", Text: "build the feature"}) || turns[1] != (Turn{Role: "assistant", Text: "implemented it"}) || turns[2] != (Turn{Role: "user", Text: "ship it"}) {
+		t.Fatalf("unexpected converted turns: %#v", turns)
+	}
+
+	rows := discoverClaude(claudeHome)
+	if len(rows) != 1 {
+		t.Fatalf("discoverClaude rows = %d, want 1", len(rows))
+	}
+	if rows[0].FirstUser != "build the feature" || rows[0].LastUser != "ship it" {
+		t.Fatalf("unexpected discovered converted row: %#v", rows[0])
+	}
+}
+
+func TestConvertClaudeToCodexRespectsScope(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	claudeHome := filepath.Join(root, "claude")
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAUDE_HOME", claudeHome)
+
+	sourcePath := filepath.Join(root, "source-claude.jsonl")
+	writeFile(t, sourcePath, `
+{"type":"user","message":{"role":"user","content":"first"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work/claude","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"second"}]},"timestamp":"2026-06-02T10:01:00Z","cwd":"/work/claude","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
+{"type":"user","message":{"role":"user","content":"third"},"timestamp":"2026-06-02T10:02:00Z","cwd":"/work/claude","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
+`)
+
+	converted, err := Convert(Row{
+		Provider: ProviderClaude,
+		ID:       "cccccccc-1111-2222-3333-dddddddddddd",
+		CWD:      "/work/claude",
+		File:     sourcePath,
+	}, ProviderCodex, HandoffOptions{MaxTurns: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.Provider != ProviderCodex {
+		t.Fatalf("converted provider = %s, want codex", converted.Provider)
+	}
+	if _, err := os.Stat(converted.File); err != nil {
+		t.Fatalf("converted file missing: %v", err)
+	}
+
+	turns, err := Transcript(converted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("converted turns = %d, want 2: %#v", len(turns), turns)
+	}
+	if turns[0] != (Turn{Role: "assistant", Text: "second"}) || turns[1] != (Turn{Role: "user", Text: "third"}) {
+		t.Fatalf("unexpected converted turns: %#v", turns)
+	}
+
+	rows := discoverCodex(codexHome)
+	if len(rows) != 1 {
+		t.Fatalf("discoverCodex rows = %d, want 1", len(rows))
+	}
+	if rows[0].FirstUser != "third" || rows[0].LastUser != "third" {
+		t.Fatalf("unexpected discovered converted row: %#v", rows[0])
 	}
 }
 

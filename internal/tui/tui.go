@@ -129,7 +129,7 @@ func newModel(rows []session.Row, mode previewMode) model {
 			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
 			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
 			key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "scope")),
-			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "handoff")),
+			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "convert")),
 			key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
 			key.NewBinding(key.WithKeys("delete"), key.WithHelp("del", "delete")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
@@ -185,7 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
 			case "t":
 				m.handoff = nextHandoffScope(m.handoff)
-				return m, m.list.NewStatusMessage("handoff scope: " + m.handoff.Label())
+				return m, m.list.NewStatusMessage("transfer scope: " + m.handoff.Label())
 			}
 		}
 	}
@@ -305,8 +305,8 @@ func PrintTable(w io.Writer, rows []session.Row) {
 
 func headerView(m model) string {
 	title := titleStyle.Render("showagent")
-	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  %s  %s  %s  handoff %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous), m.handoff.Label()))
-	primary := mutedStyle.Render("enter resume  x handoff  t scope  n branch  del delete  y yolo")
+	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  %s  %s  %s  scope %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous), m.handoff.Label()))
+	primary := mutedStyle.Render("enter resume  x convert  t scope  n branch  del delete  y yolo")
 	secondary := mutedStyle.Render("↑/↓ j/k move  / search  f/l/b preview  c/d providers  q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), primary, secondary)
 }
@@ -335,12 +335,12 @@ func detailView(m model) string {
 		labelStyle.Render("provider ") + string(row.Provider),
 		labelStyle.Render("session  ") + row.ID,
 		labelStyle.Render("resume   ") + resumeModeLabel(m.dangerous),
-		labelStyle.Render("handoff  ") + m.handoff.Label(),
+		labelStyle.Render("scope    ") + m.handoff.Label(),
 		labelStyle.Render("cwd      ") + truncateCells(row.CWD, valueWidth),
 		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), valueWidth),
 		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), valueWidth),
 		labelStyle.Render("command  ") + command,
-		labelStyle.Render("actions  ") + "enter resume | x continue in " + other + " | t scope | n branch | del delete",
+		labelStyle.Render("actions  ") + "enter resume | x convert to " + other + " | t scope | n branch | del delete",
 		labelStyle.Render("file     ") + truncateMiddle(row.File, valueWidth),
 	}
 	if m.deleteKey == rowKey(row) {
