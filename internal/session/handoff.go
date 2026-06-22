@@ -255,9 +255,9 @@ func writeClaudeConverted(source Row, turns []Turn) (Row, error) {
 			}
 			record["permissionMode"] = "default"
 		} else {
-			record["requestId"] = "showagent-" + messageID
+			record["requestId"] = syntheticClaudeAPIID("req", messageID)
 			record["message"] = map[string]any{
-				"id":            "showagent-" + messageID,
+				"id":            syntheticClaudeAPIID("msg", messageID),
 				"type":          "message",
 				"role":          "assistant",
 				"model":         "converted-transcript",
@@ -283,6 +283,10 @@ func writeClaudeConverted(source Row, turns []Turn) (Row, error) {
 		FirstUser: firstUser,
 		LastUser:  lastUser,
 	}, nil
+}
+
+func syntheticClaudeAPIID(prefix string, uuid string) string {
+	return prefix + "_" + strings.ReplaceAll(uuid, "-", "")
 }
 
 func codexSessionPath(codexHome string, sessionID string, now time.Time) string {

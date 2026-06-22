@@ -140,6 +140,19 @@ func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	if !strings.Contains(converted.File, filepath.Join(claudeHome, "projects", "-work-app")) {
 		t.Fatalf("converted claude path = %q", converted.File)
 	}
+	content, err := os.ReadFile(converted.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), `"id":"msg_`) {
+		t.Fatalf("converted claude assistant message id is not API-shaped:\n%s", content)
+	}
+	if !strings.Contains(string(content), `"requestId":"req_`) {
+		t.Fatalf("converted claude request id is not API-shaped:\n%s", content)
+	}
+	if strings.Contains(string(content), `"id":"showagent-`) || strings.Contains(string(content), `"requestId":"showagent-`) {
+		t.Fatalf("converted claude file contains old synthetic id format:\n%s", content)
+	}
 
 	turns, err := Transcript(converted)
 	if err != nil {
