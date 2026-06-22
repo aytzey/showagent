@@ -24,16 +24,40 @@ const (
 	bothMessages
 )
 
+type Action int
+
+const (
+	ActionResume Action = iota
+	ActionHandoff
+	ActionFork
+)
+
+type Selection struct {
+	Row     session.Row
+	Action  Action
+	Options session.ResumeOptions
+	Handoff session.HandoffOptions
+}
+
 const (
 	tableProviderWidth = 8
 	tableDateWidth     = 16
 	tableGapWidth      = 3
 
-	headerHeight       = 2
+	headerHeight       = 3
 	columnHeaderHeight = 1
 	bottomSafetyRows   = 1
 	detailLabelWidth   = 9
 )
+
+var handoffScopes = []session.HandoffOptions{
+	{},
+	{MaxTurns: 200},
+	{MaxTurns: 100},
+	{MaxTurns: 50},
+	{MaxTurns: 20},
+	{MaxTurns: 10},
+}
 
 type item struct {
 	row session.Row
@@ -74,7 +98,9 @@ type model struct {
 	providers map[session.Provider]bool
 	mode      previewMode
 	dangerous bool
-	selected  *session.Row
+	handoff   session.HandoffOptions
+	selected  *Selection
+	deleteKey string
 	width     int
 	height    int
 }
@@ -102,6 +128,10 @@ func newModel(rows []session.Row, mode previewMode) model {
 			key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "codex")),
 			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
 			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
+			key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "scope")),
+			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "handoff")),
+			key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
+			key.NewBinding(key.WithKeys("delete"), key.WithHelp("del", "delete")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
 			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
@@ -127,11 +157,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "esc", "q":
 				return m, tea.Quit
 			case "enter":
-				if selected, ok := m.list.SelectedItem().(item); ok {
-					row := selected.row
-					m.selected = &row
-					return m, tea.Quit
-				}
+				return m.selectAction(ActionResume)
+			case "x":
+				return m.selectAction(ActionHandoff)
+			case "n":
+				return m.selectAction(ActionFork)
+			case "delete", "backspace", "D":
+				cmd := m.deleteSelected()
+				return m, cmd
 			case "f":
 				m.mode = firstMessage
 				currentMode = m.mode
@@ -150,6 +183,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y":
 				m.dangerous = !m.dangerous
 				return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
+			case "t":
+				m.handoff = nextHandoffScope(m.handoff)
+				return m, m.list.NewStatusMessage("handoff scope: " + m.handoff.Label())
 			}
 		}
 	}
@@ -196,17 +232,60 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-func Pick(rows []session.Row) (*session.Row, session.ResumeOptions, error) {
+func (m *model) selectAction(action Action) (tea.Model, tea.Cmd) {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return m, nil
+	}
+	m.selected = &Selection{
+		Row:     selected.row,
+		Action:  action,
+		Options: session.ResumeOptions{Dangerous: m.dangerous},
+		Handoff: m.handoff,
+	}
+	return m, tea.Quit
+}
+
+func (m *model) deleteSelected() tea.Cmd {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return nil
+	}
+	key := rowKey(selected.row)
+	if m.deleteKey != key {
+		m.deleteKey = key
+		return m.list.NewStatusMessage("press delete again to permanently delete this session")
+	}
+
+	if err := session.Delete(selected.row); err != nil {
+		m.deleteKey = ""
+		return m.list.NewStatusMessage("delete failed: " + err.Error())
+	}
+
+	m.deleteKey = ""
+	m.allRows = removeRow(m.allRows, selected.row)
+	if !providerExists(m.allRows, selected.row.Provider) {
+		delete(m.providers, selected.row.Provider)
+	}
+	if enabledProviderCount(m.providers) == 0 {
+		m.providers = defaultProviderFilter(m.allRows)
+	}
+	cmd := m.list.SetItems(itemsFromRows(filterRows(m.allRows, m.providers)))
+	m.list.ResetSelected()
+	return tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(selected.row.Provider)+" session"))
+}
+
+func Pick(rows []session.Row) (*Selection, error) {
 	program := tea.NewProgram(newModel(rows, firstMessage))
 	finalModel, err := program.Run()
 	if err != nil {
-		return nil, session.ResumeOptions{}, err
+		return nil, err
 	}
 	m, ok := finalModel.(model)
 	if !ok {
-		return nil, session.ResumeOptions{}, nil
+		return nil, nil
 	}
-	return m.selected, session.ResumeOptions{Dangerous: m.dangerous}, nil
+	return m.selected, nil
 }
 
 func PrintTable(w io.Writer, rows []session.Row) {
@@ -226,9 +305,10 @@ func PrintTable(w io.Writer, rows []session.Row) {
 
 func headerView(m model) string {
 	title := titleStyle.Render("showagent")
-	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  providers: %s  view: %s  resume: %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous)))
-	help := mutedStyle.Render("↑/↓ j/k move  / search  c codex  d claude  y yolo  f first  l last  b both  enter resume  q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), help)
+	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  %s  %s  %s  handoff %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous), m.handoff.Label()))
+	primary := mutedStyle.Render("enter resume  x handoff  t scope  n branch  del delete  y yolo")
+	secondary := mutedStyle.Render("↑/↓ j/k move  / search  f/l/b preview  c/d providers  q quit")
+	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), primary, secondary)
 }
 
 func columnHeader(width int) string {
@@ -250,15 +330,21 @@ func detailView(m model) string {
 	frameWidth, _ := detailStyle.GetFrameSize()
 	valueWidth := max(8, width-frameWidth-detailLabelWidth)
 	command := strings.Join(row.ResumeCommand(session.ResumeOptions{Dangerous: m.dangerous}), " ")
+	other := string(session.OtherProvider(row.Provider))
 	lines := []string{
 		labelStyle.Render("provider ") + string(row.Provider),
 		labelStyle.Render("session  ") + row.ID,
 		labelStyle.Render("resume   ") + resumeModeLabel(m.dangerous),
+		labelStyle.Render("handoff  ") + m.handoff.Label(),
 		labelStyle.Render("cwd      ") + truncateCells(row.CWD, valueWidth),
 		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), valueWidth),
 		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), valueWidth),
 		labelStyle.Render("command  ") + command,
+		labelStyle.Render("actions  ") + "enter resume | x continue in " + other + " | t scope | n branch | del delete",
 		labelStyle.Render("file     ") + truncateMiddle(row.File, valueWidth),
+	}
+	if m.deleteKey == rowKey(row) {
+		lines = append([]string{deleteStyle.Render("delete  press delete again to permanently remove this session")}, lines...)
 	}
 	lines = lines[:min(lineCount, len(lines))]
 	for i := range lines {
@@ -443,6 +529,21 @@ func filterRows(rows []session.Row, providers map[session.Provider]bool) []sessi
 	return filtered
 }
 
+func removeRow(rows []session.Row, removed session.Row) []session.Row {
+	filtered := make([]session.Row, 0, len(rows))
+	removedKey := rowKey(removed)
+	for _, row := range rows {
+		if rowKey(row) != removedKey {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func rowKey(row session.Row) string {
+	return string(row.Provider) + "\x00" + row.ID + "\x00" + row.File
+}
+
 func providerExists(rows []session.Row, provider session.Provider) bool {
 	for _, row := range rows {
 		if row.Provider == provider {
@@ -488,6 +589,15 @@ func modeLabel(mode previewMode) string {
 	default:
 		return "first user"
 	}
+}
+
+func nextHandoffScope(current session.HandoffOptions) session.HandoffOptions {
+	for index, scope := range handoffScopes {
+		if scope.MaxTurns == current.MaxTurns {
+			return handoffScopes[(index+1)%len(handoffScopes)]
+		}
+	}
+	return handoffScopes[0]
 }
 
 func resumeModeLabel(dangerous bool) string {
@@ -622,6 +732,11 @@ var (
 	messageCellStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#C9D1D9"))
 
+	deleteStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFDCD7")).
+			Background(lipgloss.Color("#8E1519")).
+			Bold(true)
+
 	detailStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#3FB950")).
@@ -648,6 +763,7 @@ func init() {
 		workspaceParentStyle = lipgloss.NewStyle()
 		workspaceBaseStyle = lipgloss.NewStyle().Bold(true)
 		messageCellStyle = lipgloss.NewStyle()
+		deleteStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
 		detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MarginTop(1)
 		labelStyle = lipgloss.NewStyle().Bold(true)
 	}

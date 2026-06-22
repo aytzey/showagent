@@ -52,6 +52,30 @@ func (r Row) ResumeCommand(options ResumeOptions) []string {
 	}
 }
 
+func (r Row) ForkCommand(options ResumeOptions) []string {
+	switch r.Provider {
+	case ProviderClaude:
+		command := []string{"claude"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-skip-permissions")
+		}
+		return append(command, "--fork-session", "--resume", r.ID)
+	default:
+		command := []string{"codex", "fork"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+		}
+		return append(command, r.ID)
+	}
+}
+
+func OtherProvider(provider Provider) Provider {
+	if provider == ProviderCodex {
+		return ProviderClaude
+	}
+	return ProviderCodex
+}
+
 func (r Row) FilterValue() string {
 	return strings.Join([]string{
 		string(r.Provider),
@@ -72,15 +96,68 @@ func Discover() []Row {
 }
 
 func Resume(row Row, options ResumeOptions) error {
-	if row.CWD != "" {
+	return launch(row.CWD, row.ResumeCommand(options))
+}
+
+func Fork(row Row, options ResumeOptions) error {
+	return launch(row.CWD, row.ForkCommand(options))
+}
+
+func Handoff(row Row, target Provider, resumeOptions ResumeOptions, handoffOptions HandoffOptions) error {
+	prompt, err := HandoffPrompt(row, target, handoffOptions)
+	if err != nil {
+		return err
+	}
+	return launch(row.CWD, startCommand(target, prompt, resumeOptions))
+}
+
+func Delete(row Row) error {
+	switch row.Provider {
+	case ProviderCodex:
+		command := exec.Command("codex", "delete", "--force", row.ID)
 		if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
-			if err := os.Chdir(row.CWD); err != nil {
+			command.Dir = row.CWD
+		}
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("codex delete failed: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	case ProviderClaude:
+		if row.File == "" {
+			return errors.New("claude session file is unknown")
+		}
+		return os.Remove(row.File)
+	default:
+		return fmt.Errorf("unsupported provider %q", row.Provider)
+	}
+}
+
+func startCommand(provider Provider, prompt string, options ResumeOptions) []string {
+	switch provider {
+	case ProviderClaude:
+		command := []string{"claude"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-skip-permissions")
+		}
+		return append(command, prompt)
+	default:
+		command := []string{"codex"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+		}
+		return append(command, prompt)
+	}
+}
+
+func launch(cwd string, command []string) error {
+	if cwd != "" {
+		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+			if err := os.Chdir(cwd); err != nil {
 				return err
 			}
 		}
 	}
 
-	command := row.ResumeCommand(options)
 	path, err := exec.LookPath(command[0])
 	if err != nil {
 		return fmt.Errorf("%s not found in PATH", command[0])

@@ -18,11 +18,17 @@ It is built as a portable Go TUI with:
 - Search across provider, directory, session id, and user messages
 - Preview modes for first user message, latest user message, or both
 - Toggleable yolo resume mode for approval-free continuation
-- One-key resume:
+- Selectable cross-agent handoff scope: all history by default, or latest N turns
+- One-key resume, branch, cross-agent handoff, and delete:
   - Codex: `codex resume <session-id>`
   - Codex yolo: `codex resume --dangerously-bypass-approvals-and-sandbox <session-id>`
+  - Codex branch: `codex fork <session-id>`
+  - Codex delete: `codex delete --force <session-id>`
   - Claude Code: `claude --resume <session-id>`
   - Claude Code yolo: `claude --dangerously-skip-permissions --resume <session-id>`
+  - Claude Code branch: `claude --fork-session --resume <session-id>`
+  - Claude Code delete: removes the selected local session JSONL file
+  - Cross-agent handoff starts the other agent in the same workspace with the selected transcript scope
 - No runtime dependencies beyond the compiled binary
 - Works well on Ubuntu, Debian, Fedora, Arch, and other Linux distributions
 
@@ -55,14 +61,23 @@ Keybindings:
 | `c` | Toggle Codex sessions |
 | `d` | Toggle Claude Code sessions |
 | `y` | Toggle yolo/dangerous resume mode |
+| `t` | Cycle cross-agent handoff scope: all, latest 200, 100, 50, 20, or 10 turns |
 | `f` | Show first user message |
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |
 | `enter` | Resume selected session |
+| `x` | Continue selected session in the other agent |
+| `n` | Create a branch/fork of the selected session |
+| `delete`, `backspace`, `D` | Delete selected session after second press confirmation |
 | `q`, `esc`, `ctrl+c` | Quit |
 
 When output is piped, `showagent` prints a plain table instead of opening the
 TUI.
+
+Cross-agent continuation cannot import the provider's private native session
+state. It starts the other agent in the same workspace with the selected
+transcript scope so you can continue the work from the latest useful context.
+The default scope is the full transcript.
 
 ## Session Locations
 

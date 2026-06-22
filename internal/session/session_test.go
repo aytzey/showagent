@@ -104,6 +104,87 @@ func TestResumeCommandDangerousMode(t *testing.T) {
 	}
 }
 
+func TestForkCommandDangerousMode(t *testing.T) {
+	codex := Row{Provider: ProviderCodex, ID: "codex-session"}
+	if got := strings.Join(codex.ForkCommand(ResumeOptions{Dangerous: true}), " "); got != "codex fork --dangerously-bypass-approvals-and-sandbox codex-session" {
+		t.Fatalf("codex fork command = %q", got)
+	}
+
+	claude := Row{Provider: ProviderClaude, ID: "claude-session"}
+	if got := strings.Join(claude.ForkCommand(ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions --fork-session --resume claude-session" {
+		t.Fatalf("claude fork command = %q", got)
+	}
+}
+
+func TestStartCommandDangerousMode(t *testing.T) {
+	if got := strings.Join(startCommand(ProviderCodex, "continue here", ResumeOptions{Dangerous: true}), " "); got != "codex --dangerously-bypass-approvals-and-sandbox continue here" {
+		t.Fatalf("codex handoff command = %q", got)
+	}
+	if got := strings.Join(startCommand(ProviderClaude, "continue here", ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions continue here" {
+		t.Fatalf("claude handoff command = %q", got)
+	}
+}
+
+func TestHandoffPromptIncludesTranscript(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	writeFile(t, path, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"build the feature"}]}}
+{"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"implemented it"}]}}
+`)
+
+	prompt, err := HandoffPrompt(Row{
+		Provider: ProviderCodex,
+		ID:       "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+		CWD:      "/work/codex",
+		File:     path,
+	}, ProviderClaude, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"taking over", "Transfer scope: all", "Transcript, oldest to newest", "Source session: aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "[USER]\nbuild the feature", "[ASSISTANT]\nimplemented it"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("handoff prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestHandoffPromptCanLimitTransferredTurns(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	writeFile(t, path, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}}
+{"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"third"}]}}
+`)
+
+	prompt, err := HandoffPrompt(Row{Provider: ProviderCodex, ID: "id", CWD: "/work", File: path}, ProviderClaude, HandoffOptions{MaxTurns: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prompt, "first") {
+		t.Fatalf("limited handoff included old turn:\n%s", prompt)
+	}
+	for _, want := range []string{"Transfer scope: last 2", "Transcript excerpt", "[ASSISTANT]\nsecond", "[USER]\nthird"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("limited handoff missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestDeleteClaudeSessionRemovesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	writeFile(t, path, `{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}`)
+
+	if err := Delete(Row{Provider: ProviderClaude, ID: "cccccccc-1111-2222-3333-dddddddddddd", File: path}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected file to be removed, stat err=%v", err)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
