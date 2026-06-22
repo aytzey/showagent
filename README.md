@@ -9,12 +9,10 @@ It is built as a portable Go TUI with:
 - Bubble Tea v2 for the application loop and terminal renderer
 - Bubbles v2 for the searchable session list
 - Lip Gloss v2 for styling and layout
-- Huh v2 for the provider and preview setup form
 
 ## Features
 
 - Unified session list for `codex` and `claude`
-- CLI-only provider and default preview selection with Huh
 - Provider column: `codex` or `claude`
 - Sorted by latest conversation time
 - Search across provider, directory, session id, and user messages
@@ -43,10 +41,7 @@ showcodex
 ```
 
 `showcodex` intentionally takes no arguments. Everything is selected inside the
-CLI:
-
-1. A Huh form lets you choose providers and the initial preview mode.
-2. A Bubble Tea/Bubbles list opens with search, paging, and resume controls.
+CLI.
 
 Keybindings:
 
@@ -54,6 +49,8 @@ Keybindings:
 | --- | --- |
 | `↑/↓`, `j/k` | Move through sessions |
 | `/` | Search |
+| `c` | Toggle Codex sessions |
+| `d` | Toggle Claude Code sessions |
 | `f` | Show first user message |
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |

@@ -73,18 +73,18 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 var currentMode = firstMessage
 
 type model struct {
-	list     list.Model
-	mode     previewMode
-	selected *session.Row
-	width    int
-	height   int
+	list      list.Model
+	allRows   []session.Row
+	providers map[session.Provider]bool
+	mode      previewMode
+	selected  *session.Row
+	width     int
+	height    int
 }
 
 func newModel(rows []session.Row, mode previewMode) model {
-	items := make([]list.Item, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, item{row: row})
-	}
+	providers := defaultProviderFilter(rows)
+	items := itemsFromRows(filterRows(rows, providers))
 
 	delegate := itemDelegate{}
 	l := list.New(items, delegate, 100, 24)
@@ -102,13 +102,15 @@ func newModel(rows []session.Row, mode previewMode) model {
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "first")),
 			key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "last")),
 			key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "both")),
+			key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "codex")),
+			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
 			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
 	}
 
 	currentMode = mode
-	return model{list: l, mode: mode}
+	return model{list: l, allRows: rows, providers: providers, mode: mode}
 }
 
 func (m model) Init() tea.Cmd {
@@ -141,6 +143,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "b":
 				m.mode = bothMessages
 				currentMode = m.mode
+			case "c":
+				cmd := m.toggleProvider(session.ProviderCodex)
+				return m, cmd
+			case "d":
+				cmd := m.toggleProvider(session.ProviderClaude)
+				return m, cmd
 			}
 		}
 	}
@@ -173,18 +181,23 @@ func (m *model) resizeList() {
 	m.list.SetSize(m.width, listHeight)
 }
 
+func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
+	if !providerExists(m.allRows, provider) {
+		return m.list.NewStatusMessage(fmt.Sprintf("no %s sessions", provider))
+	}
+	if m.providers[provider] && enabledProviderCount(m.providers) == 1 {
+		return m.list.NewStatusMessage("at least one provider stays enabled")
+	}
+
+	m.providers[provider] = !m.providers[provider]
+	items := itemsFromRows(filterRows(m.allRows, m.providers))
+	cmd := m.list.SetItems(items)
+	m.list.ResetSelected()
+	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
+}
+
 func Pick(rows []session.Row) (*session.Row, error) {
-	settings, ok, err := pickSettings(rows)
-	if err != nil || !ok {
-		return nil, err
-	}
-
-	filtered := filterRows(rows, settings.providers)
-	if len(filtered) == 0 {
-		return nil, nil
-	}
-
-	program := tea.NewProgram(newModel(filtered, settings.mode))
+	program := tea.NewProgram(newModel(rows, firstMessage))
 	finalModel, err := program.Run()
 	if err != nil {
 		return nil, err
@@ -221,8 +234,8 @@ func PrintTable(w io.Writer, rows []session.Row) {
 
 func headerView(m model) string {
 	title := titleStyle.Render("showcodex")
-	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  view: %s", len(m.list.Items()), modeLabel(m.mode)))
-	help := mutedStyle.Render("↑/↓ j/k move  / search  f first  l last  b both  enter resume  q quit")
+	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  providers: %s  view: %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode)))
+	help := mutedStyle.Render("↑/↓ j/k move  / search  c codex  d claude  f first  l last  b both  enter resume  q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), help)
 }
 
@@ -275,6 +288,61 @@ func bestLast(row session.Row) string {
 		return row.LastUser
 	}
 	return row.FirstUser
+}
+
+func itemsFromRows(rows []session.Row) []list.Item {
+	items := make([]list.Item, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, item{row: row})
+	}
+	return items
+}
+
+func defaultProviderFilter(rows []session.Row) map[session.Provider]bool {
+	providers := map[session.Provider]bool{}
+	for _, row := range rows {
+		providers[row.Provider] = true
+	}
+	return providers
+}
+
+func filterRows(rows []session.Row, providers map[session.Provider]bool) []session.Row {
+	filtered := make([]session.Row, 0, len(rows))
+	for _, row := range rows {
+		if providers[row.Provider] {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func providerExists(rows []session.Row, provider session.Provider) bool {
+	for _, row := range rows {
+		if row.Provider == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func enabledProviderCount(providers map[session.Provider]bool) int {
+	count := 0
+	for _, enabled := range providers {
+		if enabled {
+			count++
+		}
+	}
+	return count
+}
+
+func providerLabel(providers map[session.Provider]bool) string {
+	var values []string
+	for _, provider := range []session.Provider{session.ProviderCodex, session.ProviderClaude} {
+		if providers[provider] {
+			values = append(values, string(provider))
+		}
+	}
+	return strings.Join(values, "+")
 }
 
 func emptyFallback(value string) string {
