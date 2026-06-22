@@ -42,7 +42,7 @@ func TestTruncateCells(t *testing.T) {
 
 func TestTableLineAlignsHeaderAndRows(t *testing.T) {
 	width := 96
-	header := tableLine(width, "SRC", "LAST", "CWD", "USER MESSAGE")
+	header := tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
 	row := tableLine(width, "codex", "2026-06-22 10:24", "/home/aytug", "preview")
 
 	if lipgloss.Width(header) != width {
@@ -51,11 +51,29 @@ func TestTableLineAlignsHeaderAndRows(t *testing.T) {
 	if lipgloss.Width(row) != width {
 		t.Fatalf("row width = %d, want %d", lipgloss.Width(row), width)
 	}
-	if strings.Index(header, "CWD") != strings.Index(row, "/home/aytug") {
-		t.Fatalf("cwd column mismatch:\n%q\n%q", header, row)
+	if strings.Index(header, "WORKSPACE") != strings.Index(row, "/home/aytug") {
+		t.Fatalf("workspace column mismatch:\n%q\n%q", header, row)
 	}
 	if strings.Index(header, "USER MESSAGE") != strings.Index(row, "preview") {
 		t.Fatalf("preview column mismatch:\n%q\n%q", header, row)
+	}
+}
+
+func TestRenderTableRowFitsWidth(t *testing.T) {
+	width := 118
+	row := session.Row{
+		Provider:  session.ProviderClaude,
+		ID:        "id",
+		LastAt:    time.Date(2026, 6, 22, 10, 24, 0, 0, time.Local),
+		CWD:       "/projects/Machinity-Kanban",
+		FirstUser: strings.Repeat("preview ", 30),
+	}
+
+	if got := lipgloss.Width(renderTableRow(width, row, firstMessage, false)); got != width {
+		t.Fatalf("renderTableRow width = %d, want %d", got, width)
+	}
+	if got := lipgloss.Width(renderTableRow(width, row, firstMessage, true)); got != width {
+		t.Fatalf("selected renderTableRow width = %d, want %d", got, width)
 	}
 }
 

@@ -25,7 +25,7 @@ const (
 )
 
 const (
-	tableProviderWidth = 7
+	tableProviderWidth = 8
 	tableDateWidth     = 16
 	tableGapWidth      = 3
 
@@ -58,18 +58,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 
 	width := m.Width()
-	style := rowStyle
-	if index == m.Index() {
-		style = selectedRowStyle
-	}
-
-	_, _ = fmt.Fprint(w, style.Width(width).Render(tableLine(
+	_, _ = fmt.Fprint(w, renderTableRow(
 		width,
-		string(it.row.Provider),
-		localTime(it.row.LastAt),
-		it.row.CWD,
-		previewFor(it.row, currentMode),
-	)))
+		it.row,
+		currentMode,
+		index == m.Index(),
+	))
 }
 
 var currentMode = firstMessage
@@ -218,7 +212,7 @@ func Pick(rows []session.Row) (*session.Row, session.ResumeOptions, error) {
 func PrintTable(w io.Writer, rows []session.Row) {
 	width := 120
 
-	_, _ = fmt.Fprintln(w, tableLine(width, "SRC", "LAST", "CWD", "PREVIEW"))
+	_, _ = fmt.Fprintln(w, tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "PREVIEW"))
 	for _, row := range rows {
 		_, _ = fmt.Fprintln(w, tableLine(
 			width,
@@ -238,7 +232,7 @@ func headerView(m model) string {
 }
 
 func columnHeader(width int) string {
-	return headerStyle.Width(width).Render(tableLine(width, "SRC", "LAST", "CWD", "USER MESSAGE"))
+	return headerStyle.Width(width).Render(tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
 }
 
 func detailView(m model) string {
@@ -294,6 +288,58 @@ func bestLast(row session.Row) string {
 	return row.FirstUser
 }
 
+func renderTableRow(width int, row session.Row, mode previewMode, selected bool) string {
+	provider := string(row.Provider)
+	if selected {
+		providerWidth, _, _, _ := tableWidths(width)
+		return selectedRowStyle.Width(width).Render(tableLine(
+			width,
+			providerPlainLabel(provider, providerWidth),
+			localTime(row.LastAt),
+			row.CWD,
+			previewFor(row, mode),
+		))
+	}
+
+	providerWidth, dateWidth, cwdWidth, previewWidth := tableWidths(width)
+	parts := []string{
+		providerBadge(provider, providerWidth),
+		dateCellStyle.Width(dateWidth).Render(truncateCells(localTime(row.LastAt), dateWidth)),
+		renderWorkspaceCell(row.CWD, cwdWidth),
+		messageCellStyle.Width(previewWidth).Render(truncateCells(previewFor(row, mode), previewWidth)),
+	}
+	return padCells(strings.Join(parts, " "), width)
+}
+
+func providerBadge(provider string, width int) string {
+	label := providerPlainLabel(provider, width)
+	switch session.Provider(provider) {
+	case session.ProviderCodex:
+		return codexBadgeStyle.Width(width).Render(label)
+	case session.ProviderClaude:
+		return claudeBadgeStyle.Width(width).Render(label)
+	default:
+		return providerBadgeStyle.Width(width).Render(label)
+	}
+}
+
+func providerPlainLabel(provider string, width int) string {
+	return centerCell(" "+strings.ToUpper(provider)+" ", width)
+}
+
+func renderWorkspaceCell(cwd string, width int) string {
+	value := truncateMiddle(cwd, width)
+	base := filepath.Base(filepath.Clean(cwd))
+	index := strings.LastIndex(value, base)
+	if index <= 0 {
+		return workspaceStyle.Width(width).Render(value)
+	}
+	prefix := value[:index]
+	suffix := value[index:]
+	rendered := workspaceParentStyle.Render(prefix) + workspaceBaseStyle.Render(suffix)
+	return padCells(rendered, width)
+}
+
 func tableLine(width int, provider, date, cwd, preview string) string {
 	providerWidth, dateWidth, cwdWidth, previewWidth := tableWidths(width)
 	line := fmt.Sprintf(
@@ -307,6 +353,17 @@ func tableLine(width int, provider, date, cwd, preview string) string {
 		truncateCells(preview, previewWidth),
 	)
 	return padCells(truncateCells(line, width), width)
+}
+
+func centerCell(value string, width int) string {
+	value = truncateCells(value, width)
+	valueWidth := lipgloss.Width(value)
+	if valueWidth >= width {
+		return value
+	}
+	left := (width - valueWidth) / 2
+	right := width - valueWidth - left
+	return strings.Repeat(" ", left) + value + strings.Repeat(" ", right)
 }
 
 func tableWidths(width int) (int, int, int, int) {
@@ -534,6 +591,37 @@ var (
 				Background(lipgloss.Color("#A5D6FF")).
 				Bold(true)
 
+	providerBadgeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#C9D1D9")).
+				Background(lipgloss.Color("#30363D")).
+				Bold(true)
+
+	codexBadgeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#1F6FEB")).
+			Bold(true)
+
+	claudeBadgeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#0D1117")).
+				Background(lipgloss.Color("#D2A8FF")).
+				Bold(true)
+
+	dateCellStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8B949E"))
+
+	workspaceStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D0D7DE"))
+
+	workspaceParentStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#8B949E"))
+
+	workspaceBaseStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#E6EDF3")).
+				Bold(true)
+
+	messageCellStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#C9D1D9"))
+
 	detailStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#3FB950")).
@@ -552,6 +640,14 @@ func init() {
 		headerStyle = lipgloss.NewStyle().Bold(true)
 		rowStyle = lipgloss.NewStyle()
 		selectedRowStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
+		providerBadgeStyle = lipgloss.NewStyle().Bold(true)
+		codexBadgeStyle = lipgloss.NewStyle().Bold(true)
+		claudeBadgeStyle = lipgloss.NewStyle().Bold(true)
+		dateCellStyle = lipgloss.NewStyle()
+		workspaceStyle = lipgloss.NewStyle()
+		workspaceParentStyle = lipgloss.NewStyle()
+		workspaceBaseStyle = lipgloss.NewStyle().Bold(true)
+		messageCellStyle = lipgloss.NewStyle()
 		detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MarginTop(1)
 		labelStyle = lipgloss.NewStyle().Bold(true)
 	}
