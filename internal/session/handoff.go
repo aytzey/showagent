@@ -74,7 +74,7 @@ func codexTranscript(path string) ([]Turn, error) {
 
 	var turns []Turn
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
 	for scanner.Scan() {
 		var record codexLine
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil || record.Type != "response_item" {
@@ -101,7 +101,7 @@ func claudeTranscript(path string) ([]Turn, error) {
 
 	var turns []Turn
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
 	for scanner.Scan() {
 		var record claudeRecord
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil || record.Message == nil {

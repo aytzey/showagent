@@ -3,14 +3,13 @@ package tui
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	list "charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -25,6 +24,14 @@ const (
 	bothMessages
 )
 
+const (
+	columnHeaderHeight = 1
+	bottomSafetyRows   = 0
+	detailLabelWidth   = 11
+)
+
+// Selection is what Pick/Run hand back to the caller once the user chooses a
+// session to resume.
 type Selection struct {
 	Row     session.Row
 	Options session.ResumeOptions
@@ -43,16 +50,9 @@ type sessionMutationMsg struct {
 	err  error
 }
 
-const (
-	tableProviderWidth = 8
-	tableDateWidth     = 16
-	tableGapWidth      = 3
-
-	headerHeight       = 3
-	columnHeaderHeight = 1
-	bottomSafetyRows   = 1
-	detailLabelWidth   = 9
-)
+type sessionsLoadedMsg struct {
+	rows []session.Row
+}
 
 var handoffScopes = []session.HandoffOptions{
 	{},
@@ -63,61 +63,69 @@ var handoffScopes = []session.HandoffOptions{
 	{MaxTurns: 10},
 }
 
+// renderState is shared by the model and the list item delegate so the delegate
+// can render rows without reaching for package-global state.
+type renderState struct {
+	mode  previewMode
+	theme *theme
+}
+
 type item struct {
 	row session.Row
 }
 
-func (i item) FilterValue() string {
-	return i.row.FilterValue()
+func (i item) FilterValue() string { return i.row.FilterValue() }
+
+type itemDelegate struct {
+	state *renderState
 }
 
-type itemDelegate struct{}
-
-func (d itemDelegate) Height() int  { return 1 }
-func (d itemDelegate) Spacing() int { return 0 }
-func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd {
-	return nil
-}
+func (d itemDelegate) Height() int                             { return 1 }
+func (d itemDelegate) Spacing() int                            { return 0 }
+func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	it, ok := listItem.(item)
 	if !ok {
 		return
 	}
-
-	width := m.Width()
-	_, _ = fmt.Fprint(w, renderTableRow(
-		width,
-		it.row,
-		currentMode,
-		index == m.Index(),
-	))
+	_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index()))
 }
 
-var currentMode = firstMessage
-
 type model struct {
-	list      list.Model
-	allRows   []session.Row
-	providers map[session.Provider]bool
-	mode      previewMode
-	dangerous bool
-	handoff   session.HandoffOptions
-	selected  *Selection
-	deleteKey string
-	busy      string
-	width     int
-	height    int
+	list        list.Model
+	spinner     spinner.Model
+	help        help.Model
+	keys        keyMap
+	render      *renderState
+	allRows     []session.Row
+	providers   map[session.Provider]bool
+	mode        previewMode
+	dangerous   bool
+	handoff     session.HandoffOptions
+	selected    *Selection
+	deleteArmed string
+	busy        string
+	loading     bool
+	isDark      bool
+	width       int
+	height      int
 }
 
 func newModel(rows []session.Row, mode previewMode) model {
+	return buildModel(rows, mode, false)
+}
+
+func newLoadingModel(mode previewMode) model {
+	return buildModel(nil, mode, true)
+}
+
+func buildModel(rows []session.Row, mode previewMode, loading bool) model {
+	render := &renderState{mode: mode, theme: newTheme(true)}
 	providers := defaultProviderFilter(rows)
 	items := itemsFromRows(filterRows(rows, providers))
 
-	delegate := itemDelegate{}
-	l := list.New(items, delegate, 100, 24)
-	l.Title = "showagent"
-	l.SetStatusBarItemName("session", "sessions")
+	l := list.New(items, itemDelegate{state: render}, 80, 20)
 	l.SetFilteringEnabled(true)
 	l.SetShowFilter(true)
 	l.SetShowHelp(false)
@@ -125,29 +133,44 @@ func newModel(rows []session.Row, mode previewMode) model {
 	l.SetShowStatusBar(false)
 	l.SetShowTitle(false)
 	l.DisableQuitKeybindings()
-	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "first")),
-			key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "last")),
-			key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "both")),
-			key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "codex")),
-			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
-			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
-			key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "scope")),
-			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "convert")),
-			key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
-			key.NewBinding(key.WithKeys("delete"), key.WithHelp("del", "delete")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
-			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-		}
-	}
 
-	currentMode = mode
-	return model{list: l, allRows: rows, providers: providers, mode: mode}
+	// The default list keymap binds f/l/b/d/h/u to paging. Restrict paging to
+	// the page keys so those letters are free for our preview/provider actions.
+	km := list.DefaultKeyMap()
+	km.NextPage = key.NewBinding(key.WithKeys("pgdown", "right"), key.WithHelp("pgdn", "next page"))
+	km.PrevPage = key.NewBinding(key.WithKeys("pgup", "left"), key.WithHelp("pgup", "prev page"))
+	l.KeyMap = km
+
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(render.theme.spinner))
+	h := help.New()
+	h.Styles = render.theme.help
+
+	return model{
+		list:      l,
+		spinner:   sp,
+		help:      h,
+		keys:      defaultKeys(),
+		render:    render,
+		allRows:   rows,
+		providers: providers,
+		mode:      mode,
+		loading:   loading,
+		isDark:    true,
+	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	cmds := []tea.Cmd{tea.RequestBackgroundColor}
+	if m.loading {
+		cmds = append(cmds, m.spinner.Tick, loadSessionsCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+func loadSessionsCmd() tea.Cmd {
+	return func() tea.Msg {
+		return sessionsLoadedMsg{rows: session.Discover()}
+	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -156,126 +179,197 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeList()
-	case tea.KeyPressMsg:
-		if !m.list.SettingFilter() {
-			switch msg.String() {
-			case "ctrl+c", "esc", "q":
-				return m, tea.Quit
-			}
-			if m.busy != "" {
-				return m, m.list.NewStatusMessage(m.busy + " in progress; wait")
-			}
-			switch msg.String() {
-			case "enter", "ctrl+m":
-				return m.selectResume()
-			case "x":
-				cmd := m.convertSelected()
-				if cmd == nil {
-					return m, m.list.NewStatusMessage("no session selected")
-				}
-				m.busy = "conversion"
-				return m, tea.Batch(cmd, m.list.NewStatusMessage("converting session..."))
-			case "n":
-				cmd := m.branchSelected()
-				if cmd == nil {
-					return m, m.list.NewStatusMessage("no session selected")
-				}
-				m.busy = "branch"
-				return m, tea.Batch(cmd, m.list.NewStatusMessage("creating session branch..."))
-			case "delete", "backspace", "D":
-				cmd := m.deleteSelected()
-				return m, cmd
-			case "f":
-				m.mode = firstMessage
-				currentMode = m.mode
-			case "l":
-				m.mode = lastMessage
-				currentMode = m.mode
-			case "b":
-				m.mode = bothMessages
-				currentMode = m.mode
-			case "c":
-				cmd := m.toggleProvider(session.ProviderCodex)
-				return m, cmd
-			case "d":
-				cmd := m.toggleProvider(session.ProviderClaude)
-				return m, cmd
-			case "y":
-				m.dangerous = !m.dangerous
-				return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
-			case "t":
-				m.handoff = nextHandoffScope(m.handoff)
-				return m, m.list.NewStatusMessage("transfer scope: " + m.handoff.Label())
-			}
+		return m, nil
+	case tea.BackgroundColorMsg:
+		m.isDark = msg.IsDark()
+		m.applyTheme()
+		return m, nil
+	case spinner.TickMsg:
+		if !m.loading {
+			return m, nil
 		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case sessionsLoadedMsg:
+		m.loading = false
+		m.allRows = msg.rows
+		m.providers = defaultProviderFilter(msg.rows)
+		cmd := m.list.SetItems(itemsFromRows(filterRows(msg.rows, m.providers)))
+		m.resizeList()
+		return m, cmd
 	case sessionMutationMsg:
-		m.busy = ""
-		if msg.err != nil {
-			m.deleteKey = ""
-			return m, m.list.NewStatusMessage("session action failed: " + msg.err.Error())
-		}
-		m.deleteKey = ""
-		m.providers[msg.row.Provider] = true
-		m.allRows = upsertAndSortRows(m.allRows, msg.row)
-		filtered := filterRows(m.allRows, m.providers)
-		m.list.ResetFilter()
-		cmd := m.list.SetItems(itemsFromRows(filtered))
-		if index := indexOfRow(filtered, msg.row); index >= 0 {
-			m.list.Select(index)
-		}
-		status := "converted to " + string(msg.row.Provider) + "; press enter to resume"
-		if msg.kind == mutationBranch {
-			status = "branched " + string(msg.row.Provider) + " session; press enter to resume"
-		}
-		return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+		return m.applyMutation(msg)
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
 	}
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	m.reconcileDeleteArm()
 	return m, cmd
 }
 
-func (m model) View() tea.View {
-	currentMode = m.mode
-	parts := []string{
-		headerView(m),
-		columnHeader(m.width),
-		m.list.View(),
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.loading {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		return m, nil
 	}
-	if detail := detailView(m); detail != "" {
-		parts = append(parts, detail)
+
+	// While typing a filter, every key belongs to the list.
+	if m.list.SettingFilter() {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		m.reconcileDeleteArm()
+		return m, cmd
 	}
-	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	view := tea.NewView(content)
-	view.AltScreen = true
-	return view
+
+	// esc clears an applied filter before it is allowed to quit the app.
+	if msg.String() == "esc" && m.list.IsFiltered() {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		m.reconcileDeleteArm()
+		return m, cmd
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.Help):
+		m.help.ShowAll = !m.help.ShowAll
+		m.resizeList()
+		return m, nil
+	}
+
+	if m.busy != "" {
+		return m, m.list.NewStatusMessage(m.busy + " in progress…")
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Resume):
+		return m.selectResume()
+	case key.Matches(msg, m.keys.Convert):
+		return m.startMutation(m.convertSelected(), "conversion", "converting session…")
+	case key.Matches(msg, m.keys.Branch):
+		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
+	case key.Matches(msg, m.keys.Delete):
+		return m, m.deleteSelected()
+	case key.Matches(msg, m.keys.Yolo):
+		m.dangerous = !m.dangerous
+		return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
+	case key.Matches(msg, m.keys.Scope):
+		m.handoff = nextHandoffScope(m.handoff)
+		return m, m.list.NewStatusMessage("hand-off scope: " + m.handoff.Label())
+	case key.Matches(msg, m.keys.Codex):
+		return m, m.toggleProvider(session.ProviderCodex)
+	case key.Matches(msg, m.keys.Claude):
+		return m, m.toggleProvider(session.ProviderClaude)
+	}
+
+	// Preview keys are handled individually so each selects a distinct mode.
+	switch msg.String() {
+	case "f":
+		m.setMode(firstMessage)
+		return m, m.list.NewStatusMessage("preview: first user message")
+	case "l":
+		m.setMode(lastMessage)
+		return m, m.list.NewStatusMessage("preview: latest user message")
+	case "b":
+		m.setMode(bothMessages)
+		return m, m.list.NewStatusMessage("preview: first + latest")
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	m.reconcileDeleteArm()
+	return m, cmd
+}
+
+func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	m.deleteArmed = ""
+	if msg.err != nil {
+		return m, m.list.NewStatusMessage("action failed: " + msg.err.Error())
+	}
+
+	m.providers[msg.row.Provider] = true
+	m.allRows = upsertAndSortRows(m.allRows, msg.row)
+	filtered := filterRows(m.allRows, m.providers)
+	m.list.ResetFilter()
+	cmd := m.list.SetItems(itemsFromRows(filtered))
+	if index := indexOfRow(filtered, msg.row); index >= 0 {
+		m.list.Select(index)
+	}
+
+	status := "converted to " + string(msg.row.Provider) + " · press enter to resume"
+	if msg.kind == mutationBranch {
+		status = "branched " + string(msg.row.Provider) + " session · press enter to resume"
+	}
+	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+}
+
+func (m model) startMutation(cmd tea.Cmd, busy, status string) (tea.Model, tea.Cmd) {
+	if cmd == nil {
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	m.busy = busy
+	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+}
+
+func (m *model) setMode(mode previewMode) {
+	m.mode = mode
+	m.render.mode = mode
+}
+
+func (m *model) applyTheme() {
+	t := newTheme(m.isDark)
+	m.render.theme = t
+	m.spinner.Style = t.spinner
+	m.help.Styles = t.help
+}
+
+// reconcileDeleteArm clears a pending delete confirmation whenever the cursor
+// moves off the armed row, so the two-press safety can never be bypassed by
+// navigating away and back.
+func (m *model) reconcileDeleteArm() {
+	if m.deleteArmed == "" {
+		return
+	}
+	if sel, ok := m.list.SelectedItem().(item); !ok || rowKey(sel.row) != m.deleteArmed {
+		m.deleteArmed = ""
+	}
 }
 
 func (m *model) resizeList() {
-	reserved := headerHeight + columnHeaderHeight + detailHeight(m.height) + bottomSafetyRows
-	listHeight := max(5, m.height-reserved)
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	m.help.SetWidth(m.width)
+	chrome := lipgloss.Height(m.headerView()) + columnHeaderHeight + m.detailHeight() + lipgloss.Height(m.helpView()) + bottomSafetyRows
+	listHeight := max(3, m.height-chrome)
 	m.list.SetSize(m.width, listHeight)
 }
 
 func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	if !providerExists(m.allRows, provider) {
-		return m.list.NewStatusMessage(fmt.Sprintf("no %s sessions", provider))
+		return m.list.NewStatusMessage(fmt.Sprintf("no %s sessions found", provider))
 	}
 	if m.providers[provider] && enabledProviderCount(m.providers) == 1 {
-		return m.list.NewStatusMessage("at least one provider stays enabled")
+		return m.list.NewStatusMessage("keep at least one provider visible")
 	}
 
 	m.providers[provider] = !m.providers[provider]
-	items := itemsFromRows(filterRows(m.allRows, m.providers))
-	cmd := m.list.SetItems(items)
+	cmd := m.list.SetItems(itemsFromRows(filterRows(m.allRows, m.providers)))
 	m.list.ResetSelected()
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-func (m *model) selectResume() (tea.Model, tea.Cmd) {
+func (m model) selectResume() (tea.Model, tea.Cmd) {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
-		return m, nil
+		return m, m.list.NewStatusMessage("no session selected")
 	}
 	m.selected = &Selection{
 		Row:     selected.row,
@@ -313,20 +407,20 @@ func (m *model) branchSelected() tea.Cmd {
 func (m *model) deleteSelected() tea.Cmd {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
-		return nil
+		return m.list.NewStatusMessage("no session selected")
 	}
 	key := rowKey(selected.row)
-	if m.deleteKey != key {
-		m.deleteKey = key
-		return m.list.NewStatusMessage("press delete again to permanently delete this session")
+	if m.deleteArmed != key {
+		m.deleteArmed = key
+		return m.list.NewStatusMessage("press delete again to permanently remove this " + string(selected.row.Provider) + " session")
 	}
 
 	if err := session.Delete(selected.row); err != nil {
-		m.deleteKey = ""
+		m.deleteArmed = ""
 		return m.list.NewStatusMessage("delete failed: " + err.Error())
 	}
 
-	m.deleteKey = ""
+	m.deleteArmed = ""
 	m.allRows = removeRow(m.allRows, selected.row)
 	if !providerExists(m.allRows, selected.row.Provider) {
 		delete(m.providers, selected.row.Provider)
@@ -339,235 +433,191 @@ func (m *model) deleteSelected() tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(selected.row.Provider)+" session"))
 }
 
-func Pick(rows []session.Row) (*Selection, error) {
-	program := tea.NewProgram(newModel(rows, firstMessage))
-	finalModel, err := program.Run()
-	if err != nil {
-		return nil, err
-	}
-	switch m := finalModel.(type) {
-	case model:
-		return m.selected, nil
-	case *model:
-		return m.selected, nil
+func (m model) View() tea.View {
+	var content string
+	switch {
+	case m.loading:
+		content = m.loadingView()
+	case len(m.allRows) == 0:
+		content = m.emptyView()
 	default:
-		return nil, nil
+		content = m.browseView()
 	}
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
 }
 
-func PrintTable(w io.Writer, rows []session.Row) {
-	width := 120
-
-	_, _ = fmt.Fprintln(w, tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "PREVIEW"))
-	for _, row := range rows {
-		_, _ = fmt.Fprintln(w, tableLine(
-			width,
-			string(row.Provider),
-			localTime(row.LastAt),
-			row.CWD,
-			previewFor(row, firstMessage),
-		))
+func (m model) browseView() string {
+	parts := []string{
+		m.headerView(),
+		columnHeader(m.render.theme, m.width, m.mode),
+		m.list.View(),
+		m.detailView(),
+		m.helpView(),
 	}
+	out := parts[:0]
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, out...)
 }
 
-func headerView(m model) string {
-	title := titleStyle.Render("showagent")
-	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  %s  %s  %s  scope %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous), m.handoff.Label()))
-	primary := mutedStyle.Render("enter resume  x convert  t scope  n branch  del delete  y yolo")
-	secondary := mutedStyle.Render("↑/↓ j/k move  / search  f/l/b preview  c/d providers  q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), primary, secondary)
+func (m model) headerView() string {
+	th := m.render.theme
+	title := th.title.Render("showagent")
+	return lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", m.statsLine())
 }
 
-func columnHeader(width int) string {
-	return headerStyle.Width(width).Render(tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+func (m model) statsLine() string {
+	th := m.render.theme
+	parts := []string{
+		th.muted.Render(fmt.Sprintf("%d/%d sessions", len(m.list.VisibleItems()), len(m.allRows))),
+		th.chip.Render(providerLabel(m.providers)),
+		th.muted.Render("preview " + modeShort(m.mode)),
+	}
+	if m.dangerous {
+		parts = append(parts, th.yoloChip.Render("YOLO"))
+	}
+	return strings.Join(parts, "  ")
 }
 
-func detailView(m model) string {
-	lineCount := detailLineCount(m.height)
-	if lineCount == 0 {
+func (m model) helpView() string {
+	return m.help.View(m.keys)
+}
+
+func (m model) detailView() string {
+	count := m.detailLineCount()
+	if count == 0 {
 		return ""
 	}
+	th := m.render.theme
+	width := max(40, m.width)
+	frameW, _ := th.detail.GetFrameSize()
+	innerW := max(10, width-frameW)
+	valueW := max(8, innerW-detailLabelWidth)
 
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
-		return detailStyle.Width(max(20, m.width)).Render("No session selected.")
+		msg := "No session selected."
+		if m.list.IsFiltered() {
+			msg = "No session matches this search · press esc to clear."
+		}
+		return th.detail.Width(innerW).Render(th.muted.Render(truncateCells(msg, innerW)))
 	}
 	row := selected.row
-	width := max(40, m.width)
-	frameWidth, _ := detailStyle.GetFrameSize()
-	valueWidth := max(8, width-frameWidth-detailLabelWidth)
-	command := strings.Join(row.ResumeCommand(session.ResumeOptions{Dangerous: m.dangerous}), " ")
-	other := string(session.OtherProvider(row.Provider))
-	lines := []string{
-		labelStyle.Render("provider ") + string(row.Provider),
-		labelStyle.Render("session  ") + row.ID,
-		labelStyle.Render("resume   ") + resumeModeLabel(m.dangerous),
-		labelStyle.Render("scope    ") + m.handoff.Label(),
-		labelStyle.Render("cwd      ") + truncateCells(row.CWD, valueWidth),
-		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), valueWidth),
-		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), valueWidth),
-		labelStyle.Render("command  ") + command,
-		labelStyle.Render("actions  ") + "enter resume | x convert to " + other + " | t scope | n branch | del delete",
-		labelStyle.Render("file     ") + truncateMiddle(row.File, valueWidth),
-	}
-	if m.deleteKey == rowKey(row) {
-		lines = append([]string{deleteStyle.Render("delete  press delete again to permanently remove this session")}, lines...)
-	}
-	lines = lines[:min(lineCount, len(lines))]
-	for i := range lines {
-		lines[i] = truncateCells(lines[i], max(1, width-frameWidth))
-	}
-	return detailStyle.Width(width).Render(strings.Join(lines, "\n"))
-}
 
-func previewFor(row session.Row, mode previewMode) string {
-	first := emptyFallback(row.FirstUser)
-	last := bestLast(row)
-	switch mode {
-	case lastMessage:
-		return emptyFallback(last)
-	case bothMessages:
-		if row.FirstUser != "" && row.LastUser != "" && row.FirstUser != row.LastUser {
-			return row.FirstUser + " | " + row.LastUser
-		}
+	var lines []string
+	if m.deleteArmed == rowKey(row) {
+		lines = append(lines, th.deleteBanner.Render("⚠ press delete again to permanently remove this session"))
 	}
-	return first
-}
-
-func bestLast(row session.Row) string {
-	if row.LastUser != "" {
-		return row.LastUser
-	}
-	return row.FirstUser
-}
-
-func renderTableRow(width int, row session.Row, mode previewMode, selected bool) string {
-	provider := string(row.Provider)
-	if selected {
-		providerWidth, _, _, _ := tableWidths(width)
-		return selectedRowStyle.Width(width).Render(tableLine(
-			width,
-			providerPlainLabel(provider, providerWidth),
-			localTime(row.LastAt),
-			row.CWD,
-			previewFor(row, mode),
-		))
-	}
-
-	providerWidth, dateWidth, cwdWidth, previewWidth := tableWidths(width)
-	parts := []string{
-		providerBadge(provider, providerWidth),
-		dateCellStyle.Width(dateWidth).Render(truncateCells(localTime(row.LastAt), dateWidth)),
-		renderWorkspaceCell(row.CWD, cwdWidth),
-		messageCellStyle.Width(previewWidth).Render(truncateCells(previewFor(row, mode), previewWidth)),
-	}
-	return padCells(strings.Join(parts, " "), width)
-}
-
-func providerBadge(provider string, width int) string {
-	label := providerPlainLabel(provider, width)
-	switch session.Provider(provider) {
-	case session.ProviderCodex:
-		return codexBadgeStyle.Width(width).Render(label)
-	case session.ProviderClaude:
-		return claudeBadgeStyle.Width(width).Render(label)
-	default:
-		return providerBadgeStyle.Width(width).Render(label)
-	}
-}
-
-func providerPlainLabel(provider string, width int) string {
-	return centerCell(" "+strings.ToUpper(provider)+" ", width)
-}
-
-func renderWorkspaceCell(cwd string, width int) string {
-	value := truncateMiddle(cwd, width)
-	base := filepath.Base(filepath.Clean(cwd))
-	index := strings.LastIndex(value, base)
-	if index <= 0 {
-		return workspaceStyle.Width(width).Render(value)
-	}
-	prefix := value[:index]
-	suffix := value[index:]
-	rendered := workspaceParentStyle.Render(prefix) + workspaceBaseStyle.Render(suffix)
-	return padCells(rendered, width)
-}
-
-func tableLine(width int, provider, date, cwd, preview string) string {
-	providerWidth, dateWidth, cwdWidth, previewWidth := tableWidths(width)
-	line := fmt.Sprintf(
-		"%-*s %-*s %-*s %s",
-		providerWidth,
-		truncateCells(provider, providerWidth),
-		dateWidth,
-		truncateCells(date, dateWidth),
-		cwdWidth,
-		truncateMiddle(cwd, cwdWidth),
-		truncateCells(preview, previewWidth),
+	lines = append(lines,
+		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
+		th.label.Render(padLabel("session"))+row.ID,
+		th.label.Render(padLabel("workspace"))+truncateMiddle(row.CWD, valueW),
+		th.label.Render(padLabel("updated"))+localTime(row.LastAt),
+		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(row.FirstUser), valueW),
+		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(bestLast(row)), valueW),
+		th.hint.Render(m.resumeHint(row)),
+		th.hint.Render(m.handoffHint(row)),
 	)
-	return padCells(truncateCells(line, width), width)
+	if len(lines) > count {
+		lines = lines[:count]
+	}
+	for i := range lines {
+		lines[i] = truncateCells(lines[i], innerW)
+	}
+	return th.detail.Width(innerW).Render(strings.Join(lines, "\n"))
 }
 
-func centerCell(value string, width int) string {
-	value = truncateCells(value, width)
-	valueWidth := lipgloss.Width(value)
-	if valueWidth >= width {
-		return value
-	}
-	left := (width - valueWidth) / 2
-	right := width - valueWidth - left
-	return strings.Repeat(" ", left) + value + strings.Repeat(" ", right)
+func (m model) providerWord(p session.Provider) string {
+	return providerBadge(m.render.theme, string(p), len(string(p))+2)
 }
 
-func tableWidths(width int) (int, int, int, int) {
-	if width <= tableProviderWidth+tableDateWidth+tableGapWidth+10 {
-		providerWidth := min(tableProviderWidth, max(3, width/5))
-		dateWidth := min(tableDateWidth, max(5, width/4))
-		cwdWidth := max(5, width-providerWidth-dateWidth-tableGapWidth-5)
-		previewWidth := max(1, width-providerWidth-dateWidth-cwdWidth-tableGapWidth)
-		return providerWidth, dateWidth, cwdWidth, previewWidth
+func (m model) resumeHint(row session.Row) string {
+	if !m.dangerous {
+		return fmt.Sprintf("enter → resume with %s (normal)", row.Provider)
 	}
-
-	providerWidth := tableProviderWidth
-	dateWidth := tableDateWidth
-	cwdWidth := clamp(width/3, 22, 46)
-	previewWidth := max(1, width-providerWidth-dateWidth-cwdWidth-tableGapWidth)
-	return providerWidth, dateWidth, cwdWidth, previewWidth
+	if row.Provider == session.ProviderClaude {
+		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts", row.Provider)
+	}
+	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox", row.Provider)
 }
 
-func padCells(value string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	cellWidth := lipgloss.Width(value)
-	if cellWidth >= width {
-		return value
-	}
-	return value + strings.Repeat(" ", width-cellWidth)
+func (m model) handoffHint(row session.Row) string {
+	other := session.OtherProvider(row.Provider)
+	return fmt.Sprintf("x → hand off to %s (%s) · n → branch · t → scope", other, m.handoff.Label())
 }
 
-func detailLineCount(height int) int {
+func (m model) detailLineCount() int {
 	switch {
-	case height < 16:
+	case m.height < 14:
 		return 0
-	case height < 22:
-		return 3
-	case height < 30:
-		return 5
-	case height < 38:
+	case m.height < 20:
+		return 4
+	case m.height < 28:
 		return 6
 	default:
-		return 7
+		return 8
 	}
 }
 
-func detailHeight(height int) int {
-	count := detailLineCount(height)
+func (m model) detailHeight() int {
+	count := m.detailLineCount()
 	if count == 0 {
 		return 0
 	}
-	_, frameHeight := detailStyle.GetFrameSize()
-	return count + frameHeight
+	_, frameH := m.render.theme.detail.GetFrameSize()
+	return count + frameH
+}
+
+func (m model) loadingView() string {
+	th := m.render.theme
+	body := th.title.Render("showagent") + "\n\n" + m.spinner.View() + " " + th.muted.Render("Scanning Codex and Claude sessions…")
+	if m.width <= 0 || m.height <= 0 {
+		return body
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+}
+
+func (m model) emptyView() string {
+	th := m.render.theme
+	body := th.title.Render("showagent") + "\n\n" +
+		th.muted.Render("No Codex or Claude sessions found.") + "\n" +
+		th.muted.Render("Looked in ~/.codex/sessions and ~/.claude/projects.") + "\n\n" +
+		th.hint.Render("Press q to quit.")
+	if m.width <= 0 || m.height <= 0 {
+		return body
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+}
+
+// Pick runs the picker over an already-discovered set of rows (used in tests).
+func Pick(rows []session.Row) (*Selection, error) {
+	return runProgram(newModel(rows, firstMessage))
+}
+
+// Run launches the interactive picker, discovering sessions asynchronously with
+// a loading spinner so startup never blocks on a blank screen.
+func Run() (*Selection, error) {
+	return runProgram(newLoadingModel(firstMessage))
+}
+
+func runProgram(m model) (*Selection, error) {
+	final, err := tea.NewProgram(m).Run()
+	if err != nil {
+		return nil, err
+	}
+	if fm, ok := final.(model); ok {
+		return fm.selected, nil
+	}
+	return nil, nil
+}
+
+func padLabel(s string) string {
+	return fmt.Sprintf("%-*s", detailLabelWidth, s)
 }
 
 func itemsFromRows(rows []session.Row) []list.Item {
@@ -656,25 +706,10 @@ func providerLabel(providers map[session.Provider]bool) string {
 			values = append(values, string(provider))
 		}
 	}
+	if len(values) == 0 {
+		return "none"
+	}
 	return strings.Join(values, "+")
-}
-
-func emptyFallback(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "(none)"
-	}
-	return value
-}
-
-func modeLabel(mode previewMode) string {
-	switch mode {
-	case lastMessage:
-		return "last user"
-	case bothMessages:
-		return "first + last user"
-	default:
-		return "first user"
-	}
 }
 
 func nextHandoffScope(current session.HandoffOptions) session.HandoffOptions {
@@ -691,166 +726,4 @@ func resumeModeLabel(dangerous bool) string {
 		return "yolo"
 	}
 	return "normal"
-}
-
-func localTime(value time.Time) string {
-	return value.Local().Format("2006-01-02 15:04")
-}
-
-func truncateCells(value string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	if width <= 3 {
-		return string([]rune(value)[:min(len([]rune(value)), width)])
-	}
-
-	var builder strings.Builder
-	for _, r := range value {
-		next := builder.String() + string(r)
-		if lipgloss.Width(next)+3 > width {
-			break
-		}
-		builder.WriteRune(r)
-	}
-	return builder.String() + "..."
-}
-
-func truncateMiddle(value string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	if width <= 3 {
-		return truncateCells(value, width)
-	}
-	clean := filepath.Clean(value)
-	right := min(width/2, lipgloss.Width(clean))
-	suffix := rightCells(clean, right)
-	prefixWidth := width - lipgloss.Width(suffix) - 3
-	return truncateCells(clean, prefixWidth) + "..." + suffix
-}
-
-func rightCells(value string, width int) string {
-	runes := []rune(value)
-	for i := len(runes); i >= 0; i-- {
-		candidate := string(runes[i:])
-		if lipgloss.Width(candidate) <= width {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func clamp(value, low, high int) int {
-	return min(max(value, low), high)
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7DCAFF")).
-			Padding(0, 1)
-
-	mutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8B949E"))
-
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#C9D1D9")).
-			Background(lipgloss.Color("#30363D")).
-			Bold(true)
-
-	rowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D0D7DE"))
-
-	selectedRowStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#0D1117")).
-				Background(lipgloss.Color("#A5D6FF")).
-				Bold(true)
-
-	providerBadgeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#C9D1D9")).
-				Background(lipgloss.Color("#30363D")).
-				Bold(true)
-
-	codexBadgeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#1F6FEB")).
-			Bold(true)
-
-	claudeBadgeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#0D1117")).
-				Background(lipgloss.Color("#D2A8FF")).
-				Bold(true)
-
-	dateCellStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8B949E"))
-
-	workspaceStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D0D7DE"))
-
-	workspaceParentStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#8B949E"))
-
-	workspaceBaseStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E6EDF3")).
-				Bold(true)
-
-	messageCellStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#C9D1D9"))
-
-	deleteStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFDCD7")).
-			Background(lipgloss.Color("#8E1519")).
-			Bold(true)
-
-	detailStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3FB950")).
-			Padding(0, 1).
-			MarginTop(1)
-
-	labelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFA657")).
-			Bold(true)
-)
-
-func init() {
-	if os.Getenv("NO_COLOR") != "" {
-		titleStyle = lipgloss.NewStyle().Bold(true)
-		mutedStyle = lipgloss.NewStyle()
-		headerStyle = lipgloss.NewStyle().Bold(true)
-		rowStyle = lipgloss.NewStyle()
-		selectedRowStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
-		providerBadgeStyle = lipgloss.NewStyle().Bold(true)
-		codexBadgeStyle = lipgloss.NewStyle().Bold(true)
-		claudeBadgeStyle = lipgloss.NewStyle().Bold(true)
-		dateCellStyle = lipgloss.NewStyle()
-		workspaceStyle = lipgloss.NewStyle()
-		workspaceParentStyle = lipgloss.NewStyle()
-		workspaceBaseStyle = lipgloss.NewStyle().Bold(true)
-		messageCellStyle = lipgloss.NewStyle()
-		deleteStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
-		detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).MarginTop(1)
-		labelStyle = lipgloss.NewStyle().Bold(true)
-	}
 }

@@ -21,6 +21,11 @@ const (
 	ProviderClaude Provider = "claude"
 )
 
+// scanBufferMax bounds a single JSONL line during scanning. Modern LLM turns
+// can be large, so this is generous; it is shared by every provider scanner so
+// behavior is consistent across Codex and Claude session files.
+const scanBufferMax = 16 * 1024 * 1024
+
 type Row struct {
 	Provider  Provider
 	ID        string

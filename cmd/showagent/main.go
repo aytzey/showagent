@@ -14,18 +14,19 @@ func main() {
 		os.Exit(2)
 	}
 
-	rows := session.Discover()
-	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "showagent: no Codex or Claude sessions found")
-		os.Exit(1)
-	}
-
+	// When output is not an interactive terminal, print a plain table so the
+	// tool stays scriptable (pipes, redirects, CI).
 	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		rows := session.Discover()
+		if len(rows) == 0 {
+			fmt.Fprintln(os.Stderr, "showagent: no Codex or Claude sessions found")
+			os.Exit(1)
+		}
 		tui.PrintTable(os.Stdout, rows)
 		return
 	}
 
-	selection, err := tui.Pick(rows)
+	selection, err := tui.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "showagent: %v\n", err)
 		os.Exit(1)

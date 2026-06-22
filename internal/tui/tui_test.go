@@ -11,6 +11,36 @@ import (
 	"github.com/aytzey/showagent/internal/session"
 )
 
+func selectedFromModel(t *testing.T, value tea.Model) *Selection {
+	t.Helper()
+	switch m := value.(type) {
+	case model:
+		return m.selected
+	case *model:
+		return m.selected
+	default:
+		t.Fatalf("unexpected model type %T", value)
+		return nil
+	}
+}
+
+func asModel(t *testing.T, value tea.Model) model {
+	t.Helper()
+	m, ok := value.(model)
+	if !ok {
+		t.Fatalf("unexpected model type %T", value)
+	}
+	return m
+}
+
+func sizedModel(rows []session.Row) model {
+	m := newModel(rows, firstMessage)
+	m.width = 110
+	m.height = 36
+	m.resizeList()
+	return m
+}
+
 func TestPreviewModes(t *testing.T) {
 	row := session.Row{
 		Provider:  session.ProviderCodex,
@@ -41,10 +71,10 @@ func TestTruncateCells(t *testing.T) {
 	}
 }
 
-func TestTableLineAlignsHeaderAndRows(t *testing.T) {
+func TestComposeLineAlignsHeaderAndRows(t *testing.T) {
 	width := 96
-	header := tableLine(width, "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
-	row := tableLine(width, "codex", "2026-06-22 10:24", "/home/aytug", "preview")
+	header := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
+	row := composeLine(width, "  ", "codex", "2026-06-22 10:24", "/home/aytug", "preview")
 
 	if lipgloss.Width(header) != width {
 		t.Fatalf("header width = %d, want %d", lipgloss.Width(header), width)
@@ -61,6 +91,7 @@ func TestTableLineAlignsHeaderAndRows(t *testing.T) {
 }
 
 func TestRenderTableRowFitsWidth(t *testing.T) {
+	th := newTheme(true)
 	width := 118
 	row := session.Row{
 		Provider:  session.ProviderClaude,
@@ -70,10 +101,10 @@ func TestRenderTableRowFitsWidth(t *testing.T) {
 		FirstUser: strings.Repeat("preview ", 30),
 	}
 
-	if got := lipgloss.Width(renderTableRow(width, row, firstMessage, false)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, false)); got != width {
 		t.Fatalf("renderTableRow width = %d, want %d", got, width)
 	}
-	if got := lipgloss.Width(renderTableRow(width, row, firstMessage, true)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, true)); got != width {
 		t.Fatalf("selected renderTableRow width = %d, want %d", got, width)
 	}
 }
@@ -93,7 +124,7 @@ func TestDetailViewFitsWidth(t *testing.T) {
 	m.width = 100
 	m.height = 32
 	m.resizeList()
-	detail := detailView(m)
+	detail := m.detailView()
 	if got := lipgloss.Width(detail); got > m.width {
 		t.Fatalf("detail width = %d, want <= %d\n%s", got, m.width, detail)
 	}
@@ -124,6 +155,17 @@ func TestEnterAndCtrlMSelectResume(t *testing.T) {
 	}
 }
 
+func TestSelectResumeWithEmptyList(t *testing.T) {
+	m := sizedModel(nil)
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if selectedFromModel(t, updated) != nil {
+		t.Fatal("enter selected a session from an empty list")
+	}
+	if cmd == nil {
+		t.Fatal("expected a status-message command, got nil")
+	}
+}
+
 func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
 	old := session.Row{
 		Provider: session.ProviderCodex,
@@ -150,19 +192,6 @@ func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
 	}
 }
 
-func selectedFromModel(t *testing.T, value tea.Model) *Selection {
-	t.Helper()
-	switch m := value.(type) {
-	case model:
-		return m.selected
-	case *model:
-		return m.selected
-	default:
-		t.Fatalf("unexpected model type %T", value)
-		return nil
-	}
-}
-
 func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
 	old := session.Row{
 		Provider:  session.ProviderClaude,
@@ -179,17 +208,14 @@ func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
 		FirstUser: "new message",
 	}
 
-	m := newModel([]session.Row{old}, firstMessage)
-	m.width = 100
-	m.height = 32
-	m.resizeList()
+	m := sizedModel([]session.Row{old})
 	m.list.SetFilterText("does-not-match")
 	if !m.list.IsFiltered() {
 		t.Fatal("expected filter to be applied before mutation")
 	}
 
 	updated, _ := m.Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
-	got := updated.(model)
+	got := asModel(t, updated)
 	if got.list.IsFiltered() || got.list.FilterValue() != "" {
 		t.Fatalf("filter was not reset; state=%s value=%q", got.list.FilterState(), got.list.FilterValue())
 	}
@@ -222,28 +248,266 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected convert command")
 	}
-	busy := updated.(model)
+	busy := asModel(t, updated)
 	if busy.busy != "conversion" {
 		t.Fatalf("busy = %q, want conversion", busy.busy)
 	}
 
 	stillBusy, _ := busy.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
-	if got := stillBusy.(model); got.busy != "conversion" {
+	if got := asModel(t, stillBusy); got.busy != "conversion" {
 		t.Fatalf("busy after second action = %q, want conversion", got.busy)
 	}
 
-	notResumed, _ := stillBusy.(model).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	notResumed, _ := asModel(t, stillBusy).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if selectedFromModel(t, notResumed) != nil {
 		t.Fatal("enter selected a session while mutation was busy")
 	}
 
-	done, _ := notResumed.(model).Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
-	got := done.(model)
+	done, _ := asModel(t, notResumed).Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
+	got := asModel(t, done)
 	if got.busy != "" {
 		t.Fatalf("busy after mutation = %q, want empty", got.busy)
 	}
 	selected, ok := got.list.SelectedItem().(item)
 	if !ok || selected.row.ID != "new" {
 		t.Fatalf("selected row after mutation = %#v, want new", got.list.SelectedItem())
+	}
+}
+
+// TestDeleteArmClearsOnNavigation guards the two-press delete safety: arming a
+// delete then moving the cursor must disarm it, so navigating away and back can
+// never delete without a fresh confirmation.
+func TestDeleteArmClearsOnNavigation(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a", LastAt: time.Date(2026, 6, 22, 11, 0, 0, 0, time.UTC), File: "/tmp/a.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderCodex, ID: "b", LastAt: time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC), File: "/tmp/b.jsonl", FirstUser: "bravo"},
+	}
+	m := sizedModel(rows)
+
+	armed, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDelete}))
+	am := asModel(t, armed)
+	if am.deleteArmed == "" {
+		t.Fatal("first delete press did not arm confirmation")
+	}
+
+	moved, _ := am.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	mm := asModel(t, moved)
+	if mm.deleteArmed != "" {
+		t.Fatalf("delete confirmation survived navigation: %q", mm.deleteArmed)
+	}
+}
+
+// TestPreviewKeysDoNotPage guards against the default list keymap binding
+// f/l/b to paging: pressing them must change the preview mode (including the
+// shared render state the delegate reads) without moving the cursor.
+func TestPreviewKeysDoNotPage(t *testing.T) {
+	rows := make([]session.Row, 0, 5)
+	for i := 0; i < 5; i++ {
+		rows = append(rows, session.Row{
+			Provider:  session.ProviderCodex,
+			ID:        string(rune('a' + i)),
+			LastAt:    time.Date(2026, 6, 22, 10, i, 0, 0, time.UTC),
+			File:      "/tmp/" + string(rune('a'+i)) + ".jsonl",
+			FirstUser: "first",
+			LastUser:  "last",
+		})
+	}
+	m := sizedModel(rows)
+	startIndex := m.list.Index()
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'l'}))
+	got := asModel(t, updated)
+	if got.mode != lastMessage {
+		t.Fatalf("mode = %v, want lastMessage", got.mode)
+	}
+	if got.render.mode != lastMessage {
+		t.Fatalf("render.mode = %v, want lastMessage (delegate would render the wrong column)", got.render.mode)
+	}
+	if got.list.Index() != startIndex {
+		t.Fatalf("preview key paged the list: index %d -> %d", startIndex, got.list.Index())
+	}
+}
+
+func TestSessionsLoadedTransition(t *testing.T) {
+	m := newLoadingModel(firstMessage)
+	if !m.loading {
+		t.Fatal("loading model should start in loading state")
+	}
+	rows := []session.Row{
+		{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "hi"},
+	}
+	updated, _ := m.Update(sessionsLoadedMsg{rows: rows})
+	got := asModel(t, updated)
+	if got.loading {
+		t.Fatal("model should leave loading state after sessionsLoadedMsg")
+	}
+	if len(got.list.Items()) != 1 {
+		t.Fatalf("items after load = %d, want 1", len(got.list.Items()))
+	}
+}
+
+func TestProviderToggle(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl"},
+		{Provider: session.ProviderClaude, ID: "d1", LastAt: time.Now(), File: "/tmp/d1.jsonl"},
+	}
+	m := sizedModel(rows)
+	if len(m.list.Items()) != 2 {
+		t.Fatalf("initial items = %d, want 2", len(m.list.Items()))
+	}
+
+	off, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	got := asModel(t, off)
+	if got.providers[session.ProviderCodex] {
+		t.Fatal("codex should be disabled after toggle")
+	}
+	if len(got.list.Items()) != 1 {
+		t.Fatalf("filtered items = %d, want 1", len(got.list.Items()))
+	}
+
+	on, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	got = asModel(t, on)
+	if !got.providers[session.ProviderCodex] || len(got.list.Items()) != 2 {
+		t.Fatalf("codex not re-enabled: enabled=%v items=%d", got.providers[session.ProviderCodex], len(got.list.Items()))
+	}
+}
+
+func TestProviderToggleKeepsLastProvider(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl"},
+	}
+	m := sizedModel(rows)
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	got := asModel(t, updated)
+	if !got.providers[session.ProviderCodex] {
+		t.Fatal("the only provider must stay enabled")
+	}
+	if len(got.list.Items()) != 1 {
+		t.Fatalf("items = %d, want 1", len(got.list.Items()))
+	}
+}
+
+func TestYoloToggleChangesResumeHint(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
+	m := sizedModel([]session.Row{row})
+	if m.dangerous {
+		t.Fatal("model should start with dangerous=false")
+	}
+	if strings.Contains(m.resumeHint(row), "yolo") {
+		t.Fatalf("normal hint should not mention yolo: %q", m.resumeHint(row))
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))
+	got := asModel(t, updated)
+	if !got.dangerous {
+		t.Fatal("y did not enable dangerous mode")
+	}
+	if !strings.Contains(got.resumeHint(row), "yolo") {
+		t.Fatalf("yolo hint should mention yolo: %q", got.resumeHint(row))
+	}
+
+	back, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))
+	if asModel(t, back).dangerous {
+		t.Fatal("y did not toggle dangerous back off")
+	}
+}
+
+func TestScopeCycling(t *testing.T) {
+	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
+	m := sizedModel([]session.Row{row})
+	if m.handoff.MaxTurns != 0 {
+		t.Fatalf("initial scope MaxTurns = %d, want 0", m.handoff.MaxTurns)
+	}
+
+	for _, want := range []int{200, 100, 50, 20, 10, 0} {
+		updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 't'}))
+		m = asModel(t, updated)
+		if m.handoff.MaxTurns != want {
+			t.Fatalf("scope MaxTurns = %d, want %d", m.handoff.MaxTurns, want)
+		}
+	}
+	if !strings.Contains(m.handoffHint(row), "all") {
+		t.Fatalf("handoff hint after wrap = %q, want to contain 'all'", m.handoffHint(row))
+	}
+}
+
+func TestHelpToggle(t *testing.T) {
+	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), CWD: "/tmp", File: "/tmp/x.jsonl", FirstUser: "msg"}
+	m := sizedModel([]session.Row{row})
+	if m.help.ShowAll {
+		t.Fatal("help should start collapsed")
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))
+	got := asModel(t, updated)
+	if !got.help.ShowAll {
+		t.Fatal("? did not expand help")
+	}
+	full := got.helpView()
+	for _, want := range []string{"resume", "branch", "quit"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("full help missing %q:\n%s", want, full)
+		}
+	}
+
+	back, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))
+	if asModel(t, back).help.ShowAll {
+		t.Fatal("? did not collapse help again")
+	}
+}
+
+func TestThemeRebuildOnBackgroundColor(t *testing.T) {
+	m := sizedModel([]session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl"}})
+	if !m.isDark {
+		t.Fatal("model should default to a dark theme")
+	}
+	before := m.render.theme
+
+	updated, _ := m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")})
+	got := asModel(t, updated)
+	if got.isDark {
+		t.Fatal("white background should set isDark=false")
+	}
+	if got.render.theme == before {
+		t.Fatal("theme was not rebuilt after background color change")
+	}
+}
+
+func TestEscClearsAppliedFilter(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a", LastAt: time.Now(), File: "/tmp/a.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderClaude, ID: "b", LastAt: time.Now(), File: "/tmp/b.jsonl", FirstUser: "bravo"},
+	}
+	m := sizedModel(rows)
+	m.list.SetFilterText("alpha")
+	if !m.list.IsFiltered() {
+		t.Fatal("expected an applied filter")
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	got := asModel(t, updated)
+	if got.selected != nil {
+		t.Fatal("esc on an applied filter quit instead of clearing the filter")
+	}
+	if got.list.IsFiltered() {
+		t.Fatal("esc did not clear the applied filter")
+	}
+}
+
+func TestWindowSizeUpdatesListSize(t *testing.T) {
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "hi"}}
+	m := newModel(rows, firstMessage)
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	got := asModel(t, updated)
+	if got.width != 120 || got.height != 40 {
+		t.Fatalf("model size = %dx%d, want 120x40", got.width, got.height)
+	}
+	if got.list.Width() != 120 {
+		t.Fatalf("list width = %d, want 120", got.list.Width())
+	}
+	if got.list.Height() <= 0 {
+		t.Fatalf("list height = %d, want > 0", got.list.Height())
 	}
 }

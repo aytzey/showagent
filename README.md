@@ -12,9 +12,11 @@ It is built as a portable Go TUI with:
 
 ## Features
 
-- Unified session list for `codex` and `claude`
-- Provider column: `codex` or `claude`
-- Sorted by latest conversation time
+- Unified session list for `codex` and `claude`, sorted by latest activity
+- Provider badges, relative timestamps, and a focused detail panel
+- Instant startup: sessions are scanned in the background behind a spinner
+- Adaptive theme that adjusts to light and dark terminals (and honors `NO_COLOR`)
+- `?` toggles a full keybinding overlay so the header stays compact
 - Search across provider, directory, session id, and user messages
 - Preview modes for first user message, latest user message, or both
 - Toggleable yolo resume mode for approval-free continuation
@@ -56,7 +58,9 @@ Keybindings:
 | Key | Action |
 | --- | --- |
 | `↑/↓`, `j/k` | Move through sessions |
-| `/` | Search |
+| `pgup/pgdn` | Page through sessions |
+| `/` | Search (press `esc` to clear an applied search) |
+| `?` | Toggle the full keybinding overlay |
 | `c` | Toggle Codex sessions |
 | `d` | Toggle Claude Code sessions |
 | `y` | Toggle yolo/dangerous resume mode |
@@ -67,8 +71,8 @@ Keybindings:
 | `enter` | Resume selected session |
 | `x` | Convert selected session to the other agent and select the new session |
 | `n` | Create a full local branch/copy of the selected session and select it |
-| `delete`, `backspace`, `D` | Delete selected session after second press confirmation |
-| `q`, `esc`, `ctrl+c` | Quit |
+| `delete`, `backspace` | Delete selected session after second press confirmation |
+| `q`, `ctrl+c` | Quit (`esc` clears an active search first) |
 
 When output is piped, `showagent` prints a plain table instead of opening the
 TUI.

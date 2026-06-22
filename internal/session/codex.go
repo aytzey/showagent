@@ -76,7 +76,7 @@ func scanCodexStart(path string) (string, string, string) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
