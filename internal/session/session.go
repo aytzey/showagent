@@ -116,11 +116,13 @@ func Delete(row Row) error {
 }
 
 func launch(cwd string, command []string) error {
-	if cwd != "" {
-		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
-			if err := os.Chdir(cwd); err != nil {
-				return err
-			}
+	dir, err := launchDir(cwd)
+	if err != nil {
+		return err
+	}
+	if dir != "" {
+		if err := os.Chdir(dir); err != nil {
+			return err
 		}
 	}
 
@@ -129,6 +131,25 @@ func launch(cwd string, command []string) error {
 		return fmt.Errorf("%s not found in PATH", command[0])
 	}
 	return syscallExec(path, command, os.Environ())
+}
+
+func launchDir(cwd string) (string, error) {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || strings.HasPrefix(cwd, "(") {
+		return "", nil
+	}
+
+	info, err := os.Stat(cwd)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("workspace not found: %s", cwd)
+		}
+		return "", fmt.Errorf("workspace unavailable: %s: %w", cwd, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workspace is not a directory: %s", cwd)
+	}
+	return cwd, nil
 }
 
 var (

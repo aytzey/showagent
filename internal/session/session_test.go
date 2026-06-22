@@ -86,6 +86,44 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	}
 }
 
+func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	claudeHome := filepath.Join(root, "claude")
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAUDE_HOME", claudeHome)
+
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "22", "rollout-2026-06-22T09-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
+{"timestamp":"2026-06-22T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/home/aytug"}}
+{"timestamp":"2026-06-22T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first codex message"}]}}
+{"timestamp":"2026-06-22T09:02:00Z","type":"turn_context","payload":{"cwd":"`+project+`"}}
+{"timestamp":"2026-06-22T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"last codex message"}]}}
+`)
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	if rows[0].CWD != project {
+		t.Fatalf("cwd = %q, want latest turn_context cwd %q", rows[0].CWD, project)
+	}
+
+	converted, err := Convert(rows[0], ProviderClaude, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.CWD != project {
+		t.Fatalf("converted cwd = %q, want %q", converted.CWD, project)
+	}
+	if !strings.Contains(converted.File, claudeProjectDir(project)) {
+		t.Fatalf("converted path = %q, want project dir %q", converted.File, claudeProjectDir(project))
+	}
+}
+
 func TestResumeCommandDangerousMode(t *testing.T) {
 	codex := Row{Provider: ProviderCodex, ID: "codex-session"}
 	if got := strings.Join(codex.ResumeCommand(ResumeOptions{}), " "); got != "codex resume codex-session" {
@@ -101,6 +139,34 @@ func TestResumeCommandDangerousMode(t *testing.T) {
 	}
 	if got := strings.Join(claude.ResumeCommand(ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions --resume claude-session" {
 		t.Fatalf("claude dangerous command = %q", got)
+	}
+}
+
+func TestLaunchDirDoesNotFallbackToCurrentDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir, err := launchDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != root {
+		t.Fatalf("launchDir = %q, want %q", dir, root)
+	}
+
+	if dir, err := launchDir("(unknown cwd)"); err != nil || dir != "" {
+		t.Fatalf("unknown cwd launchDir = %q, %v; want empty nil", dir, err)
+	}
+
+	missing := filepath.Join(root, "missing")
+	if _, err := launchDir(missing); err == nil || !strings.Contains(err.Error(), "workspace not found") {
+		t.Fatalf("missing launchDir err = %v, want workspace not found", err)
+	}
+
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := launchDir(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("file launchDir err = %v, want not a directory", err)
 	}
 }
 

@@ -111,10 +111,6 @@ func scanCodexStart(path string) (string, string, string) {
 				}
 			}
 		}
-
-		if cwd != "" && firstUser != "" {
-			break
-		}
 	}
 
 	return id, cwd, firstUser
