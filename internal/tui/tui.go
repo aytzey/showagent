@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/aytzey/showcodex/internal/session"
+	"github.com/aytzey/showagent/internal/session"
 )
 
 type previewMode int
@@ -79,6 +79,7 @@ type model struct {
 	allRows   []session.Row
 	providers map[session.Provider]bool
 	mode      previewMode
+	dangerous bool
 	selected  *session.Row
 	width     int
 	height    int
@@ -90,7 +91,7 @@ func newModel(rows []session.Row, mode previewMode) model {
 
 	delegate := itemDelegate{}
 	l := list.New(items, delegate, 100, 24)
-	l.Title = "showcodex"
+	l.Title = "showagent"
 	l.SetStatusBarItemName("session", "sessions")
 	l.SetFilteringEnabled(true)
 	l.SetShowFilter(true)
@@ -106,6 +107,7 @@ func newModel(rows []session.Row, mode previewMode) model {
 			key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "both")),
 			key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "codex")),
 			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
+			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
 			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
@@ -151,6 +153,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "d":
 				cmd := m.toggleProvider(session.ProviderClaude)
 				return m, cmd
+			case "y":
+				m.dangerous = !m.dangerous
+				return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
 			}
 		}
 	}
@@ -197,17 +202,17 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-func Pick(rows []session.Row) (*session.Row, error) {
+func Pick(rows []session.Row) (*session.Row, session.ResumeOptions, error) {
 	program := tea.NewProgram(newModel(rows, firstMessage))
 	finalModel, err := program.Run()
 	if err != nil {
-		return nil, err
+		return nil, session.ResumeOptions{}, err
 	}
 	m, ok := finalModel.(model)
 	if !ok {
-		return nil, nil
+		return nil, session.ResumeOptions{}, nil
 	}
-	return m.selected, nil
+	return m.selected, session.ResumeOptions{Dangerous: m.dangerous}, nil
 }
 
 func PrintTable(w io.Writer, rows []session.Row) {
@@ -226,9 +231,9 @@ func PrintTable(w io.Writer, rows []session.Row) {
 }
 
 func headerView(m model) string {
-	title := titleStyle.Render("showcodex")
-	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  providers: %s  view: %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode)))
-	help := mutedStyle.Render("↑/↓ j/k move  / search  c codex  d claude  f first  l last  b both  enter resume  q quit")
+	title := titleStyle.Render("showagent")
+	stats := mutedStyle.Render(fmt.Sprintf("%d sessions  providers: %s  view: %s  resume: %s", len(m.list.Items()), providerLabel(m.providers), modeLabel(m.mode), resumeModeLabel(m.dangerous)))
+	help := mutedStyle.Render("↑/↓ j/k move  / search  c codex  d claude  y yolo  f first  l last  b both  enter resume  q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", stats), help)
 }
 
@@ -250,10 +255,11 @@ func detailView(m model) string {
 	width := max(40, m.width)
 	frameWidth, _ := detailStyle.GetFrameSize()
 	valueWidth := max(8, width-frameWidth-detailLabelWidth)
-	command := strings.Join(row.ResumeCommand(), " ")
+	command := strings.Join(row.ResumeCommand(session.ResumeOptions{Dangerous: m.dangerous}), " ")
 	lines := []string{
 		labelStyle.Render("provider ") + string(row.Provider),
 		labelStyle.Render("session  ") + row.ID,
+		labelStyle.Render("resume   ") + resumeModeLabel(m.dangerous),
 		labelStyle.Render("cwd      ") + truncateCells(row.CWD, valueWidth),
 		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), valueWidth),
 		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), valueWidth),
@@ -425,6 +431,13 @@ func modeLabel(mode previewMode) string {
 	default:
 		return "first user"
 	}
+}
+
+func resumeModeLabel(dangerous bool) string {
+	if dangerous {
+		return "yolo"
+	}
+	return "normal"
 }
 
 func localTime(value time.Time) string {

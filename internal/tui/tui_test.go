@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/aytzey/showcodex/internal/session"
+	"github.com/aytzey/showagent/internal/session"
 )
 
 func TestPreviewModes(t *testing.T) {

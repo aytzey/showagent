@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,24 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	}
 	if rows[0].FirstUser != "actual first" || rows[0].LastUser != "actual last" {
 		t.Fatalf("unexpected previews: %#v", rows[0])
+	}
+}
+
+func TestResumeCommandDangerousMode(t *testing.T) {
+	codex := Row{Provider: ProviderCodex, ID: "codex-session"}
+	if got := strings.Join(codex.ResumeCommand(ResumeOptions{}), " "); got != "codex resume codex-session" {
+		t.Fatalf("codex normal command = %q", got)
+	}
+	if got := strings.Join(codex.ResumeCommand(ResumeOptions{Dangerous: true}), " "); got != "codex resume --dangerously-bypass-approvals-and-sandbox codex-session" {
+		t.Fatalf("codex dangerous command = %q", got)
+	}
+
+	claude := Row{Provider: ProviderClaude, ID: "claude-session"}
+	if got := strings.Join(claude.ResumeCommand(ResumeOptions{}), " "); got != "claude --resume claude-session" {
+		t.Fatalf("claude normal command = %q", got)
+	}
+	if got := strings.Join(claude.ResumeCommand(ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions --resume claude-session" {
+		t.Fatalf("claude dangerous command = %q", got)
 	}
 }
 

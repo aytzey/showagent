@@ -27,11 +27,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/showcodex-linux-${GOARCH}" ./cmd/showcodex
-          sha256sum "dist/showcodex-linux-${GOARCH}" > "dist/showcodex-linux-${GOARCH}.sha256"
+          go build -trimpath -ldflags="-s -w" -o "dist/showagent-linux-${GOARCH}" ./cmd/showagent
+          sha256sum "dist/showagent-linux-${GOARCH}" > "dist/showagent-linux-${GOARCH}.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: showcodex-linux-${{ matrix.goarch }}
+          name: showagent-linux-${{ matrix.goarch }}
           path: dist/*
 
   release:

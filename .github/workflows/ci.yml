@@ -15,4 +15,4 @@ jobs:
           go-version: "1.25.x"
           cache: true
       - run: go test ./...
-      - run: go build ./cmd/showcodex
+      - run: go build ./cmd/showagent

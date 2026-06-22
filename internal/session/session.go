@@ -31,12 +31,24 @@ type Row struct {
 	LastUser  string
 }
 
-func (r Row) ResumeCommand() []string {
+type ResumeOptions struct {
+	Dangerous bool
+}
+
+func (r Row) ResumeCommand(options ResumeOptions) []string {
 	switch r.Provider {
 	case ProviderClaude:
-		return []string{"claude", "--resume", r.ID}
+		command := []string{"claude"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-skip-permissions")
+		}
+		return append(command, "--resume", r.ID)
 	default:
-		return []string{"codex", "resume", r.ID}
+		command := []string{"codex", "resume"}
+		if options.Dangerous {
+			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+		}
+		return append(command, r.ID)
 	}
 }
 
@@ -59,7 +71,7 @@ func Discover() []Row {
 	return rows
 }
 
-func Resume(row Row) error {
+func Resume(row Row, options ResumeOptions) error {
 	if row.CWD != "" {
 		if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
 			if err := os.Chdir(row.CWD); err != nil {
@@ -68,7 +80,7 @@ func Resume(row Row) error {
 		}
 	}
 
-	command := row.ResumeCommand()
+	command := row.ResumeCommand(options)
 	path, err := exec.LookPath(command[0])
 	if err != nil {
 		return fmt.Errorf("%s not found in PATH", command[0])

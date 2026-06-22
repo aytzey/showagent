@@ -1,6 +1,6 @@
-# showcodex
+# showagent
 
-`showcodex` is a fast terminal picker for local Codex and Claude Code sessions.
+`showagent` is a fast terminal picker for local Codex and Claude Code sessions.
 It scans every workspace, shows both providers in one timeline, and resumes the
 selected session with the right CLI command.
 
@@ -17,9 +17,12 @@ It is built as a portable Go TUI with:
 - Sorted by latest conversation time
 - Search across provider, directory, session id, and user messages
 - Preview modes for first user message, latest user message, or both
+- Toggleable yolo resume mode for approval-free continuation
 - One-key resume:
   - Codex: `codex resume <session-id>`
+  - Codex yolo: `codex resume --dangerously-bypass-approvals-and-sandbox <session-id>`
   - Claude Code: `claude --resume <session-id>`
+  - Claude Code yolo: `claude --dangerously-skip-permissions --resume <session-id>`
 - No runtime dependencies beyond the compiled binary
 - Works well on Ubuntu, Debian, Fedora, Arch, and other Linux distributions
 
@@ -28,7 +31,7 @@ It is built as a portable Go TUI with:
 With Go 1.25 or newer:
 
 ```bash
-go install github.com/aytzey/showcodex/cmd/showcodex@latest
+go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
 Or download a Linux binary from the GitHub releases page and put it somewhere
@@ -37,10 +40,10 @@ on your `PATH`, for example `~/.local/bin`.
 ## Usage
 
 ```bash
-showcodex
+showagent
 ```
 
-`showcodex` intentionally takes no arguments. Everything is selected inside the
+`showagent` intentionally takes no arguments. Everything is selected inside the
 CLI.
 
 Keybindings:
@@ -51,18 +54,19 @@ Keybindings:
 | `/` | Search |
 | `c` | Toggle Codex sessions |
 | `d` | Toggle Claude Code sessions |
+| `y` | Toggle yolo/dangerous resume mode |
 | `f` | Show first user message |
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |
 | `enter` | Resume selected session |
 | `q`, `esc`, `ctrl+c` | Quit |
 
-When output is piped, `showcodex` prints a plain table instead of opening the
+When output is piped, `showagent` prints a plain table instead of opening the
 TUI.
 
 ## Session Locations
 
-By default, `showcodex` reads:
+By default, `showagent` reads:
 
 - Codex: `~/.codex/sessions/**/*.jsonl`
 - Claude Code: `~/.claude/projects/**/*.jsonl`
@@ -78,21 +82,21 @@ focused on top-level conversations.
 ## Build From Source
 
 ```bash
-git clone https://github.com/aytzey/showcodex.git
-cd showcodex
+git clone https://github.com/aytzey/showagent.git
+cd showagent
 go test ./...
-go build -o showcodex ./cmd/showcodex
+go build -o showagent ./cmd/showagent
 ```
 
 For a portable Linux binary:
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o showcodex-linux-amd64 ./cmd/showcodex
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o showagent-linux-amd64 ./cmd/showagent
 ```
 
 ## Privacy
 
-`showcodex` only reads local JSONL history files. It does not upload session
+`showagent` only reads local JSONL history files. It does not upload session
 data anywhere.
 
 Message previews apply basic redaction for password-like words and OpenAI-style

@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/aytzey/showcodex/internal/session"
-	"github.com/aytzey/showcodex/internal/tui"
+	"github.com/aytzey/showagent/internal/session"
+	"github.com/aytzey/showagent/internal/tui"
 )
 
 func main() {
 	if len(os.Args) > 1 {
-		fmt.Fprintln(os.Stderr, "showcodex does not take arguments. Run: showcodex")
+		fmt.Fprintln(os.Stderr, "showagent does not take arguments. Run: showagent")
 		os.Exit(2)
 	}
 
 	rows := session.Discover()
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "showcodex: no Codex or Claude sessions found")
+		fmt.Fprintln(os.Stderr, "showagent: no Codex or Claude sessions found")
 		os.Exit(1)
 	}
 
@@ -25,17 +25,17 @@ func main() {
 		return
 	}
 
-	selected, err := tui.Pick(rows)
+	selected, resumeOptions, err := tui.Pick(rows)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "showcodex: %v\n", err)
+		fmt.Fprintf(os.Stderr, "showagent: %v\n", err)
 		os.Exit(1)
 	}
 	if selected == nil {
 		return
 	}
 
-	if err := session.Resume(*selected); err != nil {
-		fmt.Fprintf(os.Stderr, "showcodex: %v\n", err)
+	if err := session.Resume(*selected, resumeOptions); err != nil {
+		fmt.Fprintf(os.Stderr, "showagent: %v\n", err)
 		os.Exit(1)
 	}
 }

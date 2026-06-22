@@ -1,4 +1,4 @@
-module github.com/aytzey/showcodex
+module github.com/aytzey/showagent
 
 go 1.25.8
 
