@@ -105,6 +105,7 @@ type model struct {
 	handoff   session.HandoffOptions
 	selected  *Selection
 	deleteKey string
+	busy      string
 	width     int
 	height    int
 }
@@ -160,13 +161,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+c", "esc", "q":
 				return m, tea.Quit
-			case "enter":
+			}
+			if m.busy != "" {
+				return m, m.list.NewStatusMessage(m.busy + " in progress; wait")
+			}
+			switch msg.String() {
+			case "enter", "ctrl+m":
 				return m.selectResume()
 			case "x":
 				cmd := m.convertSelected()
+				if cmd == nil {
+					return m, m.list.NewStatusMessage("no session selected")
+				}
+				m.busy = "conversion"
 				return m, tea.Batch(cmd, m.list.NewStatusMessage("converting session..."))
 			case "n":
 				cmd := m.branchSelected()
+				if cmd == nil {
+					return m, m.list.NewStatusMessage("no session selected")
+				}
+				m.busy = "branch"
 				return m, tea.Batch(cmd, m.list.NewStatusMessage("creating session branch..."))
 			case "delete", "backspace", "D":
 				cmd := m.deleteSelected()
@@ -195,13 +209,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case sessionMutationMsg:
+		m.busy = ""
 		if msg.err != nil {
+			m.deleteKey = ""
 			return m, m.list.NewStatusMessage("session action failed: " + msg.err.Error())
 		}
 		m.deleteKey = ""
 		m.providers[msg.row.Provider] = true
 		m.allRows = upsertAndSortRows(m.allRows, msg.row)
 		filtered := filterRows(m.allRows, m.providers)
+		m.list.ResetFilter()
 		cmd := m.list.SetItems(itemsFromRows(filtered))
 		if index := indexOfRow(filtered, msg.row); index >= 0 {
 			m.list.Select(index)
@@ -328,11 +345,14 @@ func Pick(rows []session.Row) (*Selection, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, ok := finalModel.(model)
-	if !ok {
+	switch m := finalModel.(type) {
+	case model:
+		return m.selected, nil
+	case *model:
+		return m.selected, nil
+	default:
 		return nil, nil
 	}
-	return m.selected, nil
 }
 
 func PrintTable(w io.Writer, rows []session.Row) {

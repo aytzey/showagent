@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/aytzey/showagent/internal/session"
@@ -98,6 +99,31 @@ func TestDetailViewFitsWidth(t *testing.T) {
 	}
 }
 
+func TestEnterAndCtrlMSelectResume(t *testing.T) {
+	row := session.Row{
+		Provider: session.ProviderClaude,
+		ID:       "resume-id",
+		LastAt:   time.Now(),
+		CWD:      "/tmp",
+		File:     "/tmp/resume.jsonl",
+	}
+
+	tests := []tea.KeyPressMsg{
+		tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}),
+		tea.KeyPressMsg(tea.Key{Code: 'm', Mod: tea.ModCtrl}),
+	}
+	for _, msg := range tests {
+		updated, _ := newModel([]session.Row{row}, firstMessage).Update(msg)
+		selected := selectedFromModel(t, updated)
+		if selected == nil {
+			t.Fatalf("%q did not select a row", msg.String())
+		}
+		if selected.Row.ID != "resume-id" {
+			t.Fatalf("%q selected row %q, want resume-id", msg.String(), selected.Row.ID)
+		}
+	}
+}
+
 func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
 	old := session.Row{
 		Provider: session.ProviderCodex,
@@ -121,5 +147,103 @@ func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
 	}
 	if index := indexOfRow(rows, newRow); index != 0 {
 		t.Fatalf("indexOfRow = %d, want 0", index)
+	}
+}
+
+func selectedFromModel(t *testing.T, value tea.Model) *Selection {
+	t.Helper()
+	switch m := value.(type) {
+	case model:
+		return m.selected
+	case *model:
+		return m.selected
+	default:
+		t.Fatalf("unexpected model type %T", value)
+		return nil
+	}
+}
+
+func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
+	old := session.Row{
+		Provider:  session.ProviderClaude,
+		ID:        "old",
+		LastAt:    time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC),
+		File:      "/tmp/old.jsonl",
+		FirstUser: "old message",
+	}
+	newRow := session.Row{
+		Provider:  session.ProviderCodex,
+		ID:        "new",
+		LastAt:    time.Date(2026, 6, 22, 11, 0, 0, 0, time.UTC),
+		File:      "/tmp/new.jsonl",
+		FirstUser: "new message",
+	}
+
+	m := newModel([]session.Row{old}, firstMessage)
+	m.width = 100
+	m.height = 32
+	m.resizeList()
+	m.list.SetFilterText("does-not-match")
+	if !m.list.IsFiltered() {
+		t.Fatal("expected filter to be applied before mutation")
+	}
+
+	updated, _ := m.Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
+	got := updated.(model)
+	if got.list.IsFiltered() || got.list.FilterValue() != "" {
+		t.Fatalf("filter was not reset; state=%s value=%q", got.list.FilterState(), got.list.FilterValue())
+	}
+	selected, ok := got.list.SelectedItem().(item)
+	if !ok {
+		t.Fatal("expected selected item after mutation")
+	}
+	if selected.row.ID != "new" {
+		t.Fatalf("selected row = %q, want new", selected.row.ID)
+	}
+}
+
+func TestBusyMutationBlocksSecondAction(t *testing.T) {
+	row := session.Row{
+		Provider:  session.ProviderClaude,
+		ID:        "old",
+		LastAt:    time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC),
+		File:      "/tmp/old.jsonl",
+		FirstUser: "old message",
+	}
+	newRow := session.Row{
+		Provider:  session.ProviderCodex,
+		ID:        "new",
+		LastAt:    time.Date(2026, 6, 22, 11, 0, 0, 0, time.UTC),
+		File:      "/tmp/new.jsonl",
+		FirstUser: "new message",
+	}
+
+	updated, cmd := newModel([]session.Row{row}, firstMessage).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
+	if cmd == nil {
+		t.Fatal("expected convert command")
+	}
+	busy := updated.(model)
+	if busy.busy != "conversion" {
+		t.Fatalf("busy = %q, want conversion", busy.busy)
+	}
+
+	stillBusy, _ := busy.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+	if got := stillBusy.(model); got.busy != "conversion" {
+		t.Fatalf("busy after second action = %q, want conversion", got.busy)
+	}
+
+	notResumed, _ := stillBusy.(model).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if selectedFromModel(t, notResumed) != nil {
+		t.Fatal("enter selected a session while mutation was busy")
+	}
+
+	done, _ := notResumed.(model).Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
+	got := done.(model)
+	if got.busy != "" {
+		t.Fatalf("busy after mutation = %q, want empty", got.busy)
+	}
+	selected, ok := got.list.SelectedItem().(item)
+	if !ok || selected.row.ID != "new" {
+		t.Fatalf("selected row after mutation = %#v, want new", got.list.SelectedItem())
 	}
 }
