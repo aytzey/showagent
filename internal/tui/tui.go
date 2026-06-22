@@ -24,6 +24,17 @@ const (
 	bothMessages
 )
 
+const (
+	tableProviderWidth = 7
+	tableDateWidth     = 16
+	tableGapWidth      = 3
+
+	headerHeight       = 2
+	columnHeaderHeight = 1
+	bottomSafetyRows   = 1
+	detailLabelWidth   = 9
+)
+
 type item struct {
 	row session.Row
 }
@@ -47,27 +58,18 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 
 	width := m.Width()
-	providerWidth := 7
-	dateWidth := 16
-	cwdWidth := clamp(width/3, 22, 46)
-	previewWidth := max(10, width-providerWidth-dateWidth-cwdWidth-8)
-
 	style := rowStyle
 	if index == m.Index() {
 		style = selectedRowStyle
 	}
 
-	line := fmt.Sprintf(
-		"%-*s %-*s %-*s %s",
-		providerWidth,
+	_, _ = fmt.Fprint(w, style.Width(width).Render(tableLine(
+		width,
 		string(it.row.Provider),
-		dateWidth,
 		localTime(it.row.LastAt),
-		cwdWidth,
-		truncateMiddle(it.row.CWD, cwdWidth),
-		truncateCells(previewFor(it.row, currentMode), previewWidth),
-	)
-	_, _ = fmt.Fprint(w, style.Width(width).Render(line))
+		it.row.CWD,
+		previewFor(it.row, currentMode),
+	)))
 }
 
 var currentMode = firstMessage
@@ -92,9 +94,9 @@ func newModel(rows []session.Row, mode previewMode) model {
 	l.SetStatusBarItemName("session", "sessions")
 	l.SetFilteringEnabled(true)
 	l.SetShowFilter(true)
-	l.SetShowHelp(true)
-	l.SetShowPagination(true)
-	l.SetShowStatusBar(true)
+	l.SetShowHelp(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
 	l.SetShowTitle(false)
 	l.DisableQuitKeybindings()
 	l.AdditionalShortHelpKeys = func() []key.Binding {
@@ -160,24 +162,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	currentMode = m.mode
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	parts := []string{
 		headerView(m),
 		columnHeader(m.width),
 		m.list.View(),
-		detailView(m),
-	)
+	}
+	if detail := detailView(m); detail != "" {
+		parts = append(parts, detail)
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	view := tea.NewView(content)
 	view.AltScreen = true
 	return view
 }
 
 func (m *model) resizeList() {
-	detailHeight := 7
-	if m.height < 22 {
-		detailHeight = 5
-	}
-	listHeight := max(5, m.height-detailHeight-4)
+	reserved := headerHeight + columnHeaderHeight + detailHeight(m.height) + bottomSafetyRows
+	listHeight := max(5, m.height-reserved)
 	m.list.SetSize(m.width, listHeight)
 }
 
@@ -211,24 +212,16 @@ func Pick(rows []session.Row) (*session.Row, error) {
 
 func PrintTable(w io.Writer, rows []session.Row) {
 	width := 120
-	providerWidth := 7
-	dateWidth := 16
-	cwdWidth := 38
-	previewWidth := width - providerWidth - dateWidth - cwdWidth - 8
 
-	_, _ = fmt.Fprintf(w, "%-*s %-*s %-*s %s\n", providerWidth, "SRC", dateWidth, "LAST", cwdWidth, "CWD", "PREVIEW")
+	_, _ = fmt.Fprintln(w, tableLine(width, "SRC", "LAST", "CWD", "PREVIEW"))
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(
-			w,
-			"%-*s %-*s %-*s %s\n",
-			providerWidth,
+		_, _ = fmt.Fprintln(w, tableLine(
+			width,
 			string(row.Provider),
-			dateWidth,
 			localTime(row.LastAt),
-			cwdWidth,
-			truncateMiddle(row.CWD, cwdWidth),
-			truncateCells(previewFor(row, firstMessage), previewWidth),
-		)
+			row.CWD,
+			previewFor(row, firstMessage),
+		))
 	}
 }
 
@@ -240,33 +233,38 @@ func headerView(m model) string {
 }
 
 func columnHeader(width int) string {
-	providerWidth := 7
-	dateWidth := 16
-	cwdWidth := clamp(width/3, 22, 46)
-	return headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %s", providerWidth, "SRC", dateWidth, "LAST", cwdWidth, "CWD", "USER MESSAGE"))
+	return headerStyle.Width(width).Render(tableLine(width, "SRC", "LAST", "CWD", "USER MESSAGE"))
 }
 
 func detailView(m model) string {
+	lineCount := detailLineCount(m.height)
+	if lineCount == 0 {
+		return ""
+	}
+
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
-		return detailStyle.Render("No session selected.")
+		return detailStyle.Width(max(20, m.width)).Render("No session selected.")
 	}
 	row := selected.row
-	width := max(40, m.width-4)
+	width := max(40, m.width)
+	frameWidth, _ := detailStyle.GetFrameSize()
+	valueWidth := max(8, width-frameWidth-detailLabelWidth)
 	command := strings.Join(row.ResumeCommand(), " ")
 	lines := []string{
 		labelStyle.Render("provider ") + string(row.Provider),
 		labelStyle.Render("session  ") + row.ID,
-		labelStyle.Render("cwd      ") + truncateCells(row.CWD, width-9),
-		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), width-9),
-		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), width-9),
+		labelStyle.Render("cwd      ") + truncateCells(row.CWD, valueWidth),
+		labelStyle.Render("first    ") + truncateCells(emptyFallback(row.FirstUser), valueWidth),
+		labelStyle.Render("last     ") + truncateCells(emptyFallback(bestLast(row)), valueWidth),
 		labelStyle.Render("command  ") + command,
-		labelStyle.Render("file     ") + truncateMiddle(row.File, width-9),
+		labelStyle.Render("file     ") + truncateMiddle(row.File, valueWidth),
 	}
-	if m.height < 22 {
-		lines = lines[:5]
+	lines = lines[:min(lineCount, len(lines))]
+	for i := range lines {
+		lines[i] = truncateCells(lines[i], max(1, width-frameWidth))
 	}
-	return detailStyle.Width(max(20, m.width-2)).Render(strings.Join(lines, "\n"))
+	return detailStyle.Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func previewFor(row session.Row, mode previewMode) string {
@@ -288,6 +286,72 @@ func bestLast(row session.Row) string {
 		return row.LastUser
 	}
 	return row.FirstUser
+}
+
+func tableLine(width int, provider, date, cwd, preview string) string {
+	providerWidth, dateWidth, cwdWidth, previewWidth := tableWidths(width)
+	line := fmt.Sprintf(
+		"%-*s %-*s %-*s %s",
+		providerWidth,
+		truncateCells(provider, providerWidth),
+		dateWidth,
+		truncateCells(date, dateWidth),
+		cwdWidth,
+		truncateMiddle(cwd, cwdWidth),
+		truncateCells(preview, previewWidth),
+	)
+	return padCells(truncateCells(line, width), width)
+}
+
+func tableWidths(width int) (int, int, int, int) {
+	if width <= tableProviderWidth+tableDateWidth+tableGapWidth+10 {
+		providerWidth := min(tableProviderWidth, max(3, width/5))
+		dateWidth := min(tableDateWidth, max(5, width/4))
+		cwdWidth := max(5, width-providerWidth-dateWidth-tableGapWidth-5)
+		previewWidth := max(1, width-providerWidth-dateWidth-cwdWidth-tableGapWidth)
+		return providerWidth, dateWidth, cwdWidth, previewWidth
+	}
+
+	providerWidth := tableProviderWidth
+	dateWidth := tableDateWidth
+	cwdWidth := clamp(width/3, 22, 46)
+	previewWidth := max(1, width-providerWidth-dateWidth-cwdWidth-tableGapWidth)
+	return providerWidth, dateWidth, cwdWidth, previewWidth
+}
+
+func padCells(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	cellWidth := lipgloss.Width(value)
+	if cellWidth >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-cellWidth)
+}
+
+func detailLineCount(height int) int {
+	switch {
+	case height < 16:
+		return 0
+	case height < 22:
+		return 3
+	case height < 30:
+		return 5
+	case height < 38:
+		return 6
+	default:
+		return 7
+	}
+}
+
+func detailHeight(height int) int {
+	count := detailLineCount(height)
+	if count == 0 {
+		return 0
+	}
+	_, frameHeight := detailStyle.GetFrameSize()
+	return count + frameHeight
 }
 
 func itemsFromRows(rows []session.Row) []list.Item {
@@ -447,8 +511,7 @@ var (
 	headerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#C9D1D9")).
 			Background(lipgloss.Color("#30363D")).
-			Bold(true).
-			Padding(0, 1)
+			Bold(true)
 
 	rowStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#D0D7DE"))
