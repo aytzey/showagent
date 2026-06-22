@@ -394,8 +394,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 	if m.dangerous {
 		t.Fatal("model should start with dangerous=false")
 	}
-	if strings.Contains(m.resumeHint(row), "yolo") {
-		t.Fatalf("normal hint should not mention yolo: %q", m.resumeHint(row))
+	if !strings.Contains(m.resumeHint(row), "(normal)") {
+		t.Fatalf("normal hint should mark normal mode: %q", m.resumeHint(row))
 	}
 
 	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))
@@ -403,8 +403,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 	if !got.dangerous {
 		t.Fatal("y did not enable dangerous mode")
 	}
-	if !strings.Contains(got.resumeHint(row), "yolo") {
-		t.Fatalf("yolo hint should mention yolo: %q", got.resumeHint(row))
+	if !strings.Contains(got.resumeHint(row), "yolo:") {
+		t.Fatalf("yolo hint should describe yolo mode: %q", got.resumeHint(row))
 	}
 
 	back, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))

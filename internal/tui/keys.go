@@ -44,7 +44,7 @@ func defaultKeys() keyMap {
 
 // ShortHelp is the one-line hint shown under the header.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
+	return []key.Binding{k.Resume, k.Yolo, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".

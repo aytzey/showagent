@@ -538,12 +538,12 @@ func (m model) providerWord(p session.Provider) string {
 
 func (m model) resumeHint(row session.Row) string {
 	if !m.dangerous {
-		return fmt.Sprintf("enter → resume with %s (normal)", row.Provider)
+		return fmt.Sprintf("enter → resume with %s (normal) · y → yolo", row.Provider)
 	}
 	if row.Provider == session.ProviderClaude {
-		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts", row.Provider)
+		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts · y → normal", row.Provider)
 	}
-	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox", row.Provider)
+	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox · y → normal", row.Provider)
 }
 
 func (m model) handoffHint(row session.Row) string {
