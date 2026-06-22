@@ -52,23 +52,6 @@ func (r Row) ResumeCommand(options ResumeOptions) []string {
 	}
 }
 
-func (r Row) ForkCommand(options ResumeOptions) []string {
-	switch r.Provider {
-	case ProviderClaude:
-		command := []string{"claude"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-skip-permissions")
-		}
-		return append(command, "--fork-session", "--resume", r.ID)
-	default:
-		command := []string{"codex", "fork"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(command, r.ID)
-	}
-}
-
 func OtherProvider(provider Provider) Provider {
 	if provider == ProviderCodex {
 		return ProviderClaude
@@ -99,16 +82,16 @@ func Resume(row Row, options ResumeOptions) error {
 	return launch(row.CWD, row.ResumeCommand(options))
 }
 
-func Fork(row Row, options ResumeOptions) error {
-	return launch(row.CWD, row.ForkCommand(options))
-}
-
 func Handoff(row Row, target Provider, resumeOptions ResumeOptions, handoffOptions HandoffOptions) error {
 	converted, err := Convert(row, target, handoffOptions)
 	if err != nil {
 		return err
 	}
 	return Resume(converted, resumeOptions)
+}
+
+func Branch(row Row) (Row, error) {
+	return Convert(row, row.Provider, HandoffOptions{})
 }
 
 func Delete(row Row) error {

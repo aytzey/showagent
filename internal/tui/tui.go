@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,19 +25,22 @@ const (
 	bothMessages
 )
 
-type Action int
-
-const (
-	ActionResume Action = iota
-	ActionHandoff
-	ActionFork
-)
-
 type Selection struct {
 	Row     session.Row
-	Action  Action
 	Options session.ResumeOptions
-	Handoff session.HandoffOptions
+}
+
+type sessionMutation int
+
+const (
+	mutationConvert sessionMutation = iota
+	mutationBranch
+)
+
+type sessionMutationMsg struct {
+	kind sessionMutation
+	row  session.Row
+	err  error
 }
 
 const (
@@ -157,11 +161,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "esc", "q":
 				return m, tea.Quit
 			case "enter":
-				return m.selectAction(ActionResume)
+				return m.selectResume()
 			case "x":
-				return m.selectAction(ActionHandoff)
+				cmd := m.convertSelected()
+				return m, tea.Batch(cmd, m.list.NewStatusMessage("converting session..."))
 			case "n":
-				return m.selectAction(ActionFork)
+				cmd := m.branchSelected()
+				return m, tea.Batch(cmd, m.list.NewStatusMessage("creating session branch..."))
 			case "delete", "backspace", "D":
 				cmd := m.deleteSelected()
 				return m, cmd
@@ -188,6 +194,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.list.NewStatusMessage("transfer scope: " + m.handoff.Label())
 			}
 		}
+	case sessionMutationMsg:
+		if msg.err != nil {
+			return m, m.list.NewStatusMessage("session action failed: " + msg.err.Error())
+		}
+		m.deleteKey = ""
+		m.providers[msg.row.Provider] = true
+		m.allRows = upsertAndSortRows(m.allRows, msg.row)
+		filtered := filterRows(m.allRows, m.providers)
+		cmd := m.list.SetItems(itemsFromRows(filtered))
+		if index := indexOfRow(filtered, msg.row); index >= 0 {
+			m.list.Select(index)
+		}
+		status := "converted to " + string(msg.row.Provider) + "; press enter to resume"
+		if msg.kind == mutationBranch {
+			status = "branched " + string(msg.row.Provider) + " session; press enter to resume"
+		}
+		return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
 	}
 
 	var cmd tea.Cmd
@@ -232,18 +255,42 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-func (m *model) selectAction(action Action) (tea.Model, tea.Cmd) {
+func (m *model) selectResume() (tea.Model, tea.Cmd) {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
 		return m, nil
 	}
 	m.selected = &Selection{
 		Row:     selected.row,
-		Action:  action,
 		Options: session.ResumeOptions{Dangerous: m.dangerous},
-		Handoff: m.handoff,
 	}
 	return m, tea.Quit
+}
+
+func (m *model) convertSelected() tea.Cmd {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return nil
+	}
+	row := selected.row
+	target := session.OtherProvider(row.Provider)
+	options := m.handoff
+	return func() tea.Msg {
+		converted, err := session.Convert(row, target, options)
+		return sessionMutationMsg{kind: mutationConvert, row: converted, err: err}
+	}
+}
+
+func (m *model) branchSelected() tea.Cmd {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return nil
+	}
+	row := selected.row
+	return func() tea.Msg {
+		branched, err := session.Branch(row)
+		return sessionMutationMsg{kind: mutationBranch, row: branched, err: err}
+	}
 }
 
 func (m *model) deleteSelected() tea.Cmd {
@@ -538,6 +585,25 @@ func removeRow(rows []session.Row, removed session.Row) []session.Row {
 		}
 	}
 	return filtered
+}
+
+func upsertAndSortRows(rows []session.Row, row session.Row) []session.Row {
+	next := removeRow(rows, row)
+	next = append(next, row)
+	sort.SliceStable(next, func(i, j int) bool {
+		return next[i].LastAt.After(next[j].LastAt)
+	})
+	return next
+}
+
+func indexOfRow(rows []session.Row, wanted session.Row) int {
+	wantedKey := rowKey(wanted)
+	for index, row := range rows {
+		if rowKey(row) == wantedKey {
+			return index
+		}
+	}
+	return -1
 }
 
 func rowKey(row session.Row) string {

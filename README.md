@@ -22,13 +22,12 @@ It is built as a portable Go TUI with:
 - One-key resume, branch, cross-agent conversion, and delete:
   - Codex: `codex resume <session-id>`
   - Codex yolo: `codex resume --dangerously-bypass-approvals-and-sandbox <session-id>`
-  - Codex branch: `codex fork <session-id>`
   - Codex delete: `codex delete --force <session-id>`
   - Claude Code: `claude --resume <session-id>`
   - Claude Code yolo: `claude --dangerously-skip-permissions --resume <session-id>`
-  - Claude Code branch: `claude --fork-session --resume <session-id>`
   - Claude Code delete: removes the selected local session JSONL file
-  - Cross-agent conversion writes a new target-provider session file, then resumes it
+  - Branch creates a new local session JSONL copy without leaving the picker
+  - Cross-agent conversion writes a new target-provider session file and keeps you in the picker
 - No runtime dependencies beyond the compiled binary
 - Works well on Ubuntu, Debian, Fedora, Arch, and other Linux distributions
 
@@ -66,8 +65,8 @@ Keybindings:
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |
 | `enter` | Resume selected session |
-| `x` | Convert selected session to the other agent, then resume the converted session |
-| `n` | Create a branch/fork of the selected session |
+| `x` | Convert selected session to the other agent and select the new session |
+| `n` | Create a full local branch/copy of the selected session and select it |
 | `delete`, `backspace`, `D` | Delete selected session after second press confirmation |
 | `q`, `esc`, `ctrl+c` | Quit |
 
@@ -75,10 +74,10 @@ When output is piped, `showagent` prints a plain table instead of opening the
 TUI.
 
 Cross-agent conversion preserves the selected user/assistant transcript as a new
-local session in the other provider's JSONL format, then calls that provider's
-normal resume command. It intentionally does not copy private runtime state such
-as tool-call internals, approval history, encrypted reasoning blobs, or provider
-attachments. The default scope is the full transcript.
+local session in the other provider's JSONL format, then selects that new session
+in the picker. Press `enter` to resume it. It intentionally does not copy private
+runtime state such as tool-call internals, approval history, encrypted reasoning
+blobs, or provider attachments. The default scope is the full transcript.
 
 ## Session Locations
 

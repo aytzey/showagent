@@ -104,18 +104,6 @@ func TestResumeCommandDangerousMode(t *testing.T) {
 	}
 }
 
-func TestForkCommandDangerousMode(t *testing.T) {
-	codex := Row{Provider: ProviderCodex, ID: "codex-session"}
-	if got := strings.Join(codex.ForkCommand(ResumeOptions{Dangerous: true}), " "); got != "codex fork --dangerously-bypass-approvals-and-sandbox codex-session" {
-		t.Fatalf("codex fork command = %q", got)
-	}
-
-	claude := Row{Provider: ProviderClaude, ID: "claude-session"}
-	if got := strings.Join(claude.ForkCommand(ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions --fork-session --resume claude-session" {
-		t.Fatalf("claude fork command = %q", got)
-	}
-}
-
 func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")

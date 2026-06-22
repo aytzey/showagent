@@ -97,3 +97,29 @@ func TestDetailViewFitsWidth(t *testing.T) {
 		t.Fatalf("detail width = %d, want <= %d\n%s", got, m.width, detail)
 	}
 }
+
+func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
+	old := session.Row{
+		Provider: session.ProviderCodex,
+		ID:       "old",
+		LastAt:   time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC),
+		File:     "/tmp/old.jsonl",
+	}
+	newRow := session.Row{
+		Provider: session.ProviderClaude,
+		ID:       "new",
+		LastAt:   time.Date(2026, 6, 22, 11, 0, 0, 0, time.UTC),
+		File:     "/tmp/new.jsonl",
+	}
+
+	rows := upsertAndSortRows([]session.Row{old}, newRow)
+	if len(rows) != 2 {
+		t.Fatalf("rows len = %d, want 2", len(rows))
+	}
+	if rows[0].ID != "new" {
+		t.Fatalf("new row was not sorted first: %#v", rows)
+	}
+	if index := indexOfRow(rows, newRow); index != 0 {
+		t.Fatalf("indexOfRow = %d, want 0", index)
+	}
+}

@@ -34,20 +34,9 @@ func main() {
 		return
 	}
 
-	if err := runSelection(*selection); err != nil {
+	if err := session.Resume(selection.Row, selection.Options); err != nil {
 		fmt.Fprintf(os.Stderr, "showagent: %v\n", err)
 		os.Exit(1)
-	}
-}
-
-func runSelection(selection tui.Selection) error {
-	switch selection.Action {
-	case tui.ActionHandoff:
-		return session.Handoff(selection.Row, session.OtherProvider(selection.Row.Provider), selection.Options, selection.Handoff)
-	case tui.ActionFork:
-		return session.Fork(selection.Row, selection.Options)
-	default:
-		return session.Resume(selection.Row, selection.Options)
 	}
 }
 
