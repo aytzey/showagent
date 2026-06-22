@@ -12,7 +12,11 @@ It is built as a portable Go TUI with:
 
 ## Features
 
-- Unified session list for `codex` and `claude`, sorted by latest activity
+- Unified session list for `codex` and `claude`, grouped by workspace folder
+  (groups and the sessions inside them are ordered newest-first)
+- One-key compound-engineering launch (`C`): pick Codex or Claude and it resumes
+  the session and captures durable learnings into a shared, per-project pool both
+  tools read and write
 - Provider badges, relative timestamps, and a focused detail panel
 - Instant startup: sessions are scanned in the background behind a spinner
 - Adaptive theme that adjusts to light and dark terminals (and honors `NO_COLOR`)
@@ -69,6 +73,7 @@ Keybindings:
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |
 | `enter` | Resume selected session |
+| `C` | Compound: pick Codex or Claude to resume the session and capture learnings |
 | `x` | Convert selected session to the other agent and select the new session |
 | `n` | Create a full local branch/copy of the selected session and select it |
 | `delete`, `backspace` | Delete selected session after second press confirmation |
@@ -82,6 +87,23 @@ local session in the other provider's JSONL format, then selects that new sessio
 in the picker. Press `enter` to resume it. It intentionally does not copy private
 runtime state such as tool-call internals, approval history, encrypted reasoning
 blobs, or provider attachments. The default scope is the full transcript.
+
+## Compound Engineering
+
+Press `C` on a session and choose **Codex** or **Claude**. `showagent` resumes
+that session in the chosen agent and starts it straight into a
+compound-engineering pass: review what was solved, then record the durable
+learnings as markdown.
+
+Learnings are pooled **per project** but **shared across both tools**: each
+workspace gets its own directory under `~/.showagent/learnings/<project>/`, and
+both Codex and Claude read from and write to it. So knowledge compounds across
+Codex and Claude for a project, while different projects never mix.
+
+- The shared root is `~/.showagent/learnings/` (override with
+  `SHOWAGENT_LEARNINGS_DIR`); each project lands in its own subdirectory.
+- If you pick the agent that did *not* create the session, `showagent` first
+  converts the session to that provider so it has full context.
 
 ## Session Locations
 

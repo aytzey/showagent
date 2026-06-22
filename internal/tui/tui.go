@@ -30,11 +30,24 @@ const (
 	detailLabelWidth   = 11
 )
 
+// Action is what the caller should do with a Selection.
+type Action int
+
+const (
+	// ActionResume resumes the session in its own provider.
+	ActionResume Action = iota
+	// ActionCompound runs a compound-engineering pass in the chosen Agent.
+	ActionCompound
+)
+
 // Selection is what Pick/Run hand back to the caller once the user chooses a
-// session to resume.
+// session to act on.
 type Selection struct {
 	Row     session.Row
 	Options session.ResumeOptions
+	Action  Action
+	// Agent is the provider chosen to run a compound pass (ActionCompound).
+	Agent session.Provider
 }
 
 type sessionMutation int
@@ -76,6 +89,16 @@ type item struct {
 
 func (i item) FilterValue() string { return i.row.FilterValue() }
 
+// headerItem is a non-selectable group header (one per workspace folder). It
+// returns an empty filter value so it is hidden automatically while searching,
+// which turns the grouped view into a flat result list during a search.
+type headerItem struct {
+	path  string
+	count int
+}
+
+func (h headerItem) FilterValue() string { return "" }
+
 type itemDelegate struct {
 	state *renderState
 }
@@ -85,31 +108,134 @@ func (d itemDelegate) Spacing() int                            { return 0 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	it, ok := listItem.(item)
-	if !ok {
+	switch it := listItem.(type) {
+	case headerItem:
+		_, _ = fmt.Fprint(w, renderGroupHeader(d.state.theme, m.Width(), it))
+	case item:
+		_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index()))
+	}
+}
+
+// groupedItems lays out rows under one header per workspace folder. Rows arrive
+// globally newest-first, so the first time a folder appears marks that group's
+// newest session: groups come out ordered newest-first, and rows stay
+// newest-first within each group.
+func groupedItems(rows []session.Row) []list.Item {
+	order := make([]string, 0)
+	groups := make(map[string][]session.Row)
+	for _, row := range rows {
+		if _, seen := groups[row.CWD]; !seen {
+			order = append(order, row.CWD)
+		}
+		groups[row.CWD] = append(groups[row.CWD], row)
+	}
+
+	items := make([]list.Item, 0, len(rows)+len(order))
+	for _, cwd := range order {
+		group := groups[cwd]
+		items = append(items, headerItem{path: cwd, count: len(group)})
+		for _, row := range group {
+			items = append(items, item{row: row})
+		}
+	}
+	return items
+}
+
+func sessionCount(items []list.Item) int {
+	count := 0
+	for _, it := range items {
+		if _, ok := it.(item); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func selectFirstSession(l *list.Model) {
+	for index, it := range l.VisibleItems() {
+		if _, ok := it.(item); ok {
+			l.Select(index)
+			return
+		}
+	}
+}
+
+func selectRowItem(l *list.Model, target session.Row) {
+	wanted := rowKey(target)
+	for index, it := range l.VisibleItems() {
+		if si, ok := it.(item); ok && rowKey(si.row) == wanted {
+			l.Select(index)
+			return
+		}
+	}
+	selectFirstSession(l)
+}
+
+// skipHeaders nudges the cursor off a group header onto a real session,
+// bouncing off the list boundaries so navigation never lands on a header.
+func (m *model) skipHeaders(preferDown bool) {
+	items := m.list.VisibleItems()
+	n := len(items)
+	if n == 0 {
 		return
 	}
-	_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index()))
+	for i := 0; i < n; i++ {
+		if _, isHeader := m.list.SelectedItem().(headerItem); !isHeader {
+			return
+		}
+		if preferDown {
+			if m.list.Index() >= n-1 {
+				preferDown = false
+				continue
+			}
+			m.list.CursorDown()
+		} else {
+			if m.list.Index() <= 0 {
+				preferDown = true
+				continue
+			}
+			m.list.CursorUp()
+		}
+	}
+	// Defensive: groupedItems always pairs a header with at least one session,
+	// so this is unreachable — but never leave the cursor stranded on a header.
+	if _, isHeader := m.list.SelectedItem().(headerItem); isHeader {
+		selectFirstSession(&m.list)
+	}
+}
+
+func downwardKey(msg tea.Msg) bool {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return true
+	}
+	switch k.String() {
+	case "up", "k", "pgup", "left", "home", "g":
+		return false
+	}
+	return true
 }
 
 type model struct {
-	list        list.Model
-	spinner     spinner.Model
-	help        help.Model
-	keys        keyMap
-	render      *renderState
-	allRows     []session.Row
-	providers   map[session.Provider]bool
-	mode        previewMode
-	dangerous   bool
-	handoff     session.HandoffOptions
-	selected    *Selection
-	deleteArmed string
-	busy        string
-	loading     bool
-	isDark      bool
-	width       int
-	height      int
+	list             list.Model
+	spinner          spinner.Model
+	help             help.Model
+	keys             keyMap
+	render           *renderState
+	allRows          []session.Row
+	providers        map[session.Provider]bool
+	mode             previewMode
+	dangerous        bool
+	handoff          session.HandoffOptions
+	selected         *Selection
+	deleteArmed      string
+	busy             string
+	loading          bool
+	compoundChoosing bool
+	compoundRow      *session.Row
+	isDark           bool
+	width            int
+	height           int
 }
 
 func newModel(rows []session.Row, mode previewMode) model {
@@ -123,7 +249,7 @@ func newLoadingModel(mode previewMode) model {
 func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	render := &renderState{mode: mode, theme: newTheme(true)}
 	providers := defaultProviderFilter(rows)
-	items := itemsFromRows(filterRows(rows, providers))
+	items := groupedItems(filterRows(rows, providers))
 
 	l := list.New(items, itemDelegate{state: render}, 80, 20)
 	l.SetFilteringEnabled(true)
@@ -140,6 +266,8 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	km.NextPage = key.NewBinding(key.WithKeys("pgdown", "right"), key.WithHelp("pgdn", "next page"))
 	km.PrevPage = key.NewBinding(key.WithKeys("pgup", "left"), key.WithHelp("pgup", "prev page"))
 	l.KeyMap = km
+
+	selectFirstSession(&l)
 
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(render.theme.spinner))
 	h := help.New()
@@ -195,7 +323,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.allRows = msg.rows
 		m.providers = defaultProviderFilter(msg.rows)
-		cmd := m.list.SetItems(itemsFromRows(filterRows(msg.rows, m.providers)))
+		cmd := m.list.SetItems(groupedItems(filterRows(msg.rows, m.providers)))
+		selectFirstSession(&m.list)
 		m.resizeList()
 		return m, cmd
 	case sessionMutationMsg:
@@ -206,6 +335,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	m.skipHeaders(downwardKey(msg))
 	m.reconcileDeleteArm()
 	return m, cmd
 }
@@ -218,10 +348,26 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The compound chooser is a modal: pick the agent, or cancel.
+	if m.compoundChoosing {
+		switch msg.String() {
+		case "1":
+			return m.startCompound(session.ProviderCodex)
+		case "2":
+			return m.startCompound(session.ProviderClaude)
+		case "esc", "q", "ctrl+c":
+			m.compoundChoosing = false
+			m.compoundRow = nil
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// While typing a filter, every key belongs to the list.
 	if m.list.SettingFilter() {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
+		m.skipHeaders(downwardKey(msg))
 		m.reconcileDeleteArm()
 		return m, cmd
 	}
@@ -230,6 +376,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" && m.list.IsFiltered() {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
+		m.skipHeaders(true)
 		m.reconcileDeleteArm()
 		return m, cmd
 	}
@@ -250,6 +397,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Resume):
 		return m.selectResume()
+	case key.Matches(msg, m.keys.Compound):
+		selected, ok := m.list.SelectedItem().(item)
+		if !ok {
+			return m, m.list.NewStatusMessage("no session selected")
+		}
+		// Capture the row now so the choice acts on what the user saw, even if
+		// the list changes while the chooser is open.
+		row := selected.row
+		m.compoundRow = &row
+		m.compoundChoosing = true
+		return m, nil
 	case key.Matches(msg, m.keys.Convert):
 		return m.startMutation(m.convertSelected(), "conversion", "converting session…")
 	case key.Matches(msg, m.keys.Branch):
@@ -283,6 +441,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	m.skipHeaders(downwardKey(msg))
 	m.reconcileDeleteArm()
 	return m, cmd
 }
@@ -298,10 +457,8 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	m.allRows = upsertAndSortRows(m.allRows, msg.row)
 	filtered := filterRows(m.allRows, m.providers)
 	m.list.ResetFilter()
-	cmd := m.list.SetItems(itemsFromRows(filtered))
-	if index := indexOfRow(filtered, msg.row); index >= 0 {
-		m.list.Select(index)
-	}
+	cmd := m.list.SetItems(groupedItems(filtered))
+	selectRowItem(&m.list, msg.row)
 
 	status := "converted to " + string(msg.row.Provider) + " · press enter to resume"
 	if msg.kind == mutationBranch {
@@ -361,8 +518,8 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	}
 
 	m.providers[provider] = !m.providers[provider]
-	cmd := m.list.SetItems(itemsFromRows(filterRows(m.allRows, m.providers)))
-	m.list.ResetSelected()
+	cmd := m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers)))
+	selectFirstSession(&m.list)
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
@@ -428,9 +585,23 @@ func (m *model) deleteSelected() tea.Cmd {
 	if enabledProviderCount(m.providers) == 0 {
 		m.providers = defaultProviderFilter(m.allRows)
 	}
-	cmd := m.list.SetItems(itemsFromRows(filterRows(m.allRows, m.providers)))
-	m.list.ResetSelected()
+	cmd := m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers)))
+	selectFirstSession(&m.list)
 	return tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(selected.row.Provider)+" session"))
+}
+
+func (m model) startCompound(agent session.Provider) (tea.Model, tea.Cmd) {
+	if m.compoundRow == nil {
+		m.compoundChoosing = false
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	m.selected = &Selection{
+		Row:     *m.compoundRow,
+		Options: session.ResumeOptions{Dangerous: m.dangerous},
+		Action:  ActionCompound,
+		Agent:   agent,
+	}
+	return m, tea.Quit
 }
 
 func (m model) View() tea.View {
@@ -438,6 +609,8 @@ func (m model) View() tea.View {
 	switch {
 	case m.loading:
 		content = m.loadingView()
+	case m.compoundChoosing:
+		content = m.compoundView()
 	case len(m.allRows) == 0:
 		content = m.emptyView()
 	default:
@@ -474,7 +647,7 @@ func (m model) headerView() string {
 func (m model) statsLine() string {
 	th := m.render.theme
 	parts := []string{
-		th.muted.Render(fmt.Sprintf("%d/%d sessions", len(m.list.VisibleItems()), len(m.allRows))),
+		th.muted.Render(fmt.Sprintf("%d/%d sessions", sessionCount(m.list.VisibleItems()), len(m.allRows))),
 		th.chip.Render(providerLabel(m.providers)),
 		th.muted.Render("preview " + modeShort(m.mode)),
 	}
@@ -594,6 +767,28 @@ func (m model) emptyView() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
+func (m model) compoundView() string {
+	th := m.render.theme
+	target := "the selected session"
+	if m.compoundRow != nil {
+		target = string(m.compoundRow.Provider) + " · " + baseName(m.compoundRow.CWD)
+	}
+	box := th.detail.Width(min(max(m.width-6, 30), 64)).Render(strings.Join([]string{
+		th.title.Render("Compound engineering"),
+		"",
+		th.muted.Render("Run a compound pass on " + target + " and"),
+		th.muted.Render("pool the learnings for this project (codex + claude)."),
+		"",
+		th.label.Render("[1]") + " Codex      " + th.label.Render("[2]") + " Claude",
+		"",
+		th.hint.Render("esc cancel · current mode: " + resumeModeLabel(m.dangerous)),
+	}, "\n"))
+	if m.width <= 0 || m.height <= 0 {
+		return box
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
 // Pick runs the picker over an already-discovered set of rows (used in tests).
 func Pick(rows []session.Row) (*Selection, error) {
 	return runProgram(newModel(rows, firstMessage))
@@ -618,14 +813,6 @@ func runProgram(m model) (*Selection, error) {
 
 func padLabel(s string) string {
 	return fmt.Sprintf("%-*s", detailLabelWidth, s)
-}
-
-func itemsFromRows(rows []session.Row) []list.Item {
-	items := make([]list.Item, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, item{row: row})
-	}
-	return items
 }
 
 func defaultProviderFilter(rows []session.Row) map[session.Provider]bool {

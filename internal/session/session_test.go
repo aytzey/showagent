@@ -340,3 +340,68 @@ func writeFile(t *testing.T, path string, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompoundCommand(t *testing.T) {
+	prompt := "do the compound pass"
+
+	codex := Row{Provider: ProviderCodex, ID: "cid"}
+	got := codex.CompoundCommand(ResumeOptions{}, prompt)
+	want := []string{"codex", "resume", "cid", prompt}
+	if strings.Join(got, "\x1f") != strings.Join(want, "\x1f") {
+		t.Fatalf("codex compound = %v, want %v", got, want)
+	}
+	gotYolo := codex.CompoundCommand(ResumeOptions{Dangerous: true}, prompt)
+	wantYolo := []string{"codex", "resume", "--dangerously-bypass-approvals-and-sandbox", "cid", prompt}
+	if strings.Join(gotYolo, "\x1f") != strings.Join(wantYolo, "\x1f") {
+		t.Fatalf("codex yolo compound = %v, want %v", gotYolo, wantYolo)
+	}
+
+	claude := Row{Provider: ProviderClaude, ID: "clid"}
+	gotC := claude.CompoundCommand(ResumeOptions{Dangerous: true}, prompt)
+	wantC := []string{"claude", "--dangerously-skip-permissions", "--resume", "clid", prompt}
+	if strings.Join(gotC, "\x1f") != strings.Join(wantC, "\x1f") {
+		t.Fatalf("claude yolo compound = %v, want %v", gotC, wantC)
+	}
+}
+
+func TestProjectLearningsDirIsPerProject(t *testing.T) {
+	t.Setenv("SHOWAGENT_LEARNINGS_DIR", "/tmp/base")
+	a := ProjectLearningsDir("/home/u/proj-a")
+	b := ProjectLearningsDir("/home/u/proj-b")
+	if a == b {
+		t.Fatalf("different projects must map to different dirs: %q == %q", a, b)
+	}
+	if !strings.HasPrefix(a, "/tmp/base") || !strings.HasPrefix(b, "/tmp/base") {
+		t.Fatalf("dirs should sit under the override base: %q %q", a, b)
+	}
+	// Same project is stable (shared across codex/claude).
+	if ProjectLearningsDir("/home/u/proj-a") != a {
+		t.Fatal("same project must map to the same dir")
+	}
+}
+
+func TestCompoundPromptMentionsSharedDir(t *testing.T) {
+	p := compoundPrompt("/tmp/base/-home-u-proj-a")
+	for _, want := range []string{"/tmp/base/-home-u-proj-a", "Codex", "Claude", "compound-engineering"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("compound prompt missing %q", want)
+		}
+	}
+}
+
+func TestProjectLearningsDirRejectsTraversal(t *testing.T) {
+	base := "/tmp/base"
+	t.Setenv("SHOWAGENT_LEARNINGS_DIR", base)
+	// The resolved learnings dir must always stay inside the base, no matter how
+	// hostile the session's cwd is.
+	for _, cwd := range []string{"..", "../..", ".", "../../etc", "/a/../../b"} {
+		got := filepath.Clean(ProjectLearningsDir(cwd))
+		if got != base && !strings.HasPrefix(got, base+string(filepath.Separator)) {
+			t.Fatalf("cwd %q escaped base: %q", cwd, got)
+		}
+	}
+	// The bare ".." must collapse to the safe fallback rather than the parent.
+	if got := ProjectLearningsDir(".."); got != filepath.Join(base, "-unknown-cwd") {
+		t.Fatalf("cwd %q = %q, want fallback", "..", got)
+	}
+}

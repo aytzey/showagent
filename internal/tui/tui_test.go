@@ -341,8 +341,8 @@ func TestSessionsLoadedTransition(t *testing.T) {
 	if got.loading {
 		t.Fatal("model should leave loading state after sessionsLoadedMsg")
 	}
-	if len(got.list.Items()) != 1 {
-		t.Fatalf("items after load = %d, want 1", len(got.list.Items()))
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("sessions after load = %d, want 1", n)
 	}
 }
 
@@ -352,8 +352,8 @@ func TestProviderToggle(t *testing.T) {
 		{Provider: session.ProviderClaude, ID: "d1", LastAt: time.Now(), File: "/tmp/d1.jsonl"},
 	}
 	m := sizedModel(rows)
-	if len(m.list.Items()) != 2 {
-		t.Fatalf("initial items = %d, want 2", len(m.list.Items()))
+	if got := sessionCount(m.list.VisibleItems()); got != 2 {
+		t.Fatalf("initial sessions = %d, want 2", got)
 	}
 
 	off, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
@@ -361,14 +361,14 @@ func TestProviderToggle(t *testing.T) {
 	if got.providers[session.ProviderCodex] {
 		t.Fatal("codex should be disabled after toggle")
 	}
-	if len(got.list.Items()) != 1 {
-		t.Fatalf("filtered items = %d, want 1", len(got.list.Items()))
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("filtered sessions = %d, want 1", n)
 	}
 
 	on, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
 	got = asModel(t, on)
-	if !got.providers[session.ProviderCodex] || len(got.list.Items()) != 2 {
-		t.Fatalf("codex not re-enabled: enabled=%v items=%d", got.providers[session.ProviderCodex], len(got.list.Items()))
+	if !got.providers[session.ProviderCodex] || sessionCount(got.list.VisibleItems()) != 2 {
+		t.Fatalf("codex not re-enabled: enabled=%v sessions=%d", got.providers[session.ProviderCodex], sessionCount(got.list.VisibleItems()))
 	}
 }
 
@@ -383,8 +383,8 @@ func TestProviderToggleKeepsLastProvider(t *testing.T) {
 	if !got.providers[session.ProviderCodex] {
 		t.Fatal("the only provider must stay enabled")
 	}
-	if len(got.list.Items()) != 1 {
-		t.Fatalf("items = %d, want 1", len(got.list.Items()))
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("sessions = %d, want 1", n)
 	}
 }
 
@@ -492,6 +492,103 @@ func TestEscClearsAppliedFilter(t *testing.T) {
 	}
 	if got.list.IsFiltered() {
 		t.Fatal("esc did not clear the applied filter")
+	}
+}
+
+func TestGroupedItemsOrdering(t *testing.T) {
+	// alpha has the newest session overall; beta is older. Within alpha, the
+	// newer row must come first.
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a-new", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl"},
+		{Provider: session.ProviderClaude, ID: "b-new", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl"},
+		{Provider: session.ProviderCodex, ID: "a-old", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC), File: "/t/a2.jsonl"},
+	}
+	// rows must arrive globally newest-first (as Discover provides).
+	items := groupedItems(rows)
+
+	wantHeaders := []string{"/p/alpha", "/p/beta"}
+	gotHeaders := []string{}
+	gotRows := []string{}
+	for _, it := range items {
+		switch v := it.(type) {
+		case headerItem:
+			gotHeaders = append(gotHeaders, v.path)
+		case item:
+			gotRows = append(gotRows, v.row.ID)
+		}
+	}
+	if strings.Join(gotHeaders, ",") != strings.Join(wantHeaders, ",") {
+		t.Fatalf("group order = %v, want %v", gotHeaders, wantHeaders)
+	}
+	// alpha group: a-new before a-old; then beta: b-new
+	if strings.Join(gotRows, ",") != "a-new,a-old,b-new" {
+		t.Fatalf("row order = %v, want [a-new a-old b-new]", gotRows)
+	}
+	// first item is a header
+	if _, ok := items[0].(headerItem); !ok {
+		t.Fatalf("first item should be a group header, got %T", items[0])
+	}
+}
+
+func TestInitialSelectionAndNavSkipHeaders(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a1", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl", FirstUser: "x"},
+		{Provider: session.ProviderClaude, ID: "b1", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl", FirstUser: "y"},
+		{Provider: session.ProviderClaude, ID: "b2", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC), File: "/t/b2.jsonl", FirstUser: "z"},
+	}
+	m := sizedModel(rows)
+	if _, ok := m.list.SelectedItem().(item); !ok {
+		t.Fatalf("initial selection landed on a header: %T", m.list.SelectedItem())
+	}
+
+	// Walk down across the beta group header — the cursor must never rest on it.
+	cur := m
+	for i := 0; i < 5; i++ {
+		updated, _ := cur.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+		cur = asModel(t, updated)
+		if _, isHeader := cur.list.SelectedItem().(headerItem); isHeader {
+			t.Fatalf("cursor landed on a header after %d downs", i+1)
+		}
+	}
+}
+
+func TestCompoundChooserSelectsAgent(t *testing.T) {
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	m := sizedModel(rows)
+
+	opened, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'C'}))
+	om := asModel(t, opened)
+	if !om.compoundChoosing {
+		t.Fatal("C did not open the compound chooser")
+	}
+	if selectedFromModel(t, om) != nil {
+		t.Fatal("opening the chooser should not select yet")
+	}
+
+	chosen, _ := om.Update(tea.KeyPressMsg(tea.Key{Code: '2'}))
+	sel := selectedFromModel(t, chosen)
+	if sel == nil || sel.Action != ActionCompound {
+		t.Fatalf("choice did not yield a compound selection: %#v", sel)
+	}
+	if sel.Agent != session.ProviderClaude {
+		t.Fatalf("agent = %q, want claude", sel.Agent)
+	}
+	if sel.Row.ID != "x" {
+		t.Fatalf("row = %q, want x", sel.Row.ID)
+	}
+}
+
+func TestCompoundChooserCancel(t *testing.T) {
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	m := sizedModel(rows)
+	opened, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'C'}))
+	cancelled, _ := asModel(t, opened).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	cm := asModel(t, cancelled)
+	if cm.compoundChoosing {
+		t.Fatal("esc did not close the compound chooser")
+	}
+	if selectedFromModel(t, cancelled) != nil {
+		t.Fatal("cancelling the chooser must not select anything")
 	}
 }
 

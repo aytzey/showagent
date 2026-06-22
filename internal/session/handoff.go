@@ -314,7 +314,10 @@ func claudeProjectDir(cwd string) string {
 	}
 	value := strings.ReplaceAll(clean, string(filepath.Separator), "-")
 	value = strings.TrimSpace(value)
-	if value == "" || value == "." {
+	// Reject anything that could escape the parent when used as a single path
+	// segment (e.g. a session whose cwd is ".."), so learnings/converted files
+	// can never be written outside their intended directory.
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
 		return "-unknown-cwd"
 	}
 	return value

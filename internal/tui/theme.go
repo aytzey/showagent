@@ -16,6 +16,7 @@ type theme struct {
 	chip         lipgloss.Style
 	yoloChip     lipgloss.Style
 	header       lipgloss.Style
+	groupHeader  lipgloss.Style
 	cursor       lipgloss.Style
 	selected     lipgloss.Style
 	codexBadge   lipgloss.Style
@@ -56,6 +57,8 @@ func newTheme(isDark bool) *theme {
 		header: lipgloss.NewStyle().Bold(true).
 			Foreground(ld(lipgloss.Color("#1F2328"), lipgloss.Color("#C9D1D9"))).
 			Background(ld(lipgloss.Color("#EAEEF2"), lipgloss.Color("#30363D"))),
+		groupHeader: lipgloss.NewStyle().Bold(true).
+			Foreground(ld(lipgloss.Color("#8250DF"), lipgloss.Color("#D2A8FF"))),
 		cursor: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		selected: lipgloss.NewStyle().Bold(true).
 			Foreground(white).Background(selBg),
@@ -91,6 +94,7 @@ func monoTheme() *theme {
 		chip:         lipgloss.NewStyle().Reverse(true).Padding(0, 1),
 		yoloChip:     reverse,
 		header:       bold,
+		groupHeader:  bold,
 		cursor:       bold,
 		selected:     reverse,
 		codexBadge:   bold,

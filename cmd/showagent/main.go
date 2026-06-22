@@ -35,8 +35,15 @@ func main() {
 		return
 	}
 
-	if err := session.Resume(selection.Row, selection.Options); err != nil {
-		fmt.Fprintf(os.Stderr, "showagent: %v\n", err)
+	var actErr error
+	switch selection.Action {
+	case tui.ActionCompound:
+		actErr = session.Compound(selection.Row, selection.Agent, selection.Options)
+	default:
+		actErr = session.Resume(selection.Row, selection.Options)
+	}
+	if actErr != nil {
+		fmt.Fprintf(os.Stderr, "showagent: %v\n", actErr)
 		os.Exit(1)
 	}
 }

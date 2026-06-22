@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,6 +39,32 @@ func PrintTable(w io.Writer, rows []session.Row) {
 func columnHeader(th *theme, width int, mode previewMode) string {
 	line := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE · "+modeShort(mode))
 	return th.header.Render(line)
+}
+
+func renderGroupHeader(th *theme, width int, h headerItem) string {
+	if width <= 0 {
+		width = 80
+	}
+	count := fmt.Sprintf(" (%d)", h.count)
+	label := "▸ " + collapseHome(h.path)
+	text := truncateMiddle(label, max(1, width-lipgloss.Width(count))) + count
+	return th.groupHeader.Width(width).Render(truncateCells(text, width))
+}
+
+func baseName(path string) string {
+	return filepath.Base(filepath.Clean(path))
+}
+
+func collapseHome(path string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if path == home {
+			return "~"
+		}
+		if strings.HasPrefix(path, home+string(filepath.Separator)) {
+			return "~" + path[len(home):]
+		}
+	}
+	return path
 }
 
 func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
