@@ -31,6 +31,7 @@ type Row struct {
 	ID        string
 	LastAt    time.Time
 	CWD       string
+	LaunchCWD string
 	File      string
 	FirstUser string
 	LastUser  string
@@ -69,6 +70,7 @@ func (r Row) FilterValue() string {
 		string(r.Provider),
 		r.ID,
 		r.CWD,
+		r.LaunchCWD,
 		r.File,
 		r.FirstUser,
 		r.LastUser,
@@ -84,7 +86,14 @@ func Discover() []Row {
 }
 
 func Resume(row Row, options ResumeOptions) error {
-	return launch(row.CWD, row.ResumeCommand(options))
+	return launch(row.resumeCWD(), row.ResumeCommand(options))
+}
+
+func (r Row) resumeCWD() string {
+	if r.Provider == ProviderClaude && strings.TrimSpace(r.LaunchCWD) != "" {
+		return r.LaunchCWD
+	}
+	return r.CWD
 }
 
 func Handoff(row Row, target Provider, resumeOptions ResumeOptions, handoffOptions HandoffOptions) error {

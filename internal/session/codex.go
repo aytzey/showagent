@@ -58,6 +58,7 @@ func parseCodex(path string) (Row, bool) {
 		ID:        id,
 		LastAt:    lastAt,
 		CWD:       cwd,
+		LaunchCWD: cwd,
 		File:      path,
 		FirstUser: firstUser,
 		LastUser:  scanCodexLastUser(path),

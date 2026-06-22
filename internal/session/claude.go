@@ -37,9 +37,11 @@ func discoverClaude(claudeHome string) []Row {
 func parseClaude(path string) (Row, bool) {
 	id := sessionIDFromPath(path)
 	cwd := ""
+	launchCWD := ""
 	firstUser := ""
 	lastUser := ""
 	var lastAt string
+	projectDir := filepath.Base(filepath.Dir(path))
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -64,6 +66,9 @@ func parseClaude(path string) (Row, bool) {
 		}
 		if record.CWD != "" {
 			cwd = record.CWD
+			if claudeProjectDir(record.CWD) == projectDir {
+				launchCWD = record.CWD
+			}
 		}
 		if record.Timestamp != "" {
 			lastAt = record.Timestamp
@@ -92,16 +97,31 @@ func parseClaude(path string) (Row, bool) {
 	if cwd == "" {
 		cwd = "(unknown cwd)"
 	}
+	if launchCWD == "" {
+		launchCWD = claudeProjectPath(projectDir)
+	}
 
 	return Row{
 		Provider:  ProviderClaude,
 		ID:        id,
 		LastAt:    timestamp,
 		CWD:       cwd,
+		LaunchCWD: launchCWD,
 		File:      path,
 		FirstUser: firstUser,
 		LastUser:  lastUser,
 	}, true
+}
+
+func claudeProjectPath(projectDir string) string {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" || projectDir == "." || projectDir == "-unknown-cwd" {
+		return ""
+	}
+	if strings.HasPrefix(projectDir, "-") {
+		return string(filepath.Separator) + strings.ReplaceAll(strings.TrimPrefix(projectDir, "-"), "-", string(filepath.Separator))
+	}
+	return strings.ReplaceAll(projectDir, "-", string(filepath.Separator))
 }
 
 func claudeUserText(record claudeRecord) string {

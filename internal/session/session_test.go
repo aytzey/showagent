@@ -86,6 +86,35 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	}
 }
 
+func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	project := filepath.Join(root, "project")
+	nested := filepath.Join(project, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", claudeHome)
+
+	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
+	writeFile(t, filepath.Join(claudeHome, "projects", claudeProjectDir(project), sessionID+".jsonl"), `
+{"type":"user","message":{"role":"user","content":"started in project"},"timestamp":"2026-06-02T10:00:00Z","cwd":"`+project+`","sessionId":"`+sessionID+`"}
+{"type":"user","message":{"role":"user","content":"continued in nested dir"},"timestamp":"2026-06-02T10:01:00Z","cwd":"`+nested+`","sessionId":"`+sessionID+`"}
+`)
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	if rows[0].CWD != nested {
+		t.Fatalf("display cwd = %q, want latest cwd %q", rows[0].CWD, nested)
+	}
+	if rows[0].resumeCWD() != project {
+		t.Fatalf("resume cwd = %q, want Claude project bucket cwd %q", rows[0].resumeCWD(), project)
+	}
+}
+
 func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
