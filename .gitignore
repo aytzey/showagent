@@ -1,0 +1,10 @@
+/showcodex
+/showcodex-*
+/dist/
+/build/
+
+*.test
+*.out
+coverage.txt
+
+.DS_Store
