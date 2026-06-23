@@ -41,13 +41,20 @@ func columnHeader(th *theme, width int, mode previewMode) string {
 	return th.header.Render(line)
 }
 
-func renderGroupHeader(th *theme, width int, h headerItem) string {
+func renderGroupHeader(th *theme, width int, h headerItem, selected bool) string {
 	if width <= 0 {
 		width = 80
 	}
 	count := fmt.Sprintf(" (%d)", h.count)
-	label := "▸ " + collapseHome(h.path)
+	icon := "▾"
+	if h.collapsed {
+		icon = "▸"
+	}
+	label := icon + " " + collapseHome(h.path)
 	text := truncateMiddle(label, max(1, width-lipgloss.Width(count))) + count
+	if selected {
+		return th.selected.Width(width).Render(truncateCells(text, width))
+	}
 	return th.groupHeader.Width(width).Render(truncateCells(text, width))
 }
 

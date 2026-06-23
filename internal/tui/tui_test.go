@@ -504,7 +504,7 @@ func TestGroupedItemsOrdering(t *testing.T) {
 		{Provider: session.ProviderCodex, ID: "a-old", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC), File: "/t/a2.jsonl"},
 	}
 	// rows must arrive globally newest-first (as Discover provides).
-	items := groupedItems(rows)
+	items := groupedItems(rows, nil)
 
 	wantHeaders := []string{"/p/alpha", "/p/beta"}
 	gotHeaders := []string{}
@@ -530,7 +530,7 @@ func TestGroupedItemsOrdering(t *testing.T) {
 	}
 }
 
-func TestInitialSelectionAndNavSkipHeaders(t *testing.T) {
+func TestCategoryHeadersCanCollapseAndExpand(t *testing.T) {
 	rows := []session.Row{
 		{Provider: session.ProviderCodex, ID: "a1", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl", FirstUser: "x"},
 		{Provider: session.ProviderClaude, ID: "b1", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl", FirstUser: "y"},
@@ -541,14 +541,52 @@ func TestInitialSelectionAndNavSkipHeaders(t *testing.T) {
 		t.Fatalf("initial selection landed on a header: %T", m.list.SelectedItem())
 	}
 
-	// Walk down across the beta group header — the cursor must never rest on it.
-	cur := m
-	for i := 0; i < 5; i++ {
-		updated, _ := cur.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
-		cur = asModel(t, updated)
-		if _, isHeader := cur.list.SelectedItem().(headerItem); isHeader {
-			t.Fatalf("cursor landed on a header after %d downs", i+1)
-		}
+	onHeader, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	got := asModel(t, onHeader)
+	header, ok := got.list.SelectedItem().(headerItem)
+	if !ok || header.path != "/p/beta" {
+		t.Fatalf("down should land on beta header, got %#v", got.list.SelectedItem())
+	}
+
+	collapsed, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	got = asModel(t, collapsed)
+	header, ok = got.list.SelectedItem().(headerItem)
+	if !ok || !header.collapsed {
+		t.Fatalf("enter should collapse selected header, got %#v", got.list.SelectedItem())
+	}
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("visible sessions after collapse = %d, want 1", n)
+	}
+
+	expanded, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeySpace}))
+	got = asModel(t, expanded)
+	header, ok = got.list.SelectedItem().(headerItem)
+	if !ok || header.collapsed {
+		t.Fatalf("space should expand selected header, got %#v", got.list.SelectedItem())
+	}
+	if n := sessionCount(got.list.VisibleItems()); n != 3 {
+		t.Fatalf("visible sessions after expand = %d, want 3", n)
+	}
+}
+
+func TestCollapsedCategoriesAreSearchable(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a1", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderClaude, ID: "b1", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl", FirstUser: "needle"},
+	}
+	m := sizedModel(rows)
+
+	onHeader, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	collapsed, _ := asModel(t, onHeader).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	got := asModel(t, collapsed)
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("visible sessions after collapse = %d, want 1", n)
+	}
+
+	searching, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+	got = asModel(t, searching)
+	if n := sessionCount(got.list.VisibleItems()); n != 2 {
+		t.Fatalf("sessions available after starting search = %d, want 2", n)
 	}
 }
 

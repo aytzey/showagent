@@ -10,7 +10,11 @@ import (
 
 func main() {
 	if len(os.Args) > 1 {
-		fmt.Fprintln(os.Stderr, "showagent does not take arguments. Run: showagent")
+		if len(os.Args) == 2 && os.Args[1] == "setup" {
+			setup()
+			return
+		}
+		fmt.Fprintln(os.Stderr, "usage: showagent [setup]")
 		os.Exit(2)
 	}
 
@@ -45,6 +49,21 @@ func main() {
 	if actErr != nil {
 		fmt.Fprintf(os.Stderr, "showagent: %v\n", actErr)
 		os.Exit(1)
+	}
+}
+
+func setup() {
+	results, err := session.EnsureCompoundEngineeringPlugin()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "showagent setup: %v\n", err)
+		os.Exit(1)
+	}
+	for _, result := range results {
+		extra := ""
+		if result.MarketplaceAdded {
+			extra = " (marketplace added)"
+		}
+		fmt.Fprintf(os.Stdout, "%s: %s%s\n", result.Provider, result.Status(), extra)
 	}
 }
 

@@ -10,6 +10,7 @@ type keyMap struct {
 	Page     key.Binding
 	Search   key.Binding
 	Resume   key.Binding
+	Collapse key.Binding
 	Compound key.Binding
 	Convert  key.Binding
 	Branch   key.Binding
@@ -30,6 +31,7 @@ func defaultKeys() keyMap {
 		Page:     key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "page")),
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Resume:   key.NewBinding(key.WithKeys("enter", "ctrl+m"), key.WithHelp("enter", "resume")),
+		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
 		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "hand off")),
 		Branch:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
@@ -46,15 +48,15 @@ func defaultKeys() keyMap {
 
 // ShortHelp is the one-line hint shown under the header.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Yolo, k.Compound, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
+	return []key.Binding{k.Resume, k.Collapse, k.Yolo, k.Compound, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Page, k.Search},
-		{k.Resume, k.Compound, k.Convert, k.Branch},
-		{k.Delete, k.Preview, k.Scope, k.Yolo},
-		{k.Codex, k.Claude, k.Help, k.Quit},
+		{k.Resume, k.Collapse, k.Compound, k.Convert},
+		{k.Branch, k.Delete, k.Preview, k.Scope},
+		{k.Yolo, k.Codex, k.Claude, k.Help, k.Quit},
 	}
 }

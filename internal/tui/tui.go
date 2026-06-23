@@ -89,12 +89,13 @@ type item struct {
 
 func (i item) FilterValue() string { return i.row.FilterValue() }
 
-// headerItem is a non-selectable group header (one per workspace folder). It
+// headerItem is a selectable group header (one per workspace folder). It
 // returns an empty filter value so it is hidden automatically while searching,
 // which turns the grouped view into a flat result list during a search.
 type headerItem struct {
-	path  string
-	count int
+	path      string
+	count     int
+	collapsed bool
 }
 
 func (h headerItem) FilterValue() string { return "" }
@@ -110,7 +111,7 @@ func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	switch it := listItem.(type) {
 	case headerItem:
-		_, _ = fmt.Fprint(w, renderGroupHeader(d.state.theme, m.Width(), it))
+		_, _ = fmt.Fprint(w, renderGroupHeader(d.state.theme, m.Width(), it, index == m.Index()))
 	case item:
 		_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index()))
 	}
@@ -120,7 +121,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 // globally newest-first, so the first time a folder appears marks that group's
 // newest session: groups come out ordered newest-first, and rows stay
 // newest-first within each group.
-func groupedItems(rows []session.Row) []list.Item {
+func groupedItems(rows []session.Row, collapsed map[string]bool) []list.Item {
 	order := make([]string, 0)
 	groups := make(map[string][]session.Row)
 	for _, row := range rows {
@@ -133,9 +134,12 @@ func groupedItems(rows []session.Row) []list.Item {
 	items := make([]list.Item, 0, len(rows)+len(order))
 	for _, cwd := range order {
 		group := groups[cwd]
-		items = append(items, headerItem{path: cwd, count: len(group)})
-		for _, row := range group {
-			items = append(items, item{row: row})
+		isCollapsed := collapsed[cwd]
+		items = append(items, headerItem{path: cwd, count: len(group), collapsed: isCollapsed})
+		if !isCollapsed {
+			for _, row := range group {
+				items = append(items, item{row: row})
+			}
 		}
 	}
 	return items
@@ -171,49 +175,13 @@ func selectRowItem(l *list.Model, target session.Row) {
 	selectFirstSession(l)
 }
 
-// skipHeaders nudges the cursor off a group header onto a real session,
-// bouncing off the list boundaries so navigation never lands on a header.
-func (m *model) skipHeaders(preferDown bool) {
-	items := m.list.VisibleItems()
-	n := len(items)
-	if n == 0 {
-		return
-	}
-	for i := 0; i < n; i++ {
-		if _, isHeader := m.list.SelectedItem().(headerItem); !isHeader {
+func selectHeaderItem(l *list.Model, path string) {
+	for index, it := range l.VisibleItems() {
+		if header, ok := it.(headerItem); ok && header.path == path {
+			l.Select(index)
 			return
 		}
-		if preferDown {
-			if m.list.Index() >= n-1 {
-				preferDown = false
-				continue
-			}
-			m.list.CursorDown()
-		} else {
-			if m.list.Index() <= 0 {
-				preferDown = true
-				continue
-			}
-			m.list.CursorUp()
-		}
 	}
-	// Defensive: groupedItems always pairs a header with at least one session,
-	// so this is unreachable — but never leave the cursor stranded on a header.
-	if _, isHeader := m.list.SelectedItem().(headerItem); isHeader {
-		selectFirstSession(&m.list)
-	}
-}
-
-func downwardKey(msg tea.Msg) bool {
-	k, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return true
-	}
-	switch k.String() {
-	case "up", "k", "pgup", "left", "home", "g":
-		return false
-	}
-	return true
 }
 
 type model struct {
@@ -224,6 +192,7 @@ type model struct {
 	render           *renderState
 	allRows          []session.Row
 	providers        map[session.Provider]bool
+	collapsedGroups  map[string]bool
 	mode             previewMode
 	dangerous        bool
 	handoff          session.HandoffOptions
@@ -249,7 +218,8 @@ func newLoadingModel(mode previewMode) model {
 func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	render := &renderState{mode: mode, theme: newTheme(true)}
 	providers := defaultProviderFilter(rows)
-	items := groupedItems(filterRows(rows, providers))
+	collapsedGroups := map[string]bool{}
+	items := groupedItems(filterRows(rows, providers), collapsedGroups)
 
 	l := list.New(items, itemDelegate{state: render}, 80, 20)
 	l.SetFilteringEnabled(true)
@@ -274,16 +244,17 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	h.Styles = render.theme.help
 
 	return model{
-		list:      l,
-		spinner:   sp,
-		help:      h,
-		keys:      defaultKeys(),
-		render:    render,
-		allRows:   rows,
-		providers: providers,
-		mode:      mode,
-		loading:   loading,
-		isDark:    true,
+		list:            l,
+		spinner:         sp,
+		help:            h,
+		keys:            defaultKeys(),
+		render:          render,
+		allRows:         rows,
+		providers:       providers,
+		collapsedGroups: collapsedGroups,
+		mode:            mode,
+		loading:         loading,
+		isDark:          true,
 	}
 }
 
@@ -323,7 +294,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.allRows = msg.rows
 		m.providers = defaultProviderFilter(msg.rows)
-		cmd := m.list.SetItems(groupedItems(filterRows(msg.rows, m.providers)))
+		m.pruneCollapsedGroups()
+		cmd := m.list.SetItems(m.currentItems())
 		selectFirstSession(&m.list)
 		m.resizeList()
 		return m, cmd
@@ -335,7 +307,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
-	m.skipHeaders(downwardKey(msg))
 	m.reconcileDeleteArm()
 	return m, cmd
 }
@@ -367,7 +338,6 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.list.SettingFilter() {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
-		m.skipHeaders(downwardKey(msg))
 		m.reconcileDeleteArm()
 		return m, cmd
 	}
@@ -376,9 +346,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" && m.list.IsFiltered() {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
-		m.skipHeaders(true)
+		rebuild := m.rebuildList()
 		m.reconcileDeleteArm()
-		return m, cmd
+		return m, tea.Batch(cmd, rebuild)
 	}
 
 	switch {
@@ -396,7 +366,15 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, m.keys.Resume):
+		if header, ok := m.list.SelectedItem().(headerItem); ok {
+			return m.toggleGroup(header.path)
+		}
 		return m.selectResume()
+	case key.Matches(msg, m.keys.Collapse):
+		if header, ok := m.list.SelectedItem().(headerItem); ok {
+			return m.toggleGroup(header.path)
+		}
+		return m, m.list.NewStatusMessage("select a category header to collapse")
 	case key.Matches(msg, m.keys.Compound):
 		selected, ok := m.list.SelectedItem().(item)
 		if !ok {
@@ -428,6 +406,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Preview keys are handled individually so each selects a distinct mode.
 	switch msg.String() {
+	case "/":
+		rebuild := m.rebuildListForSearch()
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, tea.Batch(rebuild, cmd)
 	case "f":
 		m.setMode(firstMessage)
 		return m, m.list.NewStatusMessage("preview: first user message")
@@ -441,7 +424,6 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
-	m.skipHeaders(downwardKey(msg))
 	m.reconcileDeleteArm()
 	return m, cmd
 }
@@ -454,10 +436,11 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.providers[msg.row.Provider] = true
+	delete(m.collapsedGroups, msg.row.CWD)
 	m.allRows = upsertAndSortRows(m.allRows, msg.row)
-	filtered := filterRows(m.allRows, m.providers)
 	m.list.ResetFilter()
-	cmd := m.list.SetItems(groupedItems(filtered))
+	m.pruneCollapsedGroups()
+	cmd := m.list.SetItems(m.currentItems())
 	selectRowItem(&m.list, msg.row)
 
 	status := "converted to " + string(msg.row.Provider) + " · press enter to resume"
@@ -509,6 +492,45 @@ func (m *model) resizeList() {
 	m.list.SetSize(m.width, listHeight)
 }
 
+func (m *model) currentItems() []list.Item {
+	collapsed := m.collapsedGroups
+	if m.list.SettingFilter() || m.list.IsFiltered() {
+		collapsed = nil
+	}
+	return groupedItems(filterRows(m.allRows, m.providers), collapsed)
+}
+
+func (m *model) rebuildList() tea.Cmd {
+	return m.list.SetItems(m.currentItems())
+}
+
+func (m *model) rebuildListForSearch() tea.Cmd {
+	return m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers), nil))
+}
+
+func (m *model) pruneCollapsedGroups() {
+	visible := map[string]bool{}
+	for _, row := range filterRows(m.allRows, m.providers) {
+		visible[row.CWD] = true
+	}
+	for path := range m.collapsedGroups {
+		if !visible[path] {
+			delete(m.collapsedGroups, path)
+		}
+	}
+}
+
+func (m model) toggleGroup(path string) (tea.Model, tea.Cmd) {
+	m.collapsedGroups[path] = !m.collapsedGroups[path]
+	cmd := m.rebuildList()
+	selectHeaderItem(&m.list, path)
+	state := "expanded"
+	if m.collapsedGroups[path] {
+		state = "collapsed"
+	}
+	return m, tea.Batch(cmd, m.list.NewStatusMessage("category "+state+": "+collapseHome(path)))
+}
+
 func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	if !providerExists(m.allRows, provider) {
 		return m.list.NewStatusMessage(fmt.Sprintf("no %s sessions found", provider))
@@ -518,7 +540,8 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	}
 
 	m.providers[provider] = !m.providers[provider]
-	cmd := m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers)))
+	m.pruneCollapsedGroups()
+	cmd := m.list.SetItems(m.currentItems())
 	selectFirstSession(&m.list)
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
@@ -585,7 +608,8 @@ func (m *model) deleteSelected() tea.Cmd {
 	if enabledProviderCount(m.providers) == 0 {
 		m.providers = defaultProviderFilter(m.allRows)
 	}
-	cmd := m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers)))
+	m.pruneCollapsedGroups()
+	cmd := m.list.SetItems(m.currentItems())
 	selectFirstSession(&m.list)
 	return tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(selected.row.Provider)+" session"))
 }
@@ -674,6 +698,25 @@ func (m model) detailView() string {
 
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
+		if header, isHeader := m.list.SelectedItem().(headerItem); isHeader {
+			state := "expanded"
+			if header.collapsed {
+				state = "collapsed"
+			}
+			lines := []string{
+				th.label.Render(padLabel("category")) + truncateMiddle(header.path, valueW),
+				th.label.Render(padLabel("sessions")) + fmt.Sprintf("%d", header.count),
+				th.label.Render(padLabel("state")) + state,
+				th.hint.Render("enter/space → collapse or expand category"),
+			}
+			if len(lines) > count {
+				lines = lines[:count]
+			}
+			for i := range lines {
+				lines[i] = truncateCells(lines[i], innerW)
+			}
+			return th.detail.Width(innerW).Render(strings.Join(lines, "\n"))
+		}
 		msg := "No session selected."
 		if m.list.IsFiltered() {
 			msg = "No session matches this search · press esc to clear."

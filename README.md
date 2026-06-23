@@ -48,14 +48,26 @@ go install github.com/aytzey/showagent/cmd/showagent@latest
 Or download a Linux binary from the GitHub releases page and put it somewhere
 on your `PATH`, for example `~/.local/bin`.
 
+Then install the companion Compound Engineering plugin for the local Codex and
+Claude Code CLIs that are present on the machine:
+
+```bash
+showagent setup
+```
+
+`setup` is idempotent. It registers
+`EveryInc/compound-engineering-plugin` and installs
+`compound-engineering@compound-engineering-plugin` only when the plugin is
+missing.
+
 ## Usage
 
 ```bash
 showagent
 ```
 
-`showagent` intentionally takes no arguments. Everything is selected inside the
-CLI.
+`showagent setup` handles companion plugin setup. Everything else is selected
+inside the CLI.
 
 Keybindings:
 
@@ -72,7 +84,9 @@ Keybindings:
 | `f` | Show first user message |
 | `l` | Show latest user message |
 | `b` | Show first + latest user messages |
+| `space` | Collapse or expand the selected workspace group |
 | `enter` | Resume selected session |
+| `enter` on a group | Collapse or expand that workspace group |
 | `C` | Compound: pick Codex or Claude to resume the session and capture learnings |
 | `x` | Convert selected session to the other agent and select the new session |
 | `n` | Create a full local branch/copy of the selected session and select it |
