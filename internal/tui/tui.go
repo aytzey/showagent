@@ -196,6 +196,7 @@ type model struct {
 	mode             previewMode
 	dangerous        bool
 	handoff          session.HandoffOptions
+	handoffTarget    session.Provider
 	selected         *Selection
 	deleteArmed      string
 	busy             string
@@ -386,8 +387,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.compoundRow = &row
 		m.compoundChoosing = true
 		return m, nil
+	case key.Matches(msg, m.keys.Target):
+		return m.cycleHandoffTarget()
 	case key.Matches(msg, m.keys.Convert):
-		return m.startMutation(m.convertSelected(), "conversion", "converting session…")
+		return m.startConvert()
 	case key.Matches(msg, m.keys.Branch):
 		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
 	case key.Matches(msg, m.keys.Delete):
@@ -402,6 +405,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleProvider(session.ProviderCodex)
 	case key.Matches(msg, m.keys.Claude):
 		return m, m.toggleProvider(session.ProviderClaude)
+	case key.Matches(msg, m.keys.JCode):
+		return m, m.toggleProvider(session.ProviderJCode)
 	}
 
 	// Preview keys are handled individually so each selects a distinct mode.
@@ -456,6 +461,18 @@ func (m model) startMutation(cmd tea.Cmd, busy, status string) (tea.Model, tea.C
 	}
 	m.busy = busy
 	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+}
+
+func (m model) startConvert() (tea.Model, tea.Cmd) {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	target := m.handoffTargetFor(selected.row)
+	if target == "" {
+		return m, m.list.NewStatusMessage("no hand-off target available")
+	}
+	return m.startMutation(m.convertSelected(), "conversion", "converting to "+string(target)+"…")
 }
 
 func (m *model) setMode(mode previewMode) {
@@ -564,7 +581,10 @@ func (m *model) convertSelected() tea.Cmd {
 		return nil
 	}
 	row := selected.row
-	target := session.OtherProvider(row.Provider)
+	target := m.handoffTargetFor(row)
+	if target == "" {
+		return nil
+	}
 	options := m.handoff
 	return func() tea.Msg {
 		converted, err := session.Convert(row, target, options)
@@ -675,6 +695,9 @@ func (m model) statsLine() string {
 		th.chip.Render(providerLabel(m.providers)),
 		th.muted.Render("preview " + modeShort(m.mode)),
 	}
+	if target := m.selectedHandoffTarget(); target != "" {
+		parts = append(parts, th.muted.Render("target "+string(target)))
+	}
 	if m.dangerous {
 		parts = append(parts, th.yoloChip.Render("YOLO"))
 	}
@@ -759,12 +782,18 @@ func (m model) resumeHint(row session.Row) string {
 	if row.Provider == session.ProviderClaude {
 		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts · y → normal", row.Provider)
 	}
+	if row.Provider == session.ProviderJCode {
+		return fmt.Sprintf("enter → resume with %s · yolo: no extra jcode flag · y → normal", row.Provider)
+	}
 	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox · y → normal", row.Provider)
 }
 
 func (m model) handoffHint(row session.Row) string {
-	other := session.OtherProvider(row.Provider)
-	return fmt.Sprintf("x → hand off to %s (%s) · n → branch · t → scope", other, m.handoff.Label())
+	target := m.handoffTargetFor(row)
+	if target == "" {
+		return fmt.Sprintf("x → no hand-off target · n → branch · t → scope %s", m.handoff.Label())
+	}
+	return fmt.Sprintf("x → hand off to %s (%s) · o → target · n → branch · t → scope", target, m.handoff.Label())
 }
 
 func (m model) detailLineCount() int {
@@ -791,7 +820,7 @@ func (m model) detailHeight() int {
 
 func (m model) loadingView() string {
 	th := m.render.theme
-	body := th.title.Render("showagent") + "\n\n" + m.spinner.View() + " " + th.muted.Render("Scanning Codex and Claude sessions…")
+	body := th.title.Render("showagent") + "\n\n" + m.spinner.View() + " " + th.muted.Render("Scanning local agent sessions…")
 	if m.width <= 0 || m.height <= 0 {
 		return body
 	}
@@ -801,8 +830,8 @@ func (m model) loadingView() string {
 func (m model) emptyView() string {
 	th := m.render.theme
 	body := th.title.Render("showagent") + "\n\n" +
-		th.muted.Render("No Codex or Claude sessions found.") + "\n" +
-		th.muted.Render("Looked in ~/.codex/sessions and ~/.claude/projects.") + "\n\n" +
+		th.muted.Render("No supported local sessions found.") + "\n" +
+		th.muted.Render("Looked in Codex, Claude Code, and available JCode stores.") + "\n\n" +
 		th.hint.Render("Press q to quit.")
 	if m.width <= 0 || m.height <= 0 {
 		return body
@@ -931,7 +960,7 @@ func enabledProviderCount(providers map[session.Provider]bool) int {
 
 func providerLabel(providers map[session.Provider]bool) string {
 	var values []string
-	for _, provider := range []session.Provider{session.ProviderCodex, session.ProviderClaude} {
+	for _, provider := range session.ProviderOrder() {
 		if providers[provider] {
 			values = append(values, string(provider))
 		}
@@ -940,6 +969,69 @@ func providerLabel(providers map[session.Provider]bool) string {
 		return "none"
 	}
 	return strings.Join(values, "+")
+}
+
+func (m model) selectedHandoffTarget() session.Provider {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return ""
+	}
+	return m.handoffTargetFor(selected.row)
+}
+
+func (m model) handoffTargetFor(row session.Row) session.Provider {
+	candidates := m.handoffCandidates(row)
+	if len(candidates) == 0 {
+		return ""
+	}
+	if m.handoffTarget != "" && m.handoffTarget != row.Provider {
+		for _, candidate := range candidates {
+			if candidate == m.handoffTarget {
+				return candidate
+			}
+		}
+	}
+	return candidates[0]
+}
+
+func (m model) handoffCandidates(row session.Row) []session.Provider {
+	present := map[session.Provider]bool{}
+	for _, existing := range m.allRows {
+		present[existing.Provider] = true
+	}
+
+	var candidates []session.Provider
+	for _, provider := range session.ProviderOrder() {
+		if provider == row.Provider {
+			continue
+		}
+		if present[provider] || session.ProviderCommandAvailable(provider) {
+			candidates = append(candidates, provider)
+		}
+	}
+	return candidates
+}
+
+func (m model) cycleHandoffTarget() (tea.Model, tea.Cmd) {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	candidates := m.handoffCandidates(selected.row)
+	if len(candidates) == 0 {
+		return m, m.list.NewStatusMessage("no hand-off target available")
+	}
+
+	current := m.handoffTargetFor(selected.row)
+	next := candidates[0]
+	for index, candidate := range candidates {
+		if candidate == current {
+			next = candidates[(index+1)%len(candidates)]
+			break
+		}
+	}
+	m.handoffTarget = next
+	return m, m.list.NewStatusMessage("hand-off target: " + string(next))
 }
 
 func nextHandoffScope(current session.HandoffOptions) session.HandoffOptions {

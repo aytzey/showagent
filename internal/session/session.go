@@ -19,6 +19,7 @@ type Provider string
 const (
 	ProviderCodex  Provider = "codex"
 	ProviderClaude Provider = "claude"
+	ProviderJCode  Provider = "jcode"
 )
 
 // scanBufferMax bounds a single JSONL line during scanning. Modern LLM turns
@@ -49,6 +50,8 @@ func (r Row) ResumeCommand(options ResumeOptions) []string {
 			command = append(command, "--dangerously-skip-permissions")
 		}
 		return append(command, "--resume", r.ID)
+	case ProviderJCode:
+		return []string{"jcode", "--no-update", "--resume", r.ID}
 	default:
 		command := []string{"codex", "resume"}
 		if options.Dangerous {
@@ -58,11 +61,24 @@ func (r Row) ResumeCommand(options ResumeOptions) []string {
 	}
 }
 
-func OtherProvider(provider Provider) Provider {
-	if provider == ProviderCodex {
-		return ProviderClaude
+func ProviderOrder() []Provider {
+	return []Provider{ProviderCodex, ProviderClaude, ProviderJCode}
+}
+
+func ProviderCommandAvailable(provider Provider) bool {
+	command := ""
+	switch provider {
+	case ProviderCodex:
+		command = "codex"
+	case ProviderClaude:
+		command = "claude"
+	case ProviderJCode:
+		command = "jcode"
+	default:
+		return false
 	}
-	return ProviderCodex
+	_, err := exec.LookPath(command)
+	return err == nil
 }
 
 func (r Row) FilterValue() string {
@@ -79,6 +95,7 @@ func (r Row) FilterValue() string {
 
 func Discover() []Row {
 	rows := append(discoverCodex(defaultCodexHome()), discoverClaude(defaultClaudeHome())...)
+	rows = append(rows, discoverJCode(defaultJCodeHome())...)
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].LastAt.After(rows[j].LastAt)
 	})
@@ -122,6 +139,11 @@ func Delete(row Row) error {
 	case ProviderClaude:
 		if row.File == "" {
 			return errors.New("claude session file is unknown")
+		}
+		return os.Remove(row.File)
+	case ProviderJCode:
+		if row.File == "" {
+			return errors.New("jcode session file is unknown")
 		}
 		return os.Remove(row.File)
 	default:
@@ -188,6 +210,17 @@ func defaultClaudeHome() string {
 	return filepath.Join(homeDir(), ".claude")
 }
 
+func defaultJCodeHome() string {
+	if value := os.Getenv("JCODE_HOME"); value != "" {
+		return expandHome(value)
+	}
+	return filepath.Join(homeDir(), ".jcode")
+}
+
+func JCodeAvailable() bool {
+	return ProviderCommandAvailable(ProviderJCode)
+}
+
 func homeDir() string {
 	if value, err := os.UserHomeDir(); err == nil {
 		return value
@@ -225,6 +258,7 @@ func usefulUserText(value string) bool {
 		"<collaboration_mode>",
 		"<apps_instructions>",
 		"<skills_instructions>",
+		"<system-reminder>",
 		"<local-command-caveat>",
 		"<local-command-",
 		"<command-name>",

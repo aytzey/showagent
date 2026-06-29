@@ -1,8 +1,8 @@
 # showagent
 
-`showagent` is a fast terminal picker for local Codex and Claude Code sessions.
-It scans every workspace, shows both providers in one timeline, and resumes the
-selected session with the right CLI command.
+`showagent` is a fast terminal picker for local Codex, Claude Code, and optional
+JCode sessions. It scans every workspace, shows available providers in one
+timeline, and resumes the selected session with the right CLI command.
 
 It is built as a portable Go TUI with:
 
@@ -12,7 +12,7 @@ It is built as a portable Go TUI with:
 
 ## Features
 
-- Unified session list for `codex` and `claude`, grouped by workspace folder
+- Unified session list for `codex`, `claude`, and optional `jcode`, grouped by workspace folder
   (groups and the sessions inside them are ordered newest-first)
 - One-key compound-engineering launch (`C`): pick Codex or Claude and it resumes
   the session and captures durable learnings into a shared, per-project pool both
@@ -24,7 +24,7 @@ It is built as a portable Go TUI with:
 - Search across provider, directory, session id, and user messages
 - Preview modes for first user message, latest user message, or both
 - Toggleable yolo resume mode for approval-free continuation
-- Selectable cross-agent transfer scope: all history by default, or latest N turns
+- Selectable cross-agent transfer target and scope: all history by default, or latest N turns
 - One-key resume, branch, cross-agent conversion, and delete:
   - Codex: `codex resume <session-id>`
   - Codex yolo: `codex resume --dangerously-bypass-approvals-and-sandbox <session-id>`
@@ -32,7 +32,9 @@ It is built as a portable Go TUI with:
   - Claude Code: `claude --resume <session-id>`
   - Claude Code yolo: `claude --dangerously-skip-permissions --resume <session-id>`
   - Claude Code delete: removes the selected local session JSONL file
-  - Branch creates a new local session JSONL copy without leaving the picker
+  - JCode: `jcode --no-update --resume <session-id>`
+  - JCode delete: removes the selected local session JSON file
+  - Branch creates a new local session copy without leaving the picker
   - Cross-agent conversion writes a new target-provider session file and keeps you in the picker
 - No runtime dependencies beyond the compiled binary
 - Works well on Ubuntu, Debian, Fedora, Arch, and other Linux distributions
@@ -79,7 +81,9 @@ Keybindings:
 | `?` | Toggle the full keybinding overlay |
 | `c` | Toggle Codex sessions |
 | `d` | Toggle Claude Code sessions |
+| `z` | Toggle JCode sessions, when JCode is installed and has local sessions |
 | `y` | Toggle yolo/dangerous resume mode |
+| `o` | Cycle the cross-agent transfer target for the selected session |
 | `t` | Cycle cross-agent transfer scope: all, latest 200, 100, 50, 20, or 10 turns |
 | `f` | Show first user message |
 | `l` | Show latest user message |
@@ -88,7 +92,7 @@ Keybindings:
 | `enter` | Resume selected session |
 | `enter` on a group | Collapse or expand that workspace group |
 | `C` | Compound: pick Codex or Claude to resume the session and capture learnings |
-| `x` | Convert selected session to the other agent and select the new session |
+| `x` | Convert selected session to the selected target agent and select the new session |
 | `n` | Create a full local branch/copy of the selected session and select it |
 | `delete`, `backspace` | Delete selected session after second press confirmation |
 | `q`, `ctrl+c` | Quit (`esc` clears an active search first) |
@@ -97,10 +101,15 @@ When output is piped, `showagent` prints a plain table instead of opening the
 TUI.
 
 Cross-agent conversion preserves the selected user/assistant transcript as a new
-local session in the other provider's JSONL format, then selects that new session
-in the picker. Press `enter` to resume it. It intentionally does not copy private
-runtime state such as tool-call internals, approval history, encrypted reasoning
-blobs, or provider attachments. The default scope is the full transcript.
+local session in the selected target provider's format, then selects that new
+session in the picker. Press `enter` to resume it. It intentionally does not copy
+private runtime state such as tool-call internals, approval history, encrypted
+reasoning blobs, or provider attachments. The default scope is the full transcript.
+
+JCode support is optional. If `jcode` is not on `PATH`, `showagent` silently skips
+JCode discovery and does not show JCode controls as available targets. When
+`jcode` is present, sessions are read from `~/.jcode/sessions/*.json` and other
+providers can be converted into JCode session JSON.
 
 ## Compound Engineering
 
@@ -125,11 +134,13 @@ By default, `showagent` reads:
 
 - Codex: `~/.codex/sessions/**/*.jsonl`
 - Claude Code: `~/.claude/projects/**/*.jsonl`
+- JCode, when installed: `~/.jcode/sessions/*.json`
 
 Environment overrides:
 
 - `CODEX_HOME`
 - `CLAUDE_HOME`
+- `JCODE_HOME`
 
 Claude subagent transcripts under `subagents/` are ignored so the list stays
 focused on top-level conversations.

@@ -12,6 +12,7 @@ type keyMap struct {
 	Resume   key.Binding
 	Collapse key.Binding
 	Compound key.Binding
+	Target   key.Binding
 	Convert  key.Binding
 	Branch   key.Binding
 	Delete   key.Binding
@@ -20,6 +21,7 @@ type keyMap struct {
 	Yolo     key.Binding
 	Codex    key.Binding
 	Claude   key.Binding
+	JCode    key.Binding
 	Help     key.Binding
 	Quit     key.Binding
 }
@@ -33,6 +35,7 @@ func defaultKeys() keyMap {
 		Resume:   key.NewBinding(key.WithKeys("enter", "ctrl+m"), key.WithHelp("enter", "resume")),
 		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
+		Target:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "target")),
 		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "hand off")),
 		Branch:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
 		Delete:   key.NewBinding(key.WithKeys("delete", "backspace"), key.WithHelp("del", "delete")),
@@ -41,6 +44,7 @@ func defaultKeys() keyMap {
 		Yolo:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
 		Codex:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "codex")),
 		Claude:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "claude")),
+		JCode:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "jcode")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:     key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
@@ -48,15 +52,15 @@ func defaultKeys() keyMap {
 
 // ShortHelp is the one-line hint shown under the header.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Collapse, k.Yolo, k.Compound, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
+	return []key.Binding{k.Resume, k.Collapse, k.Yolo, k.Compound, k.Target, k.Convert, k.Branch, k.Delete, k.Preview, k.Search, k.Help, k.Quit}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Page, k.Search},
-		{k.Resume, k.Collapse, k.Compound, k.Convert},
+		{k.Resume, k.Collapse, k.Compound, k.Target, k.Convert},
 		{k.Branch, k.Delete, k.Preview, k.Scope},
-		{k.Yolo, k.Codex, k.Claude, k.Help, k.Quit},
+		{k.Yolo, k.Codex, k.Claude, k.JCode, k.Help, k.Quit},
 	}
 }

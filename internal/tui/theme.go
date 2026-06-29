@@ -21,6 +21,7 @@ type theme struct {
 	selected     lipgloss.Style
 	codexBadge   lipgloss.Style
 	claudeBadge  lipgloss.Style
+	jcodeBadge   lipgloss.Style
 	date         lipgloss.Style
 	workspaceDim lipgloss.Style
 	workspace    lipgloss.Style
@@ -67,6 +68,8 @@ func newTheme(isDark bool) *theme {
 		claudeBadge: lipgloss.NewStyle().Bold(true).
 			Foreground(ld(lipgloss.Color("#FFFFFF"), lipgloss.Color("#0D1117"))).
 			Background(ld(lipgloss.Color("#8250DF"), lipgloss.Color("#D2A8FF"))),
+		jcodeBadge: lipgloss.NewStyle().Bold(true).
+			Foreground(white).Background(ld(lipgloss.Color("#1A7F37"), lipgloss.Color("#238636"))),
 		date:         c("#6E7781", "#8B949E"),
 		workspaceDim: c("#6E7781", "#8B949E"),
 		workspace:    lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#1F2328"), lipgloss.Color("#E6EDF3"))),
@@ -99,6 +102,7 @@ func monoTheme() *theme {
 		selected:     reverse,
 		codexBadge:   bold,
 		claudeBadge:  bold,
+		jcodeBadge:   bold,
 		date:         plain,
 		workspaceDim: plain,
 		workspace:    bold,

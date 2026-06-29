@@ -29,7 +29,7 @@ func Compound(row Row, agent Provider, options ResumeOptions) error {
 	if err != nil {
 		return err
 	}
-	return launch(target.CWD, target.CompoundCommand(options, compoundPrompt(dir)))
+	return launch(target.resumeCWD(), target.CompoundCommand(options, compoundPrompt(dir)))
 }
 
 // CompoundCommand is the resume command for the session with an initial prompt
@@ -42,6 +42,8 @@ func (r Row) CompoundCommand(options ResumeOptions, prompt string) []string {
 			command = append(command, "--dangerously-skip-permissions")
 		}
 		return append(command, "--resume", r.ID, prompt)
+	case ProviderJCode:
+		return []string{"jcode", "run", "--no-update", "--resume", r.ID, prompt}
 	default:
 		command := []string{"codex", "resume"}
 		if options.Dangerous {

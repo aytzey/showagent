@@ -13,6 +13,7 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	claudeHome := filepath.Join(root, "claude")
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
@@ -48,11 +49,54 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	}
 }
 
+func TestJCodeIsOptional(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
+
+	writeFile(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"), `{
+  "id": "session_showagent_1_deadbeef",
+  "created_at": "2026-06-03T09:00:00Z",
+  "updated_at": "2026-06-03T09:01:00Z",
+  "working_dir": "/work/jcode",
+  "messages": [{"id":"m1","role":"user","content":[{"type":"text","text":"hello"}],"timestamp":"2026-06-03T09:00:00Z"}]
+}`)
+
+	if rows := Discover(); len(rows) != 0 {
+		t.Fatalf("jcode should be skipped when command is unavailable, got %d rows", len(rows))
+	}
+}
+
+func TestDiscoverFindsJCodeSessions(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	withFakeCommand(t, "jcode")
+
+	writeJCodeFixture(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"))
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.Provider != ProviderJCode || row.ID != "session_showagent_1_deadbeef" {
+		t.Fatalf("unexpected jcode row: %#v", row)
+	}
+	if row.CWD != "/work/jcode" || row.FirstUser != "first jcode" || row.LastUser != "last jcode" {
+		t.Fatalf("unexpected jcode metadata: %#v", row)
+	}
+}
+
 func TestClaudeSubagentsAreIgnored(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "session", "subagents", "agent-a.jsonl"), `
 {"type":"user","message":{"role":"user","content":"subagent"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"}
@@ -68,6 +112,7 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	claudeHome := filepath.Join(root, "claude")
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "cccccccc-1111-2222-3333-dddddddddddd.jsonl"), `
 {"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat text</local-command-caveat>"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
@@ -96,6 +141,7 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	}
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	writeFile(t, filepath.Join(claudeHome, "projects", claudeProjectDir(project), sessionID+".jsonl"), `
@@ -125,6 +171,7 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	}
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "22", "rollout-2026-06-22T09-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-22T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/home/aytug"}}
@@ -169,6 +216,14 @@ func TestResumeCommandDangerousMode(t *testing.T) {
 	if got := strings.Join(claude.ResumeCommand(ResumeOptions{Dangerous: true}), " "); got != "claude --dangerously-skip-permissions --resume claude-session" {
 		t.Fatalf("claude dangerous command = %q", got)
 	}
+
+	jcode := Row{Provider: ProviderJCode, ID: "jcode-session"}
+	if got := strings.Join(jcode.ResumeCommand(ResumeOptions{}), " "); got != "jcode --no-update --resume jcode-session" {
+		t.Fatalf("jcode normal command = %q", got)
+	}
+	if got := strings.Join(jcode.ResumeCommand(ResumeOptions{Dangerous: true}), " "); got != "jcode --no-update --resume jcode-session" {
+		t.Fatalf("jcode dangerous command = %q", got)
+	}
 }
 
 func TestLaunchDirDoesNotFallbackToCurrentDirectory(t *testing.T) {
@@ -205,6 +260,7 @@ func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	claudeHome := filepath.Join(root, "claude")
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	sourcePath := filepath.Join(root, "source-codex.jsonl")
 	writeFile(t, sourcePath, `
@@ -275,6 +331,7 @@ func TestConvertClaudeToCodexRespectsScope(t *testing.T) {
 	claudeHome := filepath.Join(root, "claude")
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 
 	sourcePath := filepath.Join(root, "source-claude.jsonl")
 	writeFile(t, sourcePath, `
@@ -319,6 +376,97 @@ func TestConvertClaudeToCodexRespectsScope(t *testing.T) {
 	}
 }
 
+func TestConvertJCodeToCodexRespectsScope(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	withFakeCommand(t, "jcode")
+
+	sourcePath := filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json")
+	writeJCodeFixture(t, sourcePath)
+
+	converted, err := Convert(Row{
+		Provider: ProviderJCode,
+		ID:       "session_showagent_1_deadbeef",
+		CWD:      "/work/jcode",
+		File:     sourcePath,
+	}, ProviderCodex, HandoffOptions{MaxTurns: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.Provider != ProviderCodex {
+		t.Fatalf("converted provider = %s, want codex", converted.Provider)
+	}
+
+	turns, err := Transcript(converted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("converted turns = %d, want 2: %#v", len(turns), turns)
+	}
+	if turns[0] != (Turn{Role: "assistant", Text: "jcode reply"}) || turns[1] != (Turn{Role: "user", Text: "last jcode"}) {
+		t.Fatalf("unexpected turns: %#v", turns)
+	}
+	if rows := discoverCodex(codexHome); len(rows) != 1 {
+		t.Fatalf("discoverCodex rows = %d, want 1", len(rows))
+	}
+}
+
+func TestConvertCodexToJCodeCreatesSessionFile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	jcodeHome := filepath.Join(root, "jcode")
+	t.Setenv("JCODE_HOME", jcodeHome)
+	withFakeCommand(t, "jcode")
+	writeFile(t, filepath.Join(jcodeHome, "config.toml"), `[provider]
+default_provider = "claude"
+`)
+
+	sourcePath := filepath.Join(root, "source-codex.jsonl")
+	writeFile(t, sourcePath, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"build jcode handoff"}]}}
+{"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"jcode handoff ready"}]}}
+`)
+
+	converted, err := Convert(Row{
+		Provider: ProviderCodex,
+		ID:       "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+		CWD:      "/work/codex",
+		File:     sourcePath,
+	}, ProviderJCode, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.Provider != ProviderJCode {
+		t.Fatalf("converted provider = %s, want jcode", converted.Provider)
+	}
+	if !strings.HasPrefix(converted.ID, "session_showagent_") {
+		t.Fatalf("converted id = %q, want jcode-shaped session id", converted.ID)
+	}
+	content, err := os.ReadFile(converted.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"provider_key": "claude"`, `"working_dir": "/work/codex"`, `"display_role": "system"`, `"build jcode handoff"`, `"jcode handoff ready"`} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("converted jcode file missing %q:\n%s", want, content)
+		}
+	}
+
+	turns, err := Transcript(converted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 || turns[0].Text != "build jcode handoff" || turns[1].Text != "jcode handoff ready" {
+		t.Fatalf("unexpected converted turns: %#v", turns)
+	}
+}
+
 func TestDeleteClaudeSessionRemovesFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude.jsonl")
 	writeFile(t, path, `{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}`)
@@ -341,6 +489,39 @@ func writeFile(t *testing.T, path string, content string) {
 	}
 }
 
+func writeJCodeFixture(t *testing.T, path string) {
+	t.Helper()
+	writeFile(t, path, `{
+  "id": "session_showagent_1_deadbeef",
+  "parent_id": null,
+  "title": null,
+  "created_at": "2026-06-03T09:00:00Z",
+  "updated_at": "2026-06-03T09:04:00Z",
+  "messages": [
+    {"id":"m0","role":"user","display_role":"system","content":[{"type":"text","text":"<system-reminder>noise</system-reminder>"}],"timestamp":"2026-06-03T09:00:00Z"},
+    {"id":"m1","role":"user","content":[{"type":"text","text":"first jcode"}],"timestamp":"2026-06-03T09:01:00Z"},
+    {"id":"m2","role":"assistant","content":[{"type":"text","text":"jcode reply"}],"timestamp":"2026-06-03T09:02:00Z"},
+    {"id":"m3","role":"user","content":[{"type":"text","text":"last jcode"}],"timestamp":"2026-06-03T09:03:00Z"}
+  ],
+  "provider_key": "openai",
+  "model": "gpt-5.5",
+  "working_dir": "/work/jcode",
+  "short_name": "showagent",
+  "status": "Closed",
+  "saved": false
+}`)
+}
+
+func withFakeCommand(t *testing.T, name string) {
+	t.Helper()
+	bin := t.TempDir()
+	path := filepath.Join(bin, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
 func TestCompoundCommand(t *testing.T) {
 	prompt := "do the compound pass"
 
@@ -361,6 +542,13 @@ func TestCompoundCommand(t *testing.T) {
 	wantC := []string{"claude", "--dangerously-skip-permissions", "--resume", "clid", prompt}
 	if strings.Join(gotC, "\x1f") != strings.Join(wantC, "\x1f") {
 		t.Fatalf("claude yolo compound = %v, want %v", gotC, wantC)
+	}
+
+	jcode := Row{Provider: ProviderJCode, ID: "jid"}
+	gotJ := jcode.CompoundCommand(ResumeOptions{Dangerous: true}, prompt)
+	wantJ := []string{"jcode", "run", "--no-update", "--resume", "jid", prompt}
+	if strings.Join(gotJ, "\x1f") != strings.Join(wantJ, "\x1f") {
+		t.Fatalf("jcode compound = %v, want %v", gotJ, wantJ)
 	}
 }
 

@@ -106,6 +106,8 @@ func providerBadge(th *theme, provider string, width int) string {
 		return th.codexBadge.Width(width).Render(label)
 	case session.ProviderClaude:
 		return th.claudeBadge.Width(width).Render(label)
+	case session.ProviderJCode:
+		return th.jcodeBadge.Width(width).Render(label)
 	default:
 		return th.chip.Width(width).Render(label)
 	}

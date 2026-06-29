@@ -23,7 +23,7 @@ func main() {
 	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		rows := session.Discover()
 		if len(rows) == 0 {
-			fmt.Fprintln(os.Stderr, "showagent: no Codex or Claude sessions found")
+			fmt.Fprintln(os.Stderr, "showagent: no supported local sessions found")
 			os.Exit(1)
 		}
 		tui.PrintTable(os.Stdout, rows)

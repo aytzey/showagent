@@ -350,10 +350,11 @@ func TestProviderToggle(t *testing.T) {
 	rows := []session.Row{
 		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl"},
 		{Provider: session.ProviderClaude, ID: "d1", LastAt: time.Now(), File: "/tmp/d1.jsonl"},
+		{Provider: session.ProviderJCode, ID: "j1", LastAt: time.Now(), File: "/tmp/j1.json"},
 	}
 	m := sizedModel(rows)
-	if got := sessionCount(m.list.VisibleItems()); got != 2 {
-		t.Fatalf("initial sessions = %d, want 2", got)
+	if got := sessionCount(m.list.VisibleItems()); got != 3 {
+		t.Fatalf("initial sessions = %d, want 3", got)
 	}
 
 	off, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
@@ -361,14 +362,23 @@ func TestProviderToggle(t *testing.T) {
 	if got.providers[session.ProviderCodex] {
 		t.Fatal("codex should be disabled after toggle")
 	}
-	if n := sessionCount(got.list.VisibleItems()); n != 1 {
-		t.Fatalf("filtered sessions = %d, want 1", n)
+	if n := sessionCount(got.list.VisibleItems()); n != 2 {
+		t.Fatalf("filtered sessions = %d, want 2", n)
 	}
 
 	on, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
 	got = asModel(t, on)
-	if !got.providers[session.ProviderCodex] || sessionCount(got.list.VisibleItems()) != 2 {
+	if !got.providers[session.ProviderCodex] || sessionCount(got.list.VisibleItems()) != 3 {
 		t.Fatalf("codex not re-enabled: enabled=%v sessions=%d", got.providers[session.ProviderCodex], sessionCount(got.list.VisibleItems()))
+	}
+
+	joff, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'z'}))
+	got = asModel(t, joff)
+	if got.providers[session.ProviderJCode] {
+		t.Fatal("jcode should be disabled after z toggle")
+	}
+	if n := sessionCount(got.list.VisibleItems()); n != 2 {
+		t.Fatalf("filtered sessions after jcode toggle = %d, want 2", n)
 	}
 }
 
@@ -429,6 +439,32 @@ func TestScopeCycling(t *testing.T) {
 	}
 	if !strings.Contains(m.handoffHint(row), "all") {
 		t.Fatalf("handoff hint after wrap = %q, want to contain 'all'", m.handoffHint(row))
+	}
+}
+
+func TestHandoffTargetCycling(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl", FirstUser: "codex"},
+		{Provider: session.ProviderClaude, ID: "d1", LastAt: time.Now().Add(-time.Minute), File: "/tmp/d1.jsonl", FirstUser: "claude"},
+		{Provider: session.ProviderJCode, ID: "j1", LastAt: time.Now().Add(-2 * time.Minute), File: "/tmp/j1.json", FirstUser: "jcode"},
+	}
+	m := sizedModel(rows)
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok || selected.row.Provider != session.ProviderCodex {
+		t.Fatalf("expected codex selected, got %#v", m.list.SelectedItem())
+	}
+	if got := m.handoffTargetFor(selected.row); got != session.ProviderClaude {
+		t.Fatalf("default target = %q, want claude", got)
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'o'}))
+	got := asModel(t, updated)
+	if got.handoffTarget != session.ProviderJCode {
+		t.Fatalf("cycled target = %q, want jcode", got.handoffTarget)
+	}
+	if !strings.Contains(got.handoffHint(selected.row), "jcode") {
+		t.Fatalf("handoff hint missing jcode target: %q", got.handoffHint(selected.row))
 	}
 }
 

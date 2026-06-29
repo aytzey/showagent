@@ -49,6 +49,8 @@ func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {
 		return writeCodexConverted(row, turns)
 	case ProviderClaude:
 		return writeClaudeConverted(row, turns)
+	case ProviderJCode:
+		return writeJCodeConverted(row, turns)
 	default:
 		return Row{}, fmt.Errorf("unsupported target provider %q", target)
 	}
@@ -60,6 +62,8 @@ func Transcript(row Row) ([]Turn, error) {
 		return codexTranscript(row.File)
 	case ProviderClaude:
 		return claudeTranscript(row.File)
+	case ProviderJCode:
+		return jcodeTranscript(row.File)
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", row.Provider)
 	}
