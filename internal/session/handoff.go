@@ -317,6 +317,7 @@ func claudeProjectDir(cwd string) string {
 		return "-unknown-cwd"
 	}
 	value := strings.ReplaceAll(clean, string(filepath.Separator), "-")
+	value = strings.ReplaceAll(value, "_", "-")
 	value = strings.TrimSpace(value)
 	// Reject anything that could escape the parent when used as a single path
 	// segment (e.g. a session whose cwd is ".."), so learnings/converted files

@@ -134,7 +134,7 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	project := filepath.Join(root, "project")
+	project := filepath.Join(root, "science_cards")
 	nested := filepath.Join(project, "nested")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -158,6 +158,14 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	}
 	if rows[0].resumeCWD() != project {
 		t.Fatalf("resume cwd = %q, want Claude project bucket cwd %q", rows[0].resumeCWD(), project)
+	}
+}
+
+func TestClaudeProjectDirMatchesClaudeUnderscoreEncoding(t *testing.T) {
+	got := claudeProjectDir("/home/aytzey/science_cards")
+	want := "-home-aytzey-science-cards"
+	if got != want {
+		t.Fatalf("claudeProjectDir = %q, want %q", got, want)
 	}
 }
 
