@@ -4,12 +4,62 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// jcodeProvider adapts the JCode CLI's session store (whole-session *.json
+// files under ~/.jcode/sessions) to the provider registry. Discovery is gated
+// on the jcode binary being installed.
+type jcodeProvider struct{}
+
+func (jcodeProvider) Name() Provider      { return ProviderJCode }
+func (jcodeProvider) DisplayName() string { return "JCode" }
+func (jcodeProvider) CommandName() string { return "jcode" }
+func (jcodeProvider) Home() string        { return defaultJCodeHome() }
+
+func (p jcodeProvider) ScanTarget() ScanTarget {
+	target := ScanTarget{
+		Provider: ProviderJCode,
+		Path:     filepath.Join(p.Home(), "sessions"),
+		EnvVar:   "JCODE_HOME",
+	}
+	if !JCodeAvailable() {
+		target.Note = "skipped: jcode CLI not installed"
+	}
+	return target
+}
+
+func (p jcodeProvider) Discover() []Row {
+	return discoverJCode(p.Home())
+}
+
+func (jcodeProvider) ResumeArgs(row Row, _ ResumeOptions) []string {
+	return []string{"jcode", "--no-update", "--resume", row.ID}
+}
+
+func (jcodeProvider) CompoundArgs(row Row, _ ResumeOptions, prompt string) []string {
+	return []string{"jcode", "run", "--no-update", "--resume", row.ID, prompt}
+}
+
+func (jcodeProvider) Delete(row Row) error {
+	if row.File == "" {
+		return errors.New("jcode session file is unknown")
+	}
+	return os.Remove(row.File)
+}
+
+func (jcodeProvider) Transcript(row Row) ([]Turn, error) {
+	return jcodeTranscript(row.File)
+}
+
+func (jcodeProvider) WriteConverted(source Row, turns []Turn) (Row, error) {
+	return writeJCodeConverted(source, turns)
+}
 
 type jcodeSession struct {
 	ID              string         `json:"id"`
@@ -198,7 +248,10 @@ func writeJCodeConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, err
 	}
 	content = append(content, '\n')
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := writeFileAtomic(path, func(file *os.File) error {
+		_, err := file.Write(content)
+		return err
+	}); err != nil {
 		return Row{}, err
 	}
 

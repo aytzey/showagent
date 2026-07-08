@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,11 +36,25 @@ func asModel(t *testing.T, value tea.Model) model {
 }
 
 func sizedModel(rows []session.Row) model {
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 	m.width = 110
 	m.height = 36
 	m.resizeList()
 	return m
+}
+
+// withFakeCommands puts executable stand-ins for the named provider CLIs on a
+// temp PATH, so availability checks stay hermetic no matter what the host has
+// installed.
+func withFakeCommands(t *testing.T, names ...string) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
 }
 
 func TestPreviewModes(t *testing.T) {
@@ -68,6 +84,59 @@ func TestTruncateCells(t *testing.T) {
 	}
 	if got := truncateCells("abc", 4); got != "abc" {
 		t.Fatalf("short truncateCells = %q", got)
+	}
+}
+
+func TestRightCellsReturnsLongestSuffix(t *testing.T) {
+	if got := rightCells("/a/b/c", 4); got != "/b/c" {
+		t.Fatalf("rightCells = %q, want %q", got, "/b/c")
+	}
+	if got := rightCells("abc", 3); got != "abc" {
+		t.Fatalf("exact-fit rightCells = %q, want %q", got, "abc")
+	}
+	if got := rightCells("abc", 0); got != "" {
+		t.Fatalf("zero-width rightCells = %q, want empty", got)
+	}
+	// Wide runes count as two cells each.
+	if got := rightCells("日本語", 4); got != "本語" {
+		t.Fatalf("wide-rune rightCells = %q, want %q", got, "本語")
+	}
+	if got := rightCells("日本語", 3); got != "語" {
+		t.Fatalf("odd-width wide-rune rightCells = %q, want %q", got, "語")
+	}
+}
+
+func TestTruncateMiddleKeepsBasename(t *testing.T) {
+	value := "/home/user/projects/some-extremely-long-workspace-name/repo"
+	width := 24
+	got := truncateMiddle(value, width)
+	if !strings.HasSuffix(got, "/repo") {
+		t.Fatalf("truncateMiddle = %q, basename lost", got)
+	}
+	if w := lipgloss.Width(got); w > width {
+		t.Fatalf("truncateMiddle = %q, width %d exceeds %d", got, w, width)
+	}
+}
+
+func TestTruncateMiddleEdgeCases(t *testing.T) {
+	if got := truncateMiddle("abc", 3); got != "abc" {
+		t.Fatalf("exact-fit truncateMiddle = %q, want %q", got, "abc")
+	}
+	// Width smaller than the ellipsis falls back to a hard cut.
+	if got := truncateMiddle("abcdef", 2); got != "ab" {
+		t.Fatalf("tiny-width truncateMiddle = %q, want %q", got, "ab")
+	}
+	if got := truncateMiddle("abcdef", 0); got != "" {
+		t.Fatalf("zero-width truncateMiddle = %q, want empty", got)
+	}
+	// Wide runes must not overflow the target width.
+	wide := "/日本語/日本語/日本語/basename"
+	got := truncateMiddle(wide, 20)
+	if w := lipgloss.Width(got); w > 20 {
+		t.Fatalf("wide-rune truncateMiddle = %q, width %d exceeds 20", got, w)
+	}
+	if !strings.HasSuffix(got, "basename") {
+		t.Fatalf("wide-rune truncateMiddle = %q, basename lost", got)
 	}
 }
 
@@ -120,7 +189,7 @@ func TestDetailViewFitsWidth(t *testing.T) {
 		LastUser:  strings.Repeat("last message ", 30),
 	}}
 
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 	m.width = 100
 	m.height = 32
 	m.resizeList()
@@ -128,14 +197,20 @@ func TestDetailViewFitsWidth(t *testing.T) {
 	if got := lipgloss.Width(detail); got > m.width {
 		t.Fatalf("detail width = %d, want <= %d\n%s", got, m.width, detail)
 	}
+	// Long values must be truncated, never wrapped: a wrapped line would make
+	// the panel taller than the height budget and push the help bar off-screen.
+	if got := lipgloss.Height(detail); got != m.detailHeight() {
+		t.Fatalf("detail height = %d, want exactly the %d-row budget\n%s", got, m.detailHeight(), detail)
+	}
 }
 
 func TestEnterAndCtrlMSelectResume(t *testing.T) {
+	withFakeCommands(t, "claude")
 	row := session.Row{
 		Provider: session.ProviderClaude,
 		ID:       "resume-id",
 		LastAt:   time.Now(),
-		CWD:      "/tmp",
+		CWD:      t.TempDir(),
 		File:     "/tmp/resume.jsonl",
 	}
 
@@ -144,7 +219,7 @@ func TestEnterAndCtrlMSelectResume(t *testing.T) {
 		tea.KeyPressMsg(tea.Key{Code: 'm', Mod: tea.ModCtrl}),
 	}
 	for _, msg := range tests {
-		updated, _ := newModel([]session.Row{row}, firstMessage).Update(msg)
+		updated, _ := newModel([]session.Row{row}).Update(msg)
 		selected := selectedFromModel(t, updated)
 		if selected == nil {
 			t.Fatalf("%q did not select a row", msg.String())
@@ -243,18 +318,11 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 		File:      "/tmp/new.jsonl",
 		FirstUser: "new message",
 	}
-	// A codex row must already be listed so codex is a hand-off candidate even
-	// when no codex binary is installed (as on CI runners); candidate discovery
-	// otherwise falls back to exec.LookPath, which is environment-dependent.
-	codexSeed := session.Row{
-		Provider:  session.ProviderCodex,
-		ID:        "seed",
-		LastAt:    time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
-		File:      "/tmp/seed.jsonl",
-		FirstUser: "seed message",
-	}
+	// Hand-off candidates require the target CLI on PATH, so provide a fake
+	// codex binary; discovery must not depend on what the host has installed.
+	withFakeCommands(t, "codex")
 
-	updated, cmd := newModel([]session.Row{row, codexSeed}, firstMessage).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
+	updated, cmd := newModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
 	if cmd == nil {
 		t.Fatal("expected convert command")
 	}
@@ -307,10 +375,10 @@ func TestDeleteArmClearsOnNavigation(t *testing.T) {
 	}
 }
 
-// TestPreviewKeysDoNotPage guards against the default list keymap binding
-// f/l/b to paging: pressing them must change the preview mode (including the
-// shared render state the delegate reads) without moving the cursor.
-func TestPreviewKeysDoNotPage(t *testing.T) {
+// TestPreviewCycle checks the single 'p' key cycles first -> latest -> both ->
+// first, keeps the shared render state the delegate reads in sync, and never
+// moves the cursor.
+func TestPreviewCycle(t *testing.T) {
 	rows := make([]session.Row, 0, 5)
 	for i := 0; i < 5; i++ {
 		rows = append(rows, session.Row{
@@ -325,16 +393,18 @@ func TestPreviewKeysDoNotPage(t *testing.T) {
 	m := sizedModel(rows)
 	startIndex := m.list.Index()
 
-	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'l'}))
-	got := asModel(t, updated)
-	if got.mode != lastMessage {
-		t.Fatalf("mode = %v, want lastMessage", got.mode)
+	for _, want := range []previewMode{lastMessage, bothMessages, firstMessage} {
+		updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'p'}))
+		m = asModel(t, updated)
+		if m.mode != want {
+			t.Fatalf("mode = %v, want %v", m.mode, want)
+		}
+		if m.render.mode != want {
+			t.Fatalf("render.mode = %v, want %v (delegate would render the wrong column)", m.render.mode, want)
+		}
 	}
-	if got.render.mode != lastMessage {
-		t.Fatalf("render.mode = %v, want lastMessage (delegate would render the wrong column)", got.render.mode)
-	}
-	if got.list.Index() != startIndex {
-		t.Fatalf("preview key paged the list: index %d -> %d", startIndex, got.list.Index())
+	if m.list.Index() != startIndex {
+		t.Fatalf("preview key paged the list: index %d -> %d", startIndex, m.list.Index())
 	}
 }
 
@@ -356,6 +426,9 @@ func TestSessionsLoadedTransition(t *testing.T) {
 	}
 }
 
+// TestProviderToggle drives the index-based filter keys: '1' toggles the first
+// discovered provider (codex), '2' the second (claude), '3' the third (jcode),
+// following session.ProviderOrder over the providers that actually have rows.
 func TestProviderToggle(t *testing.T) {
 	rows := []session.Row{
 		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl"},
@@ -367,7 +440,7 @@ func TestProviderToggle(t *testing.T) {
 		t.Fatalf("initial sessions = %d, want 3", got)
 	}
 
-	off, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	off, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '1'}))
 	got := asModel(t, off)
 	if got.providers[session.ProviderCodex] {
 		t.Fatal("codex should be disabled after toggle")
@@ -376,19 +449,32 @@ func TestProviderToggle(t *testing.T) {
 		t.Fatalf("filtered sessions = %d, want 2", n)
 	}
 
-	on, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	on, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '1'}))
 	got = asModel(t, on)
 	if !got.providers[session.ProviderCodex] || sessionCount(got.list.VisibleItems()) != 3 {
 		t.Fatalf("codex not re-enabled: enabled=%v sessions=%d", got.providers[session.ProviderCodex], sessionCount(got.list.VisibleItems()))
 	}
 
-	joff, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'z'}))
+	coff, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '2'}))
+	got = asModel(t, coff)
+	if got.providers[session.ProviderClaude] {
+		t.Fatal("claude should be disabled after '2' toggle")
+	}
+
+	joff, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '3'}))
 	got = asModel(t, joff)
 	if got.providers[session.ProviderJCode] {
-		t.Fatal("jcode should be disabled after z toggle")
+		t.Fatal("jcode should be disabled after '3' toggle")
 	}
-	if n := sessionCount(got.list.VisibleItems()); n != 2 {
-		t.Fatalf("filtered sessions after jcode toggle = %d, want 2", n)
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("filtered sessions after claude+jcode toggles = %d, want 1", n)
+	}
+
+	// A digit with no discovered provider behind it must not blank the list.
+	noop, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '9'}))
+	got = asModel(t, noop)
+	if n := sessionCount(got.list.VisibleItems()); n != 1 {
+		t.Fatalf("sessions after unbound digit = %d, want 1", n)
 	}
 }
 
@@ -398,7 +484,7 @@ func TestProviderToggleKeepsLastProvider(t *testing.T) {
 	}
 	m := sizedModel(rows)
 
-	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '1'}))
 	got := asModel(t, updated)
 	if !got.providers[session.ProviderCodex] {
 		t.Fatal("the only provider must stay enabled")
@@ -409,6 +495,7 @@ func TestProviderToggleKeepsLastProvider(t *testing.T) {
 }
 
 func TestYoloToggleChangesResumeHint(t *testing.T) {
+	withFakeCommands(t, "codex")
 	row := session.Row{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})
 	if m.dangerous {
@@ -453,7 +540,8 @@ func TestScopeCycling(t *testing.T) {
 }
 
 func TestHandoffTargetCycling(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	// Only providers whose CLI is on PATH qualify as hand-off targets.
+	withFakeCommands(t, "claude", "jcode")
 	rows := []session.Row{
 		{Provider: session.ProviderCodex, ID: "c1", LastAt: time.Now(), File: "/tmp/c1.jsonl", FirstUser: "codex"},
 		{Provider: session.ProviderClaude, ID: "d1", LastAt: time.Now().Add(-time.Minute), File: "/tmp/d1.jsonl", FirstUser: "claude"},
@@ -637,7 +725,8 @@ func TestCollapsedCategoriesAreSearchable(t *testing.T) {
 }
 
 func TestCompoundChooserSelectsAgent(t *testing.T) {
-	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	withFakeCommands(t, "claude")
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: t.TempDir(), LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
 	m := sizedModel(rows)
 
 	opened, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'C'}))
@@ -678,7 +767,7 @@ func TestCompoundChooserCancel(t *testing.T) {
 
 func TestWindowSizeUpdatesListSize(t *testing.T) {
 	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "hi"}}
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	got := asModel(t, updated)
@@ -690,5 +779,227 @@ func TestWindowSizeUpdatesListSize(t *testing.T) {
 	}
 	if got.list.Height() <= 0 {
 		t.Fatalf("list height = %d, want > 0", got.list.Height())
+	}
+}
+
+// TestDKeyArmsAndConfirmsDelete covers the 'd' alias: the first press arms the
+// same two-press confirmation as delete/backspace, the second press deletes.
+func TestDKeyArmsAndConfirmsDelete(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(file, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []session.Row{{Provider: session.ProviderClaude, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: file, FirstUser: "hi"}}
+	m := sizedModel(rows)
+
+	armed, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
+	am := asModel(t, armed)
+	if am.deleteArmed == "" {
+		t.Fatal("'d' did not arm the delete confirmation")
+	}
+
+	deleted, _ := am.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
+	dm := asModel(t, deleted)
+	if len(dm.allRows) != 0 {
+		t.Fatalf("second 'd' did not delete the session: %d rows left", len(dm.allRows))
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("session file still exists after delete: %v", err)
+	}
+}
+
+// TestEscDoesNotQuit: esc clears overlays and search but must never quit the
+// picker; only q and ctrl+c do.
+func TestEscDoesNotQuit(t *testing.T) {
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	m := sizedModel(rows)
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if cmd != nil {
+		t.Fatalf("esc on the main list produced a command: %#v", cmd())
+	}
+	if selectedFromModel(t, updated) != nil {
+		t.Fatal("esc selected a session")
+	}
+
+	// esc collapses the '?' overlay instead of quitting.
+	helped, _ := asModel(t, updated).Update(tea.KeyPressMsg(tea.Key{Code: '?'}))
+	hm := asModel(t, helped)
+	if !hm.help.ShowAll {
+		t.Fatal("? did not expand help")
+	}
+	closed, cmd := hm.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	cm := asModel(t, closed)
+	if cm.help.ShowAll {
+		t.Fatal("esc did not collapse the help overlay")
+	}
+	if cmd != nil {
+		t.Fatalf("esc on the help overlay produced a command: %#v", cmd())
+	}
+
+	// q still quits.
+	_, quitCmd := cm.Update(tea.KeyPressMsg(tea.Key{Code: 'q'}))
+	if quitCmd == nil {
+		t.Fatal("q did not quit")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("q produced %#v, want tea.QuitMsg", quitCmd())
+	}
+}
+
+// TestRescanPreservesCursorAndFilters: 'r' re-fires session discovery and the
+// reload keeps both the cursor row and the provider filter.
+func TestRescanPreservesCursorAndFilters(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a", CWD: "/p/a", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/a.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderCodex, ID: "b", CWD: "/p/a", LastAt: time.Date(2026, 6, 22, 11, 0, 0, 0, time.UTC), File: "/t/b.jsonl", FirstUser: "bravo"},
+		{Provider: session.ProviderClaude, ID: "c", CWD: "/p/b", LastAt: time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC), File: "/t/c.jsonl", FirstUser: "charlie"},
+	}
+	m := sizedModel(rows)
+
+	// Hide claude, then move the cursor to the second codex row.
+	filtered, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '2'}))
+	m = asModel(t, filtered)
+	moved, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	m = asModel(t, moved)
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok || selected.row.ID != "b" {
+		t.Fatalf("cursor setup failed: %#v", m.list.SelectedItem())
+	}
+
+	rescanning, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'r'}))
+	if cmd == nil {
+		t.Fatal("'r' did not produce a rescan command")
+	}
+	rm := asModel(t, rescanning)
+	if !rm.rescanning {
+		t.Fatal("'r' did not mark the model as rescanning")
+	}
+
+	reloaded, _ := rm.Update(sessionsLoadedMsg{rows: rows})
+	got := asModel(t, reloaded)
+	if got.providers[session.ProviderClaude] {
+		t.Fatal("rescan re-enabled a provider the user had hidden")
+	}
+	selected, ok = got.list.SelectedItem().(item)
+	if !ok || selected.row.ID != "b" {
+		t.Fatalf("rescan lost the cursor: %#v", got.list.SelectedItem())
+	}
+}
+
+// TestResumeValidationKeepsTUIAlive: enter on a session whose CLI is missing
+// must show a status line instead of quitting into a doomed exec.
+func TestResumeValidationKeepsTUIAlive(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: t.TempDir(), LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	m := sizedModel(rows)
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if selectedFromModel(t, updated) != nil {
+		t.Fatal("enter selected a session although its CLI is missing")
+	}
+	if cmd == nil {
+		t.Fatal("expected a status-message command explaining the failure")
+	}
+}
+
+// TestCompoundChooserRejectsMissingAgent: picking an agent whose CLI is not on
+// PATH keeps the chooser open and explains the problem.
+func TestCompoundChooserRejectsMissingAgent(t *testing.T) {
+	withFakeCommands(t, "claude")
+	rows := []session.Row{{Provider: session.ProviderClaude, ID: "x", CWD: t.TempDir(), LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
+	m := sizedModel(rows)
+
+	opened, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'C'}))
+	om := asModel(t, opened)
+	chosen, _ := om.Update(tea.KeyPressMsg(tea.Key{Code: '1'})) // codex, not installed
+	cm := asModel(t, chosen)
+	if selectedFromModel(t, chosen) != nil {
+		t.Fatal("missing agent still produced a selection")
+	}
+	if !cm.compoundChoosing {
+		t.Fatal("chooser closed although the pick was rejected")
+	}
+	if !strings.Contains(cm.compoundNotice, "codex") {
+		t.Fatalf("notice should name the missing CLI: %q", cm.compoundNotice)
+	}
+}
+
+// TestHelpBarVisibleAt80x24 renders the full browse view at a small terminal
+// size with long workspace paths and asserts the help bar keeps its row.
+func TestHelpBarVisibleAt80x24(t *testing.T) {
+	long := "/home/user/projects/an-extremely-long-workspace-directory-name/nested/deeper/repo"
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "019eee0c-9361-7330-b0f4-b887cbe7fab6", CWD: long, LastAt: time.Now(), File: long + "/s.jsonl", FirstUser: strings.Repeat("long first message ", 20), LastUser: strings.Repeat("long last message ", 20)},
+		{Provider: session.ProviderClaude, ID: "y", CWD: long + "-two", LastAt: time.Now(), File: "/t/y.jsonl", FirstUser: "hi"},
+	}
+	m := newModel(rows)
+	m.width = 80
+	m.height = 24
+	m.resizeList()
+
+	view := m.browseView()
+	if got := lipgloss.Height(view); got > 24 {
+		t.Fatalf("browse view height = %d, want <= 24", got)
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > 80 {
+			t.Fatalf("line %d width = %d > 80 (would wrap and push the help bar off-screen): %q", i, w, line)
+		}
+	}
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "resume") {
+		t.Fatalf("last line is not the help bar: %q", last)
+	}
+}
+
+// TestHelpShowsProviderStateAndTargets: the help content must surface provider
+// filter on/off state plus the current transfer target and scope.
+func TestHelpShowsProviderStateAndTargets(t *testing.T) {
+	withFakeCommands(t, "claude")
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "hi"},
+		{Provider: session.ProviderClaude, ID: "d1", CWD: "/p/b", LastAt: time.Now().Add(-time.Minute), File: "/t/d1.jsonl", FirstUser: "hi"},
+	}
+	m := sizedModel(rows)
+	m.help.ShowAll = true
+	m.help.SetWidth(200)
+
+	full := m.helpView()
+	for _, want := range []string{"codex:on", "claude:on", "target:claude", "scope:all", "preview:first"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("full help missing %q:\n%s", want, full)
+		}
+	}
+
+	toggled, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '2'}))
+	tm := asModel(t, toggled)
+	if !strings.Contains(tm.helpView(), "claude:off") {
+		t.Fatalf("help does not reflect the disabled provider:\n%s", tm.helpView())
+	}
+}
+
+// TestEmptyViewListsScannedDirs: the empty state names the scanned directories
+// and their env overrides, and points at 'r' to rescan.
+func TestEmptyViewListsScannedDirs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+
+	m := sizedModel(nil)
+	view := m.emptyView()
+	for _, want := range []string{
+		filepath.Join(root, "codex", "sessions"),
+		filepath.Join(root, "claude", "projects"),
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "GEMINI_CLI_HOME",
+		"press r to rescan",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("empty view missing %q:\n%s", want, view)
+		}
 	}
 }

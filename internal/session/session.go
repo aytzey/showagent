@@ -1,10 +1,10 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,43 +42,78 @@ type ResumeOptions struct {
 	Dangerous bool
 }
 
+// ResumeCommand is the argv that resumes r in its own CLI, or nil when the
+// provider is unknown.
 func (r Row) ResumeCommand(options ResumeOptions) []string {
-	switch r.Provider {
-	case ProviderClaude:
-		command := []string{"claude"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-skip-permissions")
-		}
-		return append(command, "--resume", r.ID)
-	case ProviderJCode:
-		return []string{"jcode", "--no-update", "--resume", r.ID}
-	default:
-		command := []string{"codex", "resume"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(command, r.ID)
+	impl, ok := providerFor(r.Provider)
+	if !ok {
+		return nil
 	}
+	return impl.ResumeArgs(r, options)
 }
 
-func ProviderOrder() []Provider {
-	return []Provider{ProviderCodex, ProviderClaude, ProviderJCode}
+// providerCommand is the CLI executable that resumes sessions for provider,
+// or "" when the provider is unknown.
+func providerCommand(provider Provider) string {
+	if impl, ok := providerFor(provider); ok {
+		return impl.CommandName()
+	}
+	return ""
 }
 
 func ProviderCommandAvailable(provider Provider) bool {
-	command := ""
-	switch provider {
-	case ProviderCodex:
-		command = "codex"
-	case ProviderClaude:
-		command = "claude"
-	case ProviderJCode:
-		command = "jcode"
-	default:
+	command := providerCommand(provider)
+	if command == "" {
 		return false
 	}
 	_, err := exec.LookPath(command)
 	return err == nil
+}
+
+// ScanTarget describes one directory Discover reads for a provider, together
+// with the environment variable that overrides its location.
+type ScanTarget struct {
+	Provider Provider
+	Path     string
+	EnvVar   string
+	// Note explains why a target is currently skipped, or is empty.
+	Note string
+}
+
+// ScanTargets reports the exact directories Discover scans right now, so
+// callers can tell the user where sessions are expected to live.
+func ScanTargets() []ScanTarget {
+	targets := make([]ScanTarget, 0, len(registry))
+	for _, impl := range registry {
+		targets = append(targets, impl.ScanTarget())
+	}
+	return targets
+}
+
+// ValidateResume reports why resuming row would fail, so callers can surface
+// the problem before tearing down their UI and exec-ing the provider CLI.
+func ValidateResume(row Row) error {
+	return validateLaunch(row.Provider, row.resumeCWD())
+}
+
+// ValidateCompound is ValidateResume for a compound pass: the chosen agent's
+// CLI must be on PATH and the session workspace must be a real directory.
+func ValidateCompound(row Row, agent Provider) error {
+	return validateLaunch(agent, row.resumeCWD())
+}
+
+func validateLaunch(provider Provider, cwd string) error {
+	command := providerCommand(provider)
+	if command == "" {
+		return fmt.Errorf("unsupported provider %q", provider)
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		return fmt.Errorf("%s not found in PATH", command)
+	}
+	if _, err := launchDir(cwd); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r Row) FilterValue() string {
@@ -94,8 +129,10 @@ func (r Row) FilterValue() string {
 }
 
 func Discover() []Row {
-	rows := append(discoverCodex(defaultCodexHome()), discoverClaude(defaultClaudeHome())...)
-	rows = append(rows, discoverJCode(defaultJCodeHome())...)
+	var rows []Row
+	for _, impl := range registry {
+		rows = append(rows, impl.Discover()...)
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].LastAt.After(rows[j].LastAt)
 	})
@@ -126,32 +163,17 @@ func Branch(row Row) (Row, error) {
 }
 
 func Delete(row Row) error {
-	switch row.Provider {
-	case ProviderCodex:
-		command := exec.Command("codex", "delete", "--force", row.ID)
-		if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
-			command.Dir = row.CWD
-		}
-		if output, err := command.CombinedOutput(); err != nil {
-			return fmt.Errorf("codex delete failed: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		return nil
-	case ProviderClaude:
-		if row.File == "" {
-			return errors.New("claude session file is unknown")
-		}
-		return os.Remove(row.File)
-	case ProviderJCode:
-		if row.File == "" {
-			return errors.New("jcode session file is unknown")
-		}
-		return os.Remove(row.File)
-	default:
+	impl, ok := providerFor(row.Provider)
+	if !ok {
 		return fmt.Errorf("unsupported provider %q", row.Provider)
 	}
+	return impl.Delete(row)
 }
 
 func launch(cwd string, command []string) error {
+	if len(command) == 0 {
+		return errors.New("no launch command for this provider")
+	}
 	dir, err := launchDir(cwd)
 	if err != nil {
 		return err
@@ -349,48 +371,91 @@ func sessionIDFromPath(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
+// reverseLines calls fn with each non-empty line of path from last to first,
+// stopping early once fn returns false. Blocks are read back to front; the
+// fragments of a line that spans blocks are buffered up to scanBufferMax
+// bytes, and a longer line is degraded to its trailing scanBufferMax bytes so
+// a newline-poor multi-gigabyte file is never held in memory at once.
 func reverseLines(path string, fn func(string) bool) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
-	const blockSize int64 = 64 * 1024
-	position, err := file.Seek(0, io.SeekEnd)
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
+	position := info.Size()
 
-	buffer := []byte{}
+	// pending holds the fragments of the line currently being assembled, in
+	// reverse file order. truncated records that the line already exceeded
+	// scanBufferMax and its earlier bytes are being dropped.
+	var pending [][]byte
+	pendingSize := 0
+	truncated := false
+
+	// emit joins first (the earliest fragment of the current line) with the
+	// pending fragments, resets the line state, and passes the line to fn.
+	// It reports whether scanning should continue.
+	emit := func(first []byte) bool {
+		if truncated {
+			first = nil
+		}
+		line := make([]byte, 0, len(first)+pendingSize)
+		line = append(line, first...)
+		for i := len(pending) - 1; i >= 0; i-- {
+			line = append(line, pending[i]...)
+		}
+		pending = pending[:0]
+		pendingSize = 0
+		truncated = false
+		text := strings.TrimSpace(string(line))
+		if text == "" {
+			return true
+		}
+		return fn(text)
+	}
+
+	const blockSize = 64 * 1024
+	chunk := make([]byte, blockSize)
 	for position > 0 {
-		readSize := blockSize
+		readSize := int64(blockSize)
 		if position < readSize {
 			readSize = position
 		}
 		position -= readSize
-		if _, err := file.Seek(position, io.SeekStart); err != nil {
-			return err
-		}
-		chunk := make([]byte, readSize)
-		if _, err := io.ReadFull(file, chunk); err != nil {
+		block := chunk[:readSize]
+		if _, err := file.ReadAt(block, position); err != nil {
 			return err
 		}
 
-		buffer = append(chunk, buffer...)
-		lines := strings.Split(string(buffer), "\n")
-		buffer = []byte(lines[0])
-		for i := len(lines) - 1; i >= 1; i-- {
-			line := strings.TrimSpace(lines[i])
-			if line != "" && !fn(line) {
+		for {
+			index := bytes.LastIndexByte(block, '\n')
+			if index < 0 {
+				break
+			}
+			if !emit(block[index+1:]) {
 				return nil
 			}
+			block = block[:index]
 		}
+
+		if len(block) == 0 {
+			continue
+		}
+		if truncated || pendingSize+len(block) > scanBufferMax {
+			// The current line no longer fits: keep only its tail and drop
+			// the earlier bytes instead of buffering the whole file.
+			truncated = true
+			continue
+		}
+		pending = append(pending, append([]byte(nil), block...))
+		pendingSize += len(block)
 	}
 
-	if line := strings.TrimSpace(string(buffer)); line != "" {
-		fn(line)
-	}
+	emit(nil)
 	return nil
 }
 
@@ -432,8 +497,4 @@ func bestTimestamp(path string) (time.Time, bool) {
 		return timestamp, true
 	}
 	return fallbackMTime(path)
-}
-
-func errNoExec() error {
-	return errors.New("exec is unsupported on this platform")
 }

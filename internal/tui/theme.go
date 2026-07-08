@@ -5,6 +5,8 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/lipgloss/v2"
+
+	"github.com/aytzey/showagent/internal/session"
 )
 
 // theme bundles every style the picker renders with. It is rebuilt whenever the
@@ -19,9 +21,7 @@ type theme struct {
 	groupHeader  lipgloss.Style
 	cursor       lipgloss.Style
 	selected     lipgloss.Style
-	codexBadge   lipgloss.Style
-	claudeBadge  lipgloss.Style
-	jcodeBadge   lipgloss.Style
+	badges       map[session.Provider]lipgloss.Style
 	date         lipgloss.Style
 	workspaceDim lipgloss.Style
 	workspace    lipgloss.Style
@@ -32,6 +32,50 @@ type theme struct {
 	hint         lipgloss.Style
 	spinner      lipgloss.Style
 	help         help.Styles
+}
+
+// badgeFor is the badge style for provider; providers without a dedicated
+// accent fall back to the neutral chip style so new registry entries render
+// sensibly before they get colors.
+func (t *theme) badgeFor(provider session.Provider) lipgloss.Style {
+	if style, ok := t.badges[provider]; ok {
+		return style
+	}
+	return t.chip
+}
+
+// badgeColors is one provider's badge palette: background and foreground for
+// light and dark terminals.
+type badgeColors struct {
+	lightBg, darkBg string
+	lightFg, darkFg string
+}
+
+// providerAccents assigns each known provider its brand-ish accent. Providers
+// missing here (future registry additions) fall back to theme.chip.
+var providerAccents = map[session.Provider]badgeColors{
+	session.ProviderCodex:    {lightBg: "#0969DA", darkBg: "#1F6FEB", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
+	session.ProviderClaude:   {lightBg: "#8250DF", darkBg: "#D2A8FF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderJCode:    {lightBg: "#1A7F37", darkBg: "#238636", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
+	session.ProviderOpenCode: {lightBg: "#1B7C8C", darkBg: "#39C5CF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderGemini:   {lightBg: "#B04A17", darkBg: "#F0883E", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+}
+
+// providerBadges builds one badge style per registered provider, so every
+// badge consumer stays in sync with the provider registry.
+func providerBadges(isDark bool) map[session.Provider]lipgloss.Style {
+	ld := lipgloss.LightDark(isDark)
+	badges := make(map[session.Provider]lipgloss.Style, len(providerAccents))
+	for _, provider := range session.ProviderOrder() {
+		colors, ok := providerAccents[provider]
+		if !ok {
+			continue
+		}
+		badges[provider] = lipgloss.NewStyle().Bold(true).
+			Foreground(ld(lipgloss.Color(colors.lightFg), lipgloss.Color(colors.darkFg))).
+			Background(ld(lipgloss.Color(colors.lightBg), lipgloss.Color(colors.darkBg)))
+	}
+	return badges
 }
 
 func newTheme(isDark bool) *theme {
@@ -63,13 +107,7 @@ func newTheme(isDark bool) *theme {
 		cursor: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		selected: lipgloss.NewStyle().Bold(true).
 			Foreground(white).Background(selBg),
-		codexBadge: lipgloss.NewStyle().Bold(true).
-			Foreground(white).Background(ld(lipgloss.Color("#0969DA"), lipgloss.Color("#1F6FEB"))),
-		claudeBadge: lipgloss.NewStyle().Bold(true).
-			Foreground(ld(lipgloss.Color("#FFFFFF"), lipgloss.Color("#0D1117"))).
-			Background(ld(lipgloss.Color("#8250DF"), lipgloss.Color("#D2A8FF"))),
-		jcodeBadge: lipgloss.NewStyle().Bold(true).
-			Foreground(white).Background(ld(lipgloss.Color("#1A7F37"), lipgloss.Color("#238636"))),
+		badges:       providerBadges(isDark),
 		date:         c("#6E7781", "#8B949E"),
 		workspaceDim: c("#6E7781", "#8B949E"),
 		workspace:    lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#1F2328"), lipgloss.Color("#E6EDF3"))),
@@ -91,6 +129,10 @@ func monoTheme() *theme {
 	plain := lipgloss.NewStyle()
 	bold := lipgloss.NewStyle().Bold(true)
 	reverse := lipgloss.NewStyle().Reverse(true).Bold(true)
+	badges := map[session.Provider]lipgloss.Style{}
+	for _, provider := range session.ProviderOrder() {
+		badges[provider] = bold
+	}
 	return &theme{
 		title:        bold,
 		muted:        plain,
@@ -100,9 +142,7 @@ func monoTheme() *theme {
 		groupHeader:  bold,
 		cursor:       bold,
 		selected:     reverse,
-		codexBadge:   bold,
-		claudeBadge:  bold,
-		jcodeBadge:   bold,
+		badges:       badges,
 		date:         plain,
 		workspaceDim: plain,
 		workspace:    bold,

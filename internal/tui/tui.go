@@ -201,15 +201,18 @@ type model struct {
 	deleteArmed      string
 	busy             string
 	loading          bool
+	rescanning       bool
+	rescanRow        *session.Row
 	compoundChoosing bool
 	compoundRow      *session.Row
+	compoundNotice   string
 	isDark           bool
 	width            int
 	height           int
 }
 
-func newModel(rows []session.Row, mode previewMode) model {
-	return buildModel(rows, mode, false)
+func newModel(rows []session.Row) model {
+	return buildModel(rows, firstMessage, false)
 }
 
 func newLoadingModel(mode previewMode) model {
@@ -292,13 +295,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	case sessionsLoadedMsg:
+		wasRescan := m.rescanning
 		m.loading = false
+		m.rescanning = false
 		m.allRows = msg.rows
-		m.providers = defaultProviderFilter(msg.rows)
+		if wasRescan {
+			// A rescan keeps the user's provider filter and search; only the
+			// initial load starts from the default all-providers view.
+			m.providers = mergeProviderFilter(m.providers, msg.rows)
+		} else {
+			m.providers = defaultProviderFilter(msg.rows)
+		}
 		m.pruneCollapsedGroups()
 		cmd := m.list.SetItems(m.currentItems())
-		selectFirstSession(&m.list)
+		if wasRescan && m.rescanRow != nil {
+			selectRowItem(&m.list, *m.rescanRow)
+		} else {
+			selectFirstSession(&m.list)
+		}
+		m.rescanRow = nil
 		m.resizeList()
+		if wasRescan {
+			return m, tea.Batch(cmd, m.list.NewStatusMessage(fmt.Sprintf("rescan done: %d sessions", len(msg.rows))))
+		}
 		return m, cmd
 	case sessionMutationMsg:
 		return m.applyMutation(msg)
@@ -320,16 +339,20 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// The compound chooser is a modal: pick the agent, or cancel.
+	// The compound chooser is a modal: pick the agent by digit, or cancel.
+	// Digits follow the registry order of compound-capable providers.
 	if m.compoundChoosing {
-		switch msg.String() {
-		case "1":
-			return m.startCompound(session.ProviderCodex)
-		case "2":
-			return m.startCompound(session.ProviderClaude)
+		key := msg.String()
+		if agents := session.CompoundAgents(); len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+			if index := int(key[0] - '1'); index < len(agents) {
+				return m.startCompound(agents[index])
+			}
+		}
+		switch key {
 		case "esc", "q", "ctrl+c":
 			m.compoundChoosing = false
 			m.compoundRow = nil
+			m.compoundNotice = ""
 			return m, nil
 		}
 		return m, nil
@@ -343,13 +366,26 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// esc clears an applied filter before it is allowed to quit the app.
-	if msg.String() == "esc" && m.list.IsFiltered() {
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(msg)
-		rebuild := m.rebuildList()
-		m.reconcileDeleteArm()
-		return m, tea.Batch(cmd, rebuild)
+	// esc peels back one layer of UI state (search, help overlay, armed
+	// delete) and otherwise does nothing: it never quits the picker.
+	if msg.String() == "esc" {
+		if m.list.IsFiltered() {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			rebuild := m.rebuildList()
+			m.reconcileDeleteArm()
+			return m, tea.Batch(cmd, rebuild)
+		}
+		if m.help.ShowAll {
+			m.help.ShowAll = false
+			m.resizeList()
+			return m, nil
+		}
+		if m.deleteArmed != "" {
+			m.deleteArmed = ""
+			return m, m.list.NewStatusMessage("delete cancelled")
+		}
+		return m, nil
 	}
 
 	switch {
@@ -386,6 +422,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		row := selected.row
 		m.compoundRow = &row
 		m.compoundChoosing = true
+		m.compoundNotice = ""
 		return m, nil
 	case key.Matches(msg, m.keys.Target):
 		return m.cycleHandoffTarget()
@@ -401,30 +438,26 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Scope):
 		m.handoff = nextHandoffScope(m.handoff)
 		return m, m.list.NewStatusMessage("hand-off scope: " + m.handoff.Label())
-	case key.Matches(msg, m.keys.Codex):
-		return m, m.toggleProvider(session.ProviderCodex)
-	case key.Matches(msg, m.keys.Claude):
-		return m, m.toggleProvider(session.ProviderClaude)
-	case key.Matches(msg, m.keys.JCode):
-		return m, m.toggleProvider(session.ProviderJCode)
+	case key.Matches(msg, m.keys.Preview):
+		m.setMode(nextPreviewMode(m.mode))
+		return m, m.list.NewStatusMessage("preview: " + modeLong(m.mode))
+	case key.Matches(msg, m.keys.Rescan):
+		m.rescanning = true
+		m.rescanRow = nil
+		if selected, ok := m.list.SelectedItem().(item); ok {
+			row := selected.row
+			m.rescanRow = &row
+		}
+		return m, tea.Batch(loadSessionsCmd(), m.list.NewStatusMessage("rescanning session stores…"))
+	case key.Matches(msg, m.keys.Providers):
+		return m.toggleProviderIndex(msg.String())
 	}
 
-	// Preview keys are handled individually so each selects a distinct mode.
-	switch msg.String() {
-	case "/":
+	if msg.String() == "/" {
 		rebuild := m.rebuildListForSearch()
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, tea.Batch(rebuild, cmd)
-	case "f":
-		m.setMode(firstMessage)
-		return m, m.list.NewStatusMessage("preview: first user message")
-	case "l":
-		m.setMode(lastMessage)
-		return m, m.list.NewStatusMessage("preview: latest user message")
-	case "b":
-		m.setMode(bothMessages)
-		return m, m.list.NewStatusMessage("preview: first + latest")
 	}
 
 	var cmd tea.Cmd
@@ -563,10 +596,38 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
+// toggleProviderIndex maps a digit key onto the discovered provider order:
+// "1" toggles the first discovered provider, "2" the second, and so on.
+func (m model) toggleProviderIndex(digit string) (tea.Model, tea.Cmd) {
+	order := discoveredProviders(m.allRows)
+	index := int(digit[0] - '1')
+	if index < 0 || index >= len(order) {
+		return m, m.list.NewStatusMessage("no provider on key " + digit)
+	}
+	return m, m.toggleProvider(order[index])
+}
+
+// discoveredProviders lists the providers that actually have sessions, in the
+// stable ProviderOrder, so digit filter keys keep a predictable meaning.
+func discoveredProviders(rows []session.Row) []session.Provider {
+	var providers []session.Provider
+	for _, provider := range session.ProviderOrder() {
+		if providerExists(rows, provider) {
+			providers = append(providers, provider)
+		}
+	}
+	return providers
+}
+
 func (m model) selectResume() (tea.Model, tea.Cmd) {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
 		return m, m.list.NewStatusMessage("no session selected")
+	}
+	// Validate before tea.Quit tears the TUI down, so a missing CLI or a
+	// deleted workspace surfaces as a status line instead of a post-exit error.
+	if err := session.ValidateResume(selected.row); err != nil {
+		return m, m.list.NewStatusMessage("cannot resume: " + err.Error())
 	}
 	m.selected = &Selection{
 		Row:     selected.row,
@@ -639,6 +700,12 @@ func (m model) startCompound(agent session.Provider) (tea.Model, tea.Cmd) {
 		m.compoundChoosing = false
 		return m, m.list.NewStatusMessage("no session selected")
 	}
+	// Keep the chooser open and explain the problem instead of quitting into
+	// a launch that is known to fail.
+	if err := session.ValidateCompound(*m.compoundRow, agent); err != nil {
+		m.compoundNotice = "cannot run " + string(agent) + ": " + err.Error()
+		return m, nil
+	}
 	m.selected = &Selection{
 		Row:     *m.compoundRow,
 		Options: session.ResumeOptions{Dangerous: m.dangerous},
@@ -666,29 +733,60 @@ func (m model) View() tea.View {
 }
 
 func (m model) browseView() string {
+	helpBar := m.helpView()
 	parts := []string{
 		m.headerView(),
 		columnHeader(m.render.theme, m.width, m.mode),
 		m.list.View(),
 		m.detailView(),
-		m.helpView(),
 	}
-	out := parts[:0]
+	body := parts[:0]
 	for _, p := range parts {
 		if p != "" {
-			out = append(out, p)
+			body = append(body, p)
 		}
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, out...)
+	content := lipgloss.JoinVertical(lipgloss.Left, body...)
+	// Hard height budget: whatever else happens above (long paths, extra
+	// banners), the help bar keeps its rows and stays on screen.
+	if m.height > 0 {
+		content = clampLines(content, m.height-lipgloss.Height(helpBar))
+	}
+	if content == "" {
+		return helpBar
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, content, helpBar)
 }
 
+// clampLines truncates value to at most maxLines terminal rows.
+func clampLines(value string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) <= maxLines {
+		return value
+	}
+	return strings.Join(lines[:maxLines], "\n")
+}
+
+// headerView renders the title plus as many stats chips as fit the width, so
+// the header can never wrap and push the help bar off-screen.
 func (m model) headerView() string {
 	th := m.render.theme
 	title := th.title.Render("showagent")
-	return lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", m.statsLine())
+	stats := m.statsParts()
+	for len(stats) > 0 {
+		header := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", strings.Join(stats, "  "))
+		if m.width <= 0 || lipgloss.Width(header) <= m.width {
+			return header
+		}
+		stats = stats[:len(stats)-1]
+	}
+	return title
 }
 
-func (m model) statsLine() string {
+func (m model) statsParts() []string {
 	th := m.render.theme
 	parts := []string{
 		th.muted.Render(fmt.Sprintf("%d/%d sessions", sessionCount(m.list.VisibleItems()), len(m.allRows))),
@@ -701,11 +799,49 @@ func (m model) statsLine() string {
 	if m.dangerous {
 		parts = append(parts, th.yoloChip.Render("YOLO"))
 	}
-	return strings.Join(parts, "  ")
+	return parts
 }
 
 func (m model) helpView() string {
-	return m.help.View(m.keys)
+	return m.help.View(m.dynamicKeys())
+}
+
+// dynamicKeys copies the static keymap and rewrites the help text of stateful
+// bindings, so the short bar and the '?' overlay both show current values.
+func (m model) dynamicKeys() keyMap {
+	keys := m.keys
+	if label, desc, ok := m.providerFilterHelp(); ok {
+		keys.Providers.SetHelp(label, desc)
+	}
+	target := "none"
+	if t := m.selectedHandoffTarget(); t != "" {
+		target = string(t)
+	}
+	keys.Target.SetHelp("o", "target:"+target)
+	keys.Scope.SetHelp("t", "scope:"+m.handoff.Label())
+	keys.Preview.SetHelp("p", "preview:"+modeShort(m.mode))
+	keys.Yolo.SetHelp("y", "mode:"+resumeModeLabel(m.dangerous))
+	return keys
+}
+
+// providerFilterHelp describes the digit filter keys for the providers that
+// were actually discovered, with each provider's current on/off state.
+func (m model) providerFilterHelp() (label, desc string, ok bool) {
+	order := discoveredProviders(m.allRows)
+	if len(order) == 0 {
+		return "", "", false
+	}
+	labels := make([]string, 0, len(order))
+	states := make([]string, 0, len(order))
+	for index, provider := range order {
+		labels = append(labels, fmt.Sprintf("%d", index+1))
+		state := "off"
+		if m.providers[provider] {
+			state = "on"
+		}
+		states = append(states, fmt.Sprintf("%s:%s", provider, state))
+	}
+	return strings.Join(labels, "/"), strings.Join(states, " "), true
 }
 
 func (m model) detailView() string {
@@ -715,6 +851,9 @@ func (m model) detailView() string {
 	}
 	th := m.render.theme
 	width := max(40, m.width)
+	// Style.Width covers border and padding too, so the text area is the
+	// block width minus the full frame; lines are truncated to exactly that
+	// so nothing can wrap and blow the height budget.
 	frameW, _ := th.detail.GetFrameSize()
 	innerW := max(10, width-frameW)
 	valueW := max(8, innerW-detailLabelWidth)
@@ -727,7 +866,7 @@ func (m model) detailView() string {
 				state = "collapsed"
 			}
 			lines := []string{
-				th.label.Render(padLabel("category")) + truncateMiddle(header.path, valueW),
+				th.label.Render(padLabel("category")) + truncateMiddle(collapseHome(header.path), valueW),
 				th.label.Render(padLabel("sessions")) + fmt.Sprintf("%d", header.count),
 				th.label.Render(padLabel("state")) + state,
 				th.hint.Render("enter/space → collapse or expand category"),
@@ -738,13 +877,13 @@ func (m model) detailView() string {
 			for i := range lines {
 				lines[i] = truncateCells(lines[i], innerW)
 			}
-			return th.detail.Width(innerW).Render(strings.Join(lines, "\n"))
+			return th.detail.Width(width).Render(strings.Join(lines, "\n"))
 		}
 		msg := "No session selected."
 		if m.list.IsFiltered() {
 			msg = "No session matches this search · press esc to clear."
 		}
-		return th.detail.Width(innerW).Render(th.muted.Render(truncateCells(msg, innerW)))
+		return th.detail.Width(width).Render(th.muted.Render(truncateCells(msg, innerW)))
 	}
 	row := selected.row
 
@@ -755,7 +894,7 @@ func (m model) detailView() string {
 	lines = append(lines,
 		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
 		th.label.Render(padLabel("session"))+row.ID,
-		th.label.Render(padLabel("workspace"))+truncateMiddle(row.CWD, valueW),
+		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(row.CWD), valueW),
 		th.label.Render(padLabel("updated"))+localTime(row.LastAt),
 		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(row.FirstUser), valueW),
 		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(bestLast(row)), valueW),
@@ -768,7 +907,7 @@ func (m model) detailView() string {
 	for i := range lines {
 		lines[i] = truncateCells(lines[i], innerW)
 	}
-	return th.detail.Width(innerW).Render(strings.Join(lines, "\n"))
+	return th.detail.Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m model) providerWord(p session.Provider) string {
@@ -776,6 +915,9 @@ func (m model) providerWord(p session.Provider) string {
 }
 
 func (m model) resumeHint(row session.Row) string {
+	if !session.ProviderCommandAvailable(row.Provider) {
+		return fmt.Sprintf("%s CLI not found in PATH · install it or x → hand off", row.Provider)
+	}
 	if !m.dangerous {
 		return fmt.Sprintf("enter → resume with %s (normal) · y → yolo", row.Provider)
 	}
@@ -829,10 +971,26 @@ func (m model) loadingView() string {
 
 func (m model) emptyView() string {
 	th := m.render.theme
-	body := th.title.Render("showagent") + "\n\n" +
-		th.muted.Render("No supported local sessions found.") + "\n" +
-		th.muted.Render("Looked in Codex, Claude Code, and available JCode stores.") + "\n\n" +
-		th.hint.Render("Press q to quit.")
+	lines := []string{
+		th.title.Render("showagent"),
+		"",
+		th.muted.Render("No supported local sessions found."),
+		"",
+		th.muted.Render("Scanned:"),
+	}
+	for _, target := range session.ScanTargets() {
+		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, collapseHome(target.Path), target.EnvVar)
+		if target.Note != "" {
+			line += "  — " + target.Note
+		}
+		lines = append(lines, th.muted.Render(line))
+	}
+	lines = append(lines,
+		"",
+		th.hint.Render("Start a conversation with codex or claude, then press r to rescan."),
+		th.hint.Render("Press q to quit."),
+	)
+	body := strings.Join(lines, "\n")
 	if m.width <= 0 || m.height <= 0 {
 		return body
 	}
@@ -845,16 +1003,31 @@ func (m model) compoundView() string {
 	if m.compoundRow != nil {
 		target = string(m.compoundRow.Provider) + " · " + baseName(m.compoundRow.CWD)
 	}
-	box := th.detail.Width(min(max(m.width-6, 30), 64)).Render(strings.Join([]string{
+	option := func(digit, name string, provider session.Provider) string {
+		label := th.label.Render("["+digit+"]") + " " + name
+		if !session.ProviderCommandAvailable(provider) {
+			label += th.muted.Render(" (not installed)")
+		}
+		return label
+	}
+	options := make([]string, 0, 4)
+	for index, agent := range session.CompoundAgents() {
+		options = append(options, option(fmt.Sprintf("%d", index+1), session.DisplayName(agent), agent))
+	}
+	lines := []string{
 		th.title.Render("Compound engineering"),
 		"",
 		th.muted.Render("Run a compound pass on " + target + " and"),
-		th.muted.Render("pool the learnings for this project (codex + claude)."),
+		th.muted.Render("pool the learnings for this project across agents."),
 		"",
-		th.label.Render("[1]") + " Codex      " + th.label.Render("[2]") + " Claude",
+		strings.Join(options, "   "),
 		"",
 		th.hint.Render("esc cancel · current mode: " + resumeModeLabel(m.dangerous)),
-	}, "\n"))
+	}
+	if m.compoundNotice != "" {
+		lines = append(lines, th.deleteBanner.Render(m.compoundNotice))
+	}
+	box := th.detail.Width(min(max(m.width-6, 30), 64)).Render(strings.Join(lines, "\n"))
 	if m.width <= 0 || m.height <= 0 {
 		return box
 	}
@@ -863,7 +1036,7 @@ func (m model) compoundView() string {
 
 // Pick runs the picker over an already-discovered set of rows (used in tests).
 func Pick(rows []session.Row) (*Selection, error) {
-	return runProgram(newModel(rows, firstMessage))
+	return runProgram(newModel(rows))
 }
 
 // Run launches the interactive picker, discovering sessions asynchronously with
@@ -893,6 +1066,48 @@ func defaultProviderFilter(rows []session.Row) map[session.Provider]bool {
 		providers[row.Provider] = true
 	}
 	return providers
+}
+
+// mergeProviderFilter rebuilds the provider filter after a rescan: providers
+// keep their previous on/off state, newly discovered ones start enabled, and
+// an all-off result falls back to the default filter so the list never goes
+// permanently blank.
+func mergeProviderFilter(previous map[session.Provider]bool, rows []session.Row) map[session.Provider]bool {
+	providers := map[session.Provider]bool{}
+	for _, row := range rows {
+		enabled, known := previous[row.Provider]
+		if !known {
+			enabled = true
+		}
+		providers[row.Provider] = enabled
+	}
+	if enabledProviderCount(providers) == 0 {
+		return defaultProviderFilter(rows)
+	}
+	return providers
+}
+
+// nextPreviewMode cycles first -> latest -> both -> first.
+func nextPreviewMode(mode previewMode) previewMode {
+	switch mode {
+	case firstMessage:
+		return lastMessage
+	case lastMessage:
+		return bothMessages
+	default:
+		return firstMessage
+	}
+}
+
+func modeLong(mode previewMode) string {
+	switch mode {
+	case lastMessage:
+		return "latest user message"
+	case bothMessages:
+		return "first + latest user messages"
+	default:
+		return "first user message"
+	}
 }
 
 func filterRows(rows []session.Row, providers map[session.Provider]bool) []session.Row {
@@ -994,18 +1209,16 @@ func (m model) handoffTargetFor(row session.Row) session.Provider {
 	return candidates[0]
 }
 
+// handoffCandidates lists the providers row can convert to. A provider only
+// qualifies when its CLI is on PATH: converting to a tool that cannot resume
+// the result would strand the session.
 func (m model) handoffCandidates(row session.Row) []session.Provider {
-	present := map[session.Provider]bool{}
-	for _, existing := range m.allRows {
-		present[existing.Provider] = true
-	}
-
 	var candidates []session.Provider
 	for _, provider := range session.ProviderOrder() {
 		if provider == row.Provider {
 			continue
 		}
-		if present[provider] || session.ProviderCommandAvailable(provider) {
+		if session.ProviderCommandAvailable(provider) {
 			candidates = append(candidates, provider)
 		}
 	}

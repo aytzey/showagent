@@ -3,10 +3,59 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// claudeProvider adapts Claude Code's session store (per-project *.jsonl
+// files under ~/.claude/projects) to the provider registry.
+type claudeProvider struct{}
+
+func (claudeProvider) Name() Provider      { return ProviderClaude }
+func (claudeProvider) DisplayName() string { return "Claude" }
+func (claudeProvider) CommandName() string { return "claude" }
+func (claudeProvider) Home() string        { return defaultClaudeHome() }
+
+func (p claudeProvider) ScanTarget() ScanTarget {
+	return ScanTarget{
+		Provider: ProviderClaude,
+		Path:     filepath.Join(p.Home(), "projects"),
+		EnvVar:   "CLAUDE_HOME",
+	}
+}
+
+func (p claudeProvider) Discover() []Row {
+	return discoverClaude(p.Home())
+}
+
+func (claudeProvider) ResumeArgs(row Row, options ResumeOptions) []string {
+	command := []string{"claude"}
+	if options.Dangerous {
+		command = append(command, "--dangerously-skip-permissions")
+	}
+	return append(command, "--resume", row.ID)
+}
+
+func (p claudeProvider) CompoundArgs(row Row, options ResumeOptions, prompt string) []string {
+	return append(p.ResumeArgs(row, options), prompt)
+}
+
+func (claudeProvider) Delete(row Row) error {
+	if row.File == "" {
+		return errors.New("claude session file is unknown")
+	}
+	return os.Remove(row.File)
+}
+
+func (claudeProvider) Transcript(row Row) ([]Turn, error) {
+	return claudeTranscript(row.File)
+}
+
+func (claudeProvider) WriteConverted(source Row, turns []Turn) (Row, error) {
+	return writeClaudeConverted(source, turns)
+}
 
 type claudeRecord struct {
 	Type      string         `json:"type"`
@@ -47,7 +96,7 @@ func parseClaude(path string) (Row, bool) {
 	if err != nil {
 		return Row{}, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
@@ -81,6 +130,13 @@ func parseClaude(path string) (Row, bool) {
 			}
 			lastUser = text
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		// Deliberate skip: a file we cannot scan to the end (read error, or
+		// a single line beyond scanBufferMax) is dropped from discovery
+		// instead of being shown half-parsed. Conversion paths report the
+		// same condition as an error.
+		return Row{}, false
 	}
 
 	if id == "" {

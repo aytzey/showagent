@@ -20,20 +20,49 @@ const (
 	tableGapWidth      = 3
 )
 
-// PrintTable renders the plain, unstyled table used when output is piped.
-func PrintTable(w io.Writer, rows []session.Row) {
-	width := 120
-	_, _ = fmt.Fprintln(w, composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+// PrintTable renders the plain, unstyled table used when output is piped or
+// 'showagent list' runs. width is the terminal width; values <= 0 fall back
+// to 120. Session ids are always printed in full so the output stays usable
+// with 'showagent resume <id>'.
+func PrintTable(w io.Writer, width int, rows []session.Row) {
+	if width <= 0 {
+		width = 120
+	}
+	idWidth := len("ID")
 	for _, row := range rows {
-		_, _ = fmt.Fprintln(w, composeLine(
+		if n := lipgloss.Width(row.ID); n > idWidth {
+			idWidth = n
+		}
+	}
+	_, _ = fmt.Fprintln(w, plainLine(width, idWidth, "ID", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(w, plainLine(
 			width,
-			"  ",
+			idWidth,
+			row.ID,
 			string(row.Provider),
 			localTime(row.LastAt),
 			row.CWD,
 			previewFor(row, firstMessage),
 		))
 	}
+}
+
+// plainLine lays out one plain-table row. The id column is never truncated;
+// the workspace and message columns absorb whatever width remains.
+func plainLine(width, idWidth int, id, provider, date, cwd, preview string) string {
+	rest := width - gutterWidth - idWidth - tableProviderWidth - tableDateWidth - 4
+	cw := clamp(rest/2, 10, 46)
+	vw := max(1, rest-cw-1)
+	line := "  " + fmt.Sprintf(
+		"%-*s %-*s %-*s %-*s %s",
+		idWidth, id,
+		tableProviderWidth, truncateCells(provider, tableProviderWidth),
+		tableDateWidth, truncateCells(date, tableDateWidth),
+		cw, truncateMiddle(cwd, cw),
+		truncateCells(preview, vw),
+	)
+	return strings.TrimRight(line, " ")
 }
 
 func columnHeader(th *theme, width int, mode previewMode) string {
@@ -75,8 +104,9 @@ func collapseHome(path string) string {
 }
 
 func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
-	_, pw, dw, cw, vw := tableWidths(width)
+	pw, dw, cw, vw := tableWidths(width)
 	date := relativeTime(row.LastAt)
+	workspace := collapseHome(row.CWD)
 	preview := emptyFallback(previewFor(row, mode))
 
 	if selected {
@@ -84,7 +114,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 			"❯ %-*s %-*s %-*s %s",
 			pw, providerPlainLabel(string(row.Provider), pw),
 			dw, truncateCells(date, dw),
-			cw, truncateMiddle(row.CWD, cw),
+			cw, truncateMiddle(workspace, cw),
 			truncateCells(preview, vw),
 		)
 		return th.selected.Width(width).Render(truncateCells(inner, width))
@@ -93,7 +123,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 	cells := []string{
 		providerBadge(th, string(row.Provider), pw),
 		th.date.Width(dw).Render(truncateCells(date, dw)),
-		renderWorkspaceCell(th, row.CWD, cw),
+		renderWorkspaceCell(th, workspace, cw),
 		th.message.Width(vw).Render(truncateCells(preview, vw)),
 	}
 	return padCells("  "+strings.Join(cells, " "), width)
@@ -101,16 +131,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 
 func providerBadge(th *theme, provider string, width int) string {
 	label := providerPlainLabel(provider, width)
-	switch session.Provider(provider) {
-	case session.ProviderCodex:
-		return th.codexBadge.Width(width).Render(label)
-	case session.ProviderClaude:
-		return th.claudeBadge.Width(width).Render(label)
-	case session.ProviderJCode:
-		return th.jcodeBadge.Width(width).Render(label)
-	default:
-		return th.chip.Width(width).Render(label)
-	}
+	return th.badgeFor(session.Provider(provider)).Width(width).Render(label)
 }
 
 func providerPlainLabel(provider string, width int) string {
@@ -129,7 +150,7 @@ func renderWorkspaceCell(th *theme, cwd string, width int) string {
 }
 
 func composeLine(width int, gutter, provider, date, cwd, preview string) string {
-	_, pw, dw, cw, vw := tableWidths(width)
+	pw, dw, cw, vw := tableWidths(width)
 	line := gutter + fmt.Sprintf(
 		"%-*s %-*s %-*s %s",
 		pw, truncateCells(provider, pw),
@@ -140,9 +161,8 @@ func composeLine(width int, gutter, provider, date, cwd, preview string) string 
 	return padCells(truncateCells(line, width), width)
 }
 
-func tableWidths(width int) (gutter, provider, date, cwd, preview int) {
-	gutter = gutterWidth
-	inner := width - gutter
+func tableWidths(width int) (provider, date, cwd, preview int) {
+	inner := width - gutterWidth
 	if inner < tableProviderWidth+tableDateWidth+tableGapWidth+10 {
 		provider = min(tableProviderWidth, max(3, inner/5))
 		date = min(tableDateWidth, max(5, inner/4))
@@ -287,7 +307,7 @@ func truncateMiddle(value string, width int) string {
 
 func rightCells(value string, width int) string {
 	runes := []rune(value)
-	for i := len(runes); i >= 0; i-- {
+	for i := 0; i <= len(runes); i++ {
 		candidate := string(runes[i:])
 		if lipgloss.Width(candidate) <= width {
 			return candidate
