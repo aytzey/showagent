@@ -134,6 +134,38 @@ func keepTranscriptTurn(role, text string) bool {
 	return strings.TrimSpace(text) != ""
 }
 
+// writeFileAtomic writes path by streaming into a temp file in the
+// destination directory, fsyncing, and renaming into place. Converted
+// sessions land inside another tool's session store, so a crash mid-write
+// must never leave a partial file that the other tool could try to load.
+func writeFileAtomic(path string, write func(*os.File) error) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp session file: %w", err)
+	}
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
+
+	if err := write(temp); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := temp.Chmod(0o644); err != nil {
+		return fmt.Errorf("chmod %s: %w", temp.Name(), err)
+	}
+	if err := temp.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", temp.Name(), err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", temp.Name(), err)
+	}
+	if err := os.Rename(temp.Name(), path); err != nil {
+		return fmt.Errorf("rename %s: %w", path, err)
+	}
+	return nil
+}
+
 func writeCodexConverted(source Row, turns []Turn) (Row, error) {
 	sessionID, err := newUUID()
 	if err != nil {
@@ -146,52 +178,51 @@ func writeCodexConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, err
 	}
 
-	file, err := os.Create(path)
-	if err != nil {
-		return Row{}, err
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetEscapeHTML(false)
 	start := now.UTC()
-	if err := encoder.Encode(map[string]any{
-		"timestamp": start.Format(time.RFC3339Nano),
-		"type":      "session_meta",
-		"payload": map[string]any{
-			"id":             sessionID,
-			"timestamp":      start.Format(time.RFC3339Nano),
-			"cwd":            source.CWD,
-			"originator":     "showagent",
-			"cli_version":    "showagent",
-			"source":         "cli",
-			"thread_source":  "user",
-			"model_provider": "openai",
-		},
-	}); err != nil {
-		return Row{}, err
-	}
-
-	for index, turn := range turns {
-		timestamp := start.Add(time.Duration(index+1) * time.Millisecond).Format(time.RFC3339Nano)
-		contentType := "output_text"
-		if turn.Role == "user" {
-			contentType = "input_text"
-		}
+	if err := writeFileAtomic(path, func(file *os.File) error {
+		encoder := json.NewEncoder(file)
+		encoder.SetEscapeHTML(false)
 		if err := encoder.Encode(map[string]any{
-			"timestamp": timestamp,
-			"type":      "response_item",
+			"timestamp": start.Format(time.RFC3339Nano),
+			"type":      "session_meta",
 			"payload": map[string]any{
-				"type": "message",
-				"role": turn.Role,
-				"content": []map[string]string{{
-					"type": contentType,
-					"text": turn.Text,
-				}},
+				"id":             sessionID,
+				"timestamp":      start.Format(time.RFC3339Nano),
+				"cwd":            source.CWD,
+				"originator":     "showagent",
+				"cli_version":    "showagent",
+				"source":         "cli",
+				"thread_source":  "user",
+				"model_provider": "openai",
 			},
 		}); err != nil {
-			return Row{}, err
+			return err
 		}
+
+		for index, turn := range turns {
+			timestamp := start.Add(time.Duration(index+1) * time.Millisecond).Format(time.RFC3339Nano)
+			contentType := "output_text"
+			if turn.Role == "user" {
+				contentType = "input_text"
+			}
+			if err := encoder.Encode(map[string]any{
+				"timestamp": timestamp,
+				"type":      "response_item",
+				"payload": map[string]any{
+					"type": "message",
+					"role": turn.Role,
+					"content": []map[string]string{{
+						"type": contentType,
+						"text": turn.Text,
+					}},
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return Row{}, err
 	}
 
 	firstUser, lastUser := userPreviewFromTurns(turns)
@@ -219,63 +250,62 @@ func writeClaudeConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, err
 	}
 
-	file, err := os.Create(path)
-	if err != nil {
-		return Row{}, err
-	}
-	defer file.Close()
+	if err := writeFileAtomic(path, func(file *os.File) error {
+		encoder := json.NewEncoder(file)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(map[string]any{
+			"type":           "permission-mode",
+			"permissionMode": "default",
+			"sessionId":      sessionID,
+		}); err != nil {
+			return err
+		}
 
-	encoder := json.NewEncoder(file)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(map[string]any{
-		"type":           "permission-mode",
-		"permissionMode": "default",
-		"sessionId":      sessionID,
+		var parent any
+		for index, turn := range turns {
+			messageID, err := newUUID()
+			if err != nil {
+				return err
+			}
+			record := map[string]any{
+				"parentUuid":  parent,
+				"isSidechain": false,
+				"type":        turn.Role,
+				"uuid":        messageID,
+				"timestamp":   now.Add(time.Duration(index+1) * time.Millisecond).Format(time.RFC3339Nano),
+				"userType":    "external",
+				"entrypoint":  "cli",
+				"cwd":         source.CWD,
+				"sessionId":   sessionID,
+				"version":     "showagent",
+			}
+			if turn.Role == "user" {
+				record["message"] = map[string]any{
+					"role":    "user",
+					"content": turn.Text,
+				}
+				record["permissionMode"] = "default"
+			} else {
+				record["requestId"] = syntheticClaudeAPIID("req", messageID)
+				record["message"] = map[string]any{
+					"id":            syntheticClaudeAPIID("msg", messageID),
+					"type":          "message",
+					"role":          "assistant",
+					"model":         "converted-transcript",
+					"content":       []map[string]string{{"type": "text", "text": turn.Text}},
+					"stop_reason":   "end_turn",
+					"stop_sequence": nil,
+					"usage":         map[string]any{},
+				}
+			}
+			if err := encoder.Encode(record); err != nil {
+				return err
+			}
+			parent = messageID
+		}
+		return nil
 	}); err != nil {
 		return Row{}, err
-	}
-
-	var parent any
-	for index, turn := range turns {
-		messageID, err := newUUID()
-		if err != nil {
-			return Row{}, err
-		}
-		record := map[string]any{
-			"parentUuid":  parent,
-			"isSidechain": false,
-			"type":        turn.Role,
-			"uuid":        messageID,
-			"timestamp":   now.Add(time.Duration(index+1) * time.Millisecond).Format(time.RFC3339Nano),
-			"userType":    "external",
-			"entrypoint":  "cli",
-			"cwd":         source.CWD,
-			"sessionId":   sessionID,
-			"version":     "showagent",
-		}
-		if turn.Role == "user" {
-			record["message"] = map[string]any{
-				"role":    "user",
-				"content": turn.Text,
-			}
-			record["permissionMode"] = "default"
-		} else {
-			record["requestId"] = syntheticClaudeAPIID("req", messageID)
-			record["message"] = map[string]any{
-				"id":            syntheticClaudeAPIID("msg", messageID),
-				"type":          "message",
-				"role":          "assistant",
-				"model":         "converted-transcript",
-				"content":       []map[string]string{{"type": "text", "text": turn.Text}},
-				"stop_reason":   "end_turn",
-				"stop_sequence": nil,
-				"usage":         map[string]any{},
-			}
-		}
-		if err := encoder.Encode(record); err != nil {
-			return Row{}, err
-		}
-		parent = messageID
 	}
 
 	firstUser, lastUser := userPreviewFromTurns(turns)

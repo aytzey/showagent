@@ -113,12 +113,22 @@ func scanCodexStart(path string) (string, string, string) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		// Deliberate skip: a file we cannot scan to the end (read error, or
+		// a single line beyond scanBufferMax) is dropped from discovery
+		// instead of being shown half-parsed. Conversion paths report the
+		// same condition as an error.
+		return "", "", ""
+	}
 
 	return id, cwd, firstUser
 }
 
 func scanCodexLastUser(path string) string {
 	lastUser := ""
+	// A reverse-scan error deliberately degrades the preview to empty
+	// instead of dropping the row; the forward scan already validated the
+	// file well enough to list it.
 	_ = reverseLines(path, func(line string) bool {
 		var record codexLine
 		if err := json.Unmarshal([]byte(line), &record); err != nil || record.Type != "response_item" {
