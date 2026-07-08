@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # gen.sh — fabricate a believable fake HOME for the demo recording.
 #
-# Creates Codex sessions (rollout-*.jsonl under .codex/sessions/YYYY/MM/DD/)
-# and Claude Code sessions (.claude/projects/<slug>/*.jsonl) in the exact
-# shapes internal/session/codex.go and internal/session/claude.go parse,
-# spread across three fake workspaces. Every name, path, and message is
-# fabricated; no real personal data.
+# Creates Codex sessions (rollout-*.jsonl under .codex/sessions/YYYY/MM/DD/),
+# Claude Code sessions (.claude/projects/<slug>/*.jsonl), and Gemini CLI
+# sessions (.gemini/tmp/<slug>/chats/session-*.json) in the exact shapes
+# internal/session/codex.go, claude.go, and gemini.go parse, spread across
+# three fake workspaces. Every name, path, and message is fabricated; no real
+# personal data.
 #
 # Usage:
 #   demo/fixtures/gen.sh [FAKEHOME]
@@ -45,9 +46,10 @@ WS_WEB="$FAKEHOME/code/webapp"
 WS_DOT="$FAKEHOME/dotfiles"
 
 # Start clean, but only remove what we own.
-rm -rf "$FAKEHOME/.codex" "$FAKEHOME/.claude" "$FAKEHOME/.jcode"
+rm -rf "$FAKEHOME/.codex" "$FAKEHOME/.claude" "$FAKEHOME/.jcode" "$FAKEHOME/.gemini"
 mkdir -p "$WS_API" "$WS_WEB" "$WS_DOT" \
-	"$FAKEHOME/.codex/sessions" "$FAKEHOME/.claude/projects" "$FAKEHOME/.jcode"
+	"$FAKEHOME/.codex/sessions" "$FAKEHOME/.claude/projects" "$FAKEHOME/.jcode" \
+	"$FAKEHOME/.gemini/tmp"
 
 # codex_session AGE UUID CWD role:text...
 #
@@ -115,6 +117,41 @@ claude_session() {
 	echo "claude  $(iso "$age")  $cwd" >&2
 }
 
+# gemini_session AGE UUID CWD role:text...
+# Same conventions as codex_session. Writes the legacy single-document format
+# (one ConversationRecord per session-*.json) that internal/session/gemini.go
+# parses, with a .project_root marker mapping the project dir to its
+# workspace. Roles are u -> "user" and a -> "gemini".
+gemini_session() {
+	local age="$1" uuid="$2" cwd="$3"
+	shift 3
+	local count=$#
+	local start=$((age + count * 90))
+	local slug="${cwd//\//-}"
+	local dir="$FAKEHOME/.gemini/tmp/$slug"
+	local file="$dir/chats/session-$(filestamp "$start")-${uuid%%-*}.json"
+	mkdir -p "$dir/chats"
+	printf '%s\n' "$cwd" >"$dir/.project_root"
+
+	printf '{"sessionId":"%s","projectHash":"%s","startTime":"%s","lastUpdated":"%s","messages":[' \
+		"$uuid" "$slug" "$(iso "$start")" "$(iso "$age")" >"$file"
+
+	local index=0 role text t type
+	for entry in "$@"; do
+		index=$((index + 1))
+		t=$((age + (count - index) * 90))
+		role="${entry%%:*}"
+		text="${entry#*:}"
+		type=user
+		[ "$role" = "a" ] && type=gemini
+		[ "$index" -gt 1 ] && printf ',' >>"$file"
+		printf '{"id":"%s-%d","type":"%s","content":"%s","timestamp":"%s"}' \
+			"$uuid" "$index" "$type" "$text" "$(iso "$t")" >>"$file"
+	done
+	printf ']}\n' >>"$file"
+	echo "gemini  $(iso "$age")  $cwd" >&2
+}
+
 H=3600
 D=86400
 
@@ -176,5 +213,17 @@ claude_session $((2 * D)) "f5b3d8c0-9a16-4e42-a7d9-1c8f4b6e0a25" "$WS_DOT" \
 	"u:Set up a tmux status line that shows git branch and kubernetes context" \
 	"a:Added status-right segments that shell out to git and kubectl with a 5s interval, colored by context so prod stands out." \
 	"u:cache the kubectl call - it makes tmux stutter on a slow VPN"
+
+# --- Gemini CLI sessions (2) ---------------------------------------------------
+
+gemini_session $((7 * H)) "d1a4b7e2-58c3-4f09-9e6b-2a7d5c1f8b93" "$WS_API" \
+	"u:Sketch a k6 load test for the charges endpoint - 500 rps steady with bursts to 2000" \
+	"a:Wrote a k6 scenario with a constant-arrival executor at 500 rps and a ramping burst stage. Thresholds fail the run when p95 latency passes 250ms." \
+	"u:tag the burst stage metrics separately so Grafana can chart them"
+
+gemini_session $((26 * H)) "8c5f2d90-b3a7-4e14-a1c8-6f9e0b4d7a52" "$WS_DOT" \
+	"u:Write a systemd user timer that snapshots my notes folder to restic every hour" \
+	"a:Added restic-notes.service and a matching timer with RandomizedDelaySec so laptops on battery do not all fire at once." \
+	"u:skip the snapshot when the machine is on a metered connection"
 
 echo "fake home ready: $FAKEHOME (NOW=$NOW)" >&2
