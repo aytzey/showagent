@@ -211,8 +211,8 @@ type model struct {
 	height           int
 }
 
-func newModel(rows []session.Row, mode previewMode) model {
-	return buildModel(rows, mode, false)
+func newModel(rows []session.Row) model {
+	return buildModel(rows, firstMessage, false)
 }
 
 func newLoadingModel(mode previewMode) model {
@@ -1036,7 +1036,7 @@ func (m model) compoundView() string {
 
 // Pick runs the picker over an already-discovered set of rows (used in tests).
 func Pick(rows []session.Row) (*Selection, error) {
-	return runProgram(newModel(rows, firstMessage))
+	return runProgram(newModel(rows))
 }
 
 // Run launches the interactive picker, discovering sessions asynchronously with

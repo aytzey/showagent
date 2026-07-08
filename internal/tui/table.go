@@ -104,7 +104,7 @@ func collapseHome(path string) string {
 }
 
 func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
-	_, pw, dw, cw, vw := tableWidths(width)
+	pw, dw, cw, vw := tableWidths(width)
 	date := relativeTime(row.LastAt)
 	workspace := collapseHome(row.CWD)
 	preview := emptyFallback(previewFor(row, mode))
@@ -150,7 +150,7 @@ func renderWorkspaceCell(th *theme, cwd string, width int) string {
 }
 
 func composeLine(width int, gutter, provider, date, cwd, preview string) string {
-	_, pw, dw, cw, vw := tableWidths(width)
+	pw, dw, cw, vw := tableWidths(width)
 	line := gutter + fmt.Sprintf(
 		"%-*s %-*s %-*s %s",
 		pw, truncateCells(provider, pw),
@@ -161,9 +161,8 @@ func composeLine(width int, gutter, provider, date, cwd, preview string) string 
 	return padCells(truncateCells(line, width), width)
 }
 
-func tableWidths(width int) (gutter, provider, date, cwd, preview int) {
-	gutter = gutterWidth
-	inner := width - gutter
+func tableWidths(width int) (provider, date, cwd, preview int) {
+	inner := width - gutterWidth
 	if inner < tableProviderWidth+tableDateWidth+tableGapWidth+10 {
 		provider = min(tableProviderWidth, max(3, inner/5))
 		date = min(tableDateWidth, max(5, inner/4))

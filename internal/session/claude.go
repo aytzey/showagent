@@ -96,7 +96,7 @@ func parseClaude(path string) (Row, bool) {
 	if err != nil {
 		return Row{}, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)

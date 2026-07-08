@@ -1,0 +1,9 @@
+version: "2"
+
+linters:
+  # The standard set covers errcheck, govet, ineffassign, staticcheck, and
+  # unused. unparam additionally catches parameters and results that only
+  # ever hold one value. Style-only linters are deliberately left out.
+  default: standard
+  enable:
+    - unparam

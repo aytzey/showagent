@@ -36,7 +36,7 @@ func asModel(t *testing.T, value tea.Model) model {
 }
 
 func sizedModel(rows []session.Row) model {
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 	m.width = 110
 	m.height = 36
 	m.resizeList()
@@ -189,7 +189,7 @@ func TestDetailViewFitsWidth(t *testing.T) {
 		LastUser:  strings.Repeat("last message ", 30),
 	}}
 
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 	m.width = 100
 	m.height = 32
 	m.resizeList()
@@ -219,7 +219,7 @@ func TestEnterAndCtrlMSelectResume(t *testing.T) {
 		tea.KeyPressMsg(tea.Key{Code: 'm', Mod: tea.ModCtrl}),
 	}
 	for _, msg := range tests {
-		updated, _ := newModel([]session.Row{row}, firstMessage).Update(msg)
+		updated, _ := newModel([]session.Row{row}).Update(msg)
 		selected := selectedFromModel(t, updated)
 		if selected == nil {
 			t.Fatalf("%q did not select a row", msg.String())
@@ -322,7 +322,7 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	// codex binary; discovery must not depend on what the host has installed.
 	withFakeCommands(t, "codex")
 
-	updated, cmd := newModel([]session.Row{row}, firstMessage).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
+	updated, cmd := newModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
 	if cmd == nil {
 		t.Fatal("expected convert command")
 	}
@@ -767,7 +767,7 @@ func TestCompoundChooserCancel(t *testing.T) {
 
 func TestWindowSizeUpdatesListSize(t *testing.T) {
 	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "hi"}}
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	got := asModel(t, updated)
@@ -933,7 +933,7 @@ func TestHelpBarVisibleAt80x24(t *testing.T) {
 		{Provider: session.ProviderCodex, ID: "019eee0c-9361-7330-b0f4-b887cbe7fab6", CWD: long, LastAt: time.Now(), File: long + "/s.jsonl", FirstUser: strings.Repeat("long first message ", 20), LastUser: strings.Repeat("long last message ", 20)},
 		{Provider: session.ProviderClaude, ID: "y", CWD: long + "-two", LastAt: time.Now(), File: "/t/y.jsonl", FirstUser: "hi"},
 	}
-	m := newModel(rows, firstMessage)
+	m := newModel(rows)
 	m.width = 80
 	m.height = 24
 	m.resizeList()

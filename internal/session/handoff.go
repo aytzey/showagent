@@ -64,7 +64,7 @@ func codexTranscript(path string) ([]Turn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var turns []Turn
 	scanner := bufio.NewScanner(file)
@@ -91,7 +91,7 @@ func claudeTranscript(path string) ([]Turn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var turns []Turn
 	scanner := bufio.NewScanner(file)

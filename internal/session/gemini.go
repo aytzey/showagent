@@ -291,7 +291,7 @@ func loadGeminiConversation(path string) (geminiConversation, error) {
 	if err != nil {
 		return geminiConversation{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var conversation geminiConversation
 	indexByID := map[string]int{}

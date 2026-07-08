@@ -394,11 +394,11 @@ func TestConvertToOpenCodeNeedsWorkspace(t *testing.T) {
 
 func TestOpenCodeIDShape(t *testing.T) {
 	at := time.UnixMilli(1751504400000)
-	ascending, err := opencodeID("msg", false, at, 1)
+	ascending, err := opencodeID("msg", false, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	descending, err := opencodeID("ses", true, at, 1)
+	descending, err := opencodeID("ses", true, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,18 +412,18 @@ func TestOpenCodeIDShape(t *testing.T) {
 	// Ascending ids must sort chronologically, descending ids the other way,
 	// matching opencode's identifier scheme.
 	later := at.Add(time.Second)
-	ascendingLater, err := opencodeID("msg", false, later, 1)
+	ascendingLater, err := opencodeID("msg", false, later)
 	if err != nil {
 		t.Fatal(err)
 	}
-	descendingLater, err := opencodeID("ses", true, later, 1)
+	descendingLater, err := opencodeID("ses", true, later)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !(ascending[:16] < ascendingLater[:16]) {
+	if ascending[:16] >= ascendingLater[:16] {
 		t.Fatalf("ascending ids out of order: %q then %q", ascending, ascendingLater)
 	}
-	if !(descending[:16] > descendingLater[:16]) {
+	if descending[:16] <= descendingLater[:16] {
 		t.Fatalf("descending ids out of order: %q then %q", descending, descendingLater)
 	}
 }

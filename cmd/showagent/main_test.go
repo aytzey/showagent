@@ -262,7 +262,7 @@ func TestTerminalWidthFallsBackForNonTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if got := terminalWidth(file); got != 120 {
 		t.Fatalf("regular-file width = %d, want 120", got)
 	}

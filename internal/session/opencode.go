@@ -270,7 +270,7 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 	}
 
 	now := time.Now()
-	sessionID, err := opencodeID("ses", true, now, 1)
+	sessionID, err := opencodeID("ses", true, now)
 	if err != nil {
 		return Row{}, err
 	}
@@ -283,11 +283,11 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 	parent := ""
 	for index, turn := range turns {
 		at := now.Add(time.Duration(index+1) * time.Millisecond)
-		messageID, err := opencodeID("msg", false, at, 1)
+		messageID, err := opencodeID("msg", false, at)
 		if err != nil {
 			return Row{}, err
 		}
-		partID, err := opencodeID("prt", false, at, 1)
+		partID, err := opencodeID("prt", false, at)
 		if err != nil {
 			return Row{}, err
 		}
@@ -406,9 +406,10 @@ const opencodeIDAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop
 // opencodeID mirrors opencode's identifier scheme (packages/schema/src/
 // identifier.ts): prefix + "_" + 12 hex chars encoding unixMillis*0x1000+seq
 // (bitwise NOT of that value for descending ids, which sessions use) + 14
-// random base62 chars.
-func opencodeID(prefix string, descending bool, at time.Time, seq uint64) (string, error) {
-	value := uint64(at.UnixMilli())*0x1000 + seq
+// random base62 chars. showagent mints at most one id per timestamp, so the
+// per-millisecond sequence number is fixed at 1.
+func opencodeID(prefix string, descending bool, at time.Time) (string, error) {
+	value := uint64(at.UnixMilli())*0x1000 + 1
 	if descending {
 		value = ^value
 	}

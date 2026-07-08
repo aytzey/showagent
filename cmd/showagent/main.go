@@ -35,7 +35,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printHelp(stdout)
 		return 0
 	case "--version", "-v", "version":
-		fmt.Fprintf(stdout, "showagent %s\n", versionString())
+		_, _ = fmt.Fprintf(stdout, "showagent %s\n", versionString())
 		return 0
 	case "list":
 		return runList(args[1:], stdout, stderr)
@@ -65,7 +65,7 @@ func runDefault(stdout, stderr io.Writer) int {
 
 	selection, err := tui.Run()
 	if err != nil {
-		fmt.Fprintf(stderr, "showagent: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
 	if selection == nil {
@@ -80,7 +80,7 @@ func runDefault(stdout, stderr io.Writer) int {
 		actErr = session.Resume(selection.Row, selection.Options)
 	}
 	if actErr != nil {
-		fmt.Fprintf(stderr, "showagent: %v\n", actErr)
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", actErr)
 		return 1
 	}
 	return 0
@@ -127,7 +127,7 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(items); err != nil {
-			fmt.Fprintf(stderr, "showagent: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 			return 1
 		}
 		return 0
@@ -143,16 +143,16 @@ func runList(args []string, stdout, stderr io.Writer) int {
 // printNoSessions explains exactly which directories were scanned and how to
 // get a first session listed, then returns exit code 1.
 func printNoSessions(stderr io.Writer) int {
-	fmt.Fprintln(stderr, "showagent: no supported local sessions found")
-	fmt.Fprintln(stderr, "scanned:")
+	_, _ = fmt.Fprintln(stderr, "showagent: no supported local sessions found")
+	_, _ = fmt.Fprintln(stderr, "scanned:")
 	for _, target := range session.ScanTargets() {
 		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, target.Path, target.EnvVar)
 		if target.Note != "" {
 			line += "  — " + target.Note
 		}
-		fmt.Fprintln(stderr, line)
+		_, _ = fmt.Fprintln(stderr, line)
 	}
-	fmt.Fprintln(stderr, "start a conversation with codex or claude, then run showagent again")
+	_, _ = fmt.Fprintln(stderr, "start a conversation with codex or claude, then run showagent again")
 	return 1
 }
 
@@ -175,11 +175,11 @@ func runResume(args []string, stderr io.Writer) int {
 
 	row, err := resolveSession(session.Discover(), id)
 	if err != nil {
-		fmt.Fprintf(stderr, "showagent: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
 	if err := session.Resume(row, options); err != nil {
-		fmt.Fprintf(stderr, "showagent: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
 	return 0
@@ -206,7 +206,7 @@ func resolveSession(rows []session.Row, id string) (session.Row, error) {
 func runSetup(stdout, stderr io.Writer) int {
 	results, err := session.EnsureCompoundEngineeringPlugin()
 	if err != nil {
-		fmt.Fprintf(stderr, "showagent setup: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "showagent setup: %v\n", err)
 		return 1
 	}
 	for _, result := range results {
@@ -214,18 +214,18 @@ func runSetup(stdout, stderr io.Writer) int {
 		if result.MarketplaceAdded {
 			extra = " (marketplace added)"
 		}
-		fmt.Fprintf(stdout, "%s: %s%s\n", result.Provider, result.Status(), extra)
+		_, _ = fmt.Fprintf(stdout, "%s: %s%s\n", result.Provider, result.Status(), extra)
 	}
 	return 0
 }
 
 func usageError(stderr io.Writer, message string) int {
-	fmt.Fprintf(stderr, "showagent: %s\n%s\nrun 'showagent --help' for details\n", message, usageLine)
+	_, _ = fmt.Fprintf(stderr, "showagent: %s\n%s\nrun 'showagent --help' for details\n", message, usageLine)
 	return 2
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, and jcode sessions.
+	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, and jcode sessions.
 
 Usage:
   showagent                          open the interactive session picker
