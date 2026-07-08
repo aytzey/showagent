@@ -59,7 +59,7 @@ Notes:
 ## Install
 
 ```sh
-# Homebrew (available after v0.7.0)
+# Homebrew (Linux/macOS)
 brew install aytzey/tap/showagent
 
 # install script (Linux/macOS, puts the binary in ~/.local/bin)
