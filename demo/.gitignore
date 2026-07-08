@@ -1,0 +1,4 @@
+# Generated at record time by demo/fixtures/gen.sh and the build step in
+# demo/README.md; never commit a fake home or a local binary.
+.home/
+.build/

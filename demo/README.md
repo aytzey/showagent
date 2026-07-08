@@ -1,0 +1,52 @@
+# Demo recording
+
+Everything needed to (re)record the README GIF. The recording is hermetic:
+it runs against a fabricated `demo/.home` and stub `codex`/`claude`
+binaries, so no real sessions are read and no real agent is launched.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `demo/fixtures/gen.sh` | Fabricates `demo/.home`: 5 Codex + 5 Claude Code sessions across 3 fake workspaces (`code/api-server`, `code/webapp`, `dotfiles`), timestamped relative to now. |
+| `demo/bin/codex`, `demo/bin/claude` | Stub CLIs that print a mock "session resumed" screen, so the resume-after-convert beat lands without real agents. |
+| `demo/demo.tape` | The [vhs](https://github.com/charmbracelet/vhs) script: launch, browse, search, preview toggle, convert (`x`), resume, end card. |
+| `demo/.home`, `demo/.build` | Generated at record time; gitignored. |
+
+## Regenerate the GIF
+
+From the repo root:
+
+```sh
+# 1. Build the binary the tape runs (kept out of the repo tree's PATH).
+go build -o demo/.build/showagent ./cmd/showagent
+
+# 2. Record. The tape regenerates demo/.home itself so timestamps are fresh.
+vhs demo/demo.tape
+```
+
+The result is written to `demo/demo.gif`. Requirements: `vhs` and `ttyd`
+on PATH, plus `ffmpeg`; fixture generation needs GNU date (on macOS:
+`brew install coreutils` and run with `DATE_BIN=gdate`).
+
+If vhs is not installed locally, the container fallback works too:
+
+```sh
+docker run --rm -v "$PWD:/vhs" ghcr.io/charmbracelet/vhs demo/demo.tape
+```
+
+## Tweaking
+
+- **Fixtures**: edit `demo/fixtures/gen.sh`. Message texts must stay
+  JSON-safe (no double quotes or backslashes). Run it standalone to
+  inspect the output: `demo/fixtures/gen.sh /tmp/fakehome`, then
+  `HOME=/tmp/fakehome CODEX_HOME=/tmp/fakehome/.codex CLAUDE_HOME=/tmp/fakehome/.claude JCODE_HOME=/tmp/fakehome/.jcode showagent | cat`
+  prints the plain table of everything that parsed.
+- **Timestamps**: pin with `NOW=2026-07-08T12:00:00Z demo/fixtures/gen.sh`
+  for reproducible output; by default they are relative to the current
+  time so the TUI shows "2h ago".
+- **Size budget**: target < 4 MB. If the GIF comes out larger, drop the
+  tape to `Set Width 1000` / `Set FontSize 18`.
+- **Keybindings**: the tape encodes `/` (search), `l`/`b` (preview mode),
+  `x` (convert / hand off), `enter` (resume). If bindings change in the
+  TUI, update the tape before re-recording.
