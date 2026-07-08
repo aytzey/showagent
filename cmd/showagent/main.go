@@ -57,8 +57,7 @@ func runDefault(stdout, stderr io.Writer) int {
 	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		rows := session.Discover()
 		if len(rows) == 0 {
-			fmt.Fprintln(stderr, "showagent: no supported local sessions found")
-			return 1
+			return printNoSessions(stderr)
 		}
 		tui.PrintTable(stdout, terminalWidth(stdout), rows)
 		return 0
@@ -135,11 +134,26 @@ func runList(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(rows) == 0 {
-		fmt.Fprintln(stderr, "showagent: no supported local sessions found")
-		return 1
+		return printNoSessions(stderr)
 	}
 	tui.PrintTable(stdout, terminalWidth(stdout), rows)
 	return 0
+}
+
+// printNoSessions explains exactly which directories were scanned and how to
+// get a first session listed, then returns exit code 1.
+func printNoSessions(stderr io.Writer) int {
+	fmt.Fprintln(stderr, "showagent: no supported local sessions found")
+	fmt.Fprintln(stderr, "scanned:")
+	for _, target := range session.ScanTargets() {
+		line := fmt.Sprintf("  %-7s %s  (override with %s)", target.Provider, target.Path, target.EnvVar)
+		if target.Note != "" {
+			line += "  — " + target.Note
+		}
+		fmt.Fprintln(stderr, line)
+	}
+	fmt.Fprintln(stderr, "start a conversation with codex or claude, then run showagent again")
+	return 1
 }
 
 func runResume(args []string, stderr io.Writer) int {
@@ -228,8 +242,9 @@ Flags:
 
 Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope
-  x hand off to another agent · n branch a copy · C compound · del delete
-  f/l/b preview first/latest/both messages · ? full help · q quit
+  x hand off to another agent · n branch a copy · C compound · d/del delete
+  p cycle preview (first/latest/both) · 1..9 toggle providers · r rescan
+  ? full help · esc clear search/overlay · q quit
 
 Session locations:
   codex    ~/.codex/sessions     (override with CODEX_HOME)

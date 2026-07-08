@@ -106,6 +106,7 @@ func collapseHome(path string) string {
 func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
 	_, pw, dw, cw, vw := tableWidths(width)
 	date := relativeTime(row.LastAt)
+	workspace := collapseHome(row.CWD)
 	preview := emptyFallback(previewFor(row, mode))
 
 	if selected {
@@ -113,7 +114,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 			"❯ %-*s %-*s %-*s %s",
 			pw, providerPlainLabel(string(row.Provider), pw),
 			dw, truncateCells(date, dw),
-			cw, truncateMiddle(row.CWD, cw),
+			cw, truncateMiddle(workspace, cw),
 			truncateCells(preview, vw),
 		)
 		return th.selected.Width(width).Render(truncateCells(inner, width))
@@ -122,7 +123,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 	cells := []string{
 		providerBadge(th, string(row.Provider), pw),
 		th.date.Width(dw).Render(truncateCells(date, dw)),
-		renderWorkspaceCell(th, row.CWD, cw),
+		renderWorkspaceCell(th, workspace, cw),
 		th.message.Width(vw).Render(truncateCells(preview, vw)),
 	}
 	return padCells("  "+strings.Join(cells, " "), width)

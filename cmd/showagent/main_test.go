@@ -263,3 +263,26 @@ func TestTerminalWidthFallsBackForNonTerminal(t *testing.T) {
 		t.Fatalf("regular-file width = %d, want 120", got)
 	}
 }
+
+func TestListEmptyExplainsScannedDirs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+
+	code, _, stderr := runCLI(t, "list")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	for _, want := range []string{
+		"no supported local sessions found",
+		filepath.Join(root, "empty-codex", "sessions"),
+		filepath.Join(root, "empty-claude", "projects"),
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME",
+		"start a conversation with codex or claude",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
