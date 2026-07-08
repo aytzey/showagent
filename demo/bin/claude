@@ -1,0 +1,32 @@
+#!/bin/sh
+# Demo stub for the Claude Code CLI. It exists only so the demo GIF can show
+# "resume after convert" without launching a real agent. showagent execs
+# `claude --resume <id>` in the session workspace; this prints a plausible
+# one-screen mock and idles until the recording stops it.
+
+sid=""
+prev=""
+for arg in "$@"; do
+	if [ "$prev" = "--resume" ]; then
+		sid="$arg"
+	fi
+	prev="$arg"
+done
+short=$(printf '%s' "$sid" | cut -c1-8)
+ws=$(basename "$PWD")
+
+printf '\n'
+printf ' \033[38;5;208m*\033[0m \033[1mClaude Code\033[0m v2.1.0\n'
+printf '\n'
+printf '   Resuming session \033[1m%s\033[0m  -  14 messages restored\n' "${short:-unknown}"
+printf '   workspace: \033[36m%s\033[0m\n' "$ws"
+printf '\n'
+printf '   \033[2m> the redis TTL test is flaky - mock the clock instead of sleeping\033[0m\n'
+printf '\n'
+printf '   I will inject a fake clock into the limiter so the TTL test no longer\n'
+printf '   sleeps. Picking up where we left off...\n'
+printf '\n'
+printf ' \033[1m>\033[0m \033[5m_\033[0m\n'
+
+# Idle so vhs can hold the frame; the recording ends before this returns.
+sleep 600
