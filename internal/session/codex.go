@@ -3,10 +3,66 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// codexProvider adapts the Codex CLI's session store (rollout-*.jsonl files
+// under ~/.codex/sessions) to the provider registry.
+type codexProvider struct{}
+
+func (codexProvider) Name() Provider      { return ProviderCodex }
+func (codexProvider) DisplayName() string { return "Codex" }
+func (codexProvider) CommandName() string { return "codex" }
+func (codexProvider) Home() string        { return defaultCodexHome() }
+
+func (p codexProvider) ScanTarget() ScanTarget {
+	return ScanTarget{
+		Provider: ProviderCodex,
+		Path:     filepath.Join(p.Home(), "sessions"),
+		EnvVar:   "CODEX_HOME",
+	}
+}
+
+func (p codexProvider) Discover() []Row {
+	return discoverCodex(p.Home())
+}
+
+func (codexProvider) ResumeArgs(row Row, options ResumeOptions) []string {
+	command := []string{"codex", "resume"}
+	if options.Dangerous {
+		command = append(command, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	return append(command, row.ID)
+}
+
+func (p codexProvider) CompoundArgs(row Row, options ResumeOptions, prompt string) []string {
+	return append(p.ResumeArgs(row, options), prompt)
+}
+
+// Delete shells out to the codex CLI so codex can keep its own bookkeeping
+// (history metadata) consistent instead of us unlinking the rollout file.
+func (codexProvider) Delete(row Row) error {
+	command := exec.Command("codex", "delete", "--force", row.ID)
+	if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
+		command.Dir = row.CWD
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("codex delete failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (codexProvider) Transcript(row Row) ([]Turn, error) {
+	return codexTranscript(row.File)
+}
+
+func (codexProvider) WriteConverted(source Row, turns []Turn) (Row, error) {
+	return writeCodexConverted(source, turns)
+}
 
 type codexLine struct {
 	Type    string          `json:"type"`

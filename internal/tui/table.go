@@ -131,16 +131,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 
 func providerBadge(th *theme, provider string, width int) string {
 	label := providerPlainLabel(provider, width)
-	switch session.Provider(provider) {
-	case session.ProviderCodex:
-		return th.codexBadge.Width(width).Render(label)
-	case session.ProviderClaude:
-		return th.claudeBadge.Width(width).Render(label)
-	case session.ProviderJCode:
-		return th.jcodeBadge.Width(width).Render(label)
-	default:
-		return th.chip.Width(width).Render(label)
-	}
+	return th.badgeFor(session.Provider(provider)).Width(width).Render(label)
 }
 
 func providerPlainLabel(provider string, width int) string {

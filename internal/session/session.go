@@ -42,42 +42,23 @@ type ResumeOptions struct {
 	Dangerous bool
 }
 
+// ResumeCommand is the argv that resumes r in its own CLI, or nil when the
+// provider is unknown.
 func (r Row) ResumeCommand(options ResumeOptions) []string {
-	switch r.Provider {
-	case ProviderClaude:
-		command := []string{"claude"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-skip-permissions")
-		}
-		return append(command, "--resume", r.ID)
-	case ProviderJCode:
-		return []string{"jcode", "--no-update", "--resume", r.ID}
-	default:
-		command := []string{"codex", "resume"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(command, r.ID)
+	impl, ok := providerFor(r.Provider)
+	if !ok {
+		return nil
 	}
-}
-
-func ProviderOrder() []Provider {
-	return []Provider{ProviderCodex, ProviderClaude, ProviderJCode}
+	return impl.ResumeArgs(r, options)
 }
 
 // providerCommand is the CLI executable that resumes sessions for provider,
 // or "" when the provider is unknown.
 func providerCommand(provider Provider) string {
-	switch provider {
-	case ProviderCodex:
-		return "codex"
-	case ProviderClaude:
-		return "claude"
-	case ProviderJCode:
-		return "jcode"
-	default:
-		return ""
+	if impl, ok := providerFor(provider); ok {
+		return impl.CommandName()
 	}
+	return ""
 }
 
 func ProviderCommandAvailable(provider Provider) bool {
@@ -102,15 +83,11 @@ type ScanTarget struct {
 // ScanTargets reports the exact directories Discover scans right now, so
 // callers can tell the user where sessions are expected to live.
 func ScanTargets() []ScanTarget {
-	jcode := ScanTarget{Provider: ProviderJCode, Path: filepath.Join(defaultJCodeHome(), "sessions"), EnvVar: "JCODE_HOME"}
-	if !JCodeAvailable() {
-		jcode.Note = "skipped: jcode CLI not installed"
+	targets := make([]ScanTarget, 0, len(registry))
+	for _, impl := range registry {
+		targets = append(targets, impl.ScanTarget())
 	}
-	return []ScanTarget{
-		{Provider: ProviderCodex, Path: filepath.Join(defaultCodexHome(), "sessions"), EnvVar: "CODEX_HOME"},
-		{Provider: ProviderClaude, Path: filepath.Join(defaultClaudeHome(), "projects"), EnvVar: "CLAUDE_HOME"},
-		jcode,
-	}
+	return targets
 }
 
 // ValidateResume reports why resuming row would fail, so callers can surface
@@ -152,8 +129,10 @@ func (r Row) FilterValue() string {
 }
 
 func Discover() []Row {
-	rows := append(discoverCodex(defaultCodexHome()), discoverClaude(defaultClaudeHome())...)
-	rows = append(rows, discoverJCode(defaultJCodeHome())...)
+	var rows []Row
+	for _, impl := range registry {
+		rows = append(rows, impl.Discover()...)
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].LastAt.After(rows[j].LastAt)
 	})
@@ -184,32 +163,17 @@ func Branch(row Row) (Row, error) {
 }
 
 func Delete(row Row) error {
-	switch row.Provider {
-	case ProviderCodex:
-		command := exec.Command("codex", "delete", "--force", row.ID)
-		if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
-			command.Dir = row.CWD
-		}
-		if output, err := command.CombinedOutput(); err != nil {
-			return fmt.Errorf("codex delete failed: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		return nil
-	case ProviderClaude:
-		if row.File == "" {
-			return errors.New("claude session file is unknown")
-		}
-		return os.Remove(row.File)
-	case ProviderJCode:
-		if row.File == "" {
-			return errors.New("jcode session file is unknown")
-		}
-		return os.Remove(row.File)
-	default:
+	impl, ok := providerFor(row.Provider)
+	if !ok {
 		return fmt.Errorf("unsupported provider %q", row.Provider)
 	}
+	return impl.Delete(row)
 }
 
 func launch(cwd string, command []string) error {
+	if len(command) == 0 {
+		return errors.New("no launch command for this provider")
+	}
 	dir, err := launchDir(cwd)
 	if err != nil {
 		return err

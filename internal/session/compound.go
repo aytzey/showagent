@@ -34,23 +34,13 @@ func Compound(row Row, agent Provider, options ResumeOptions) error {
 
 // CompoundCommand is the resume command for the session with an initial prompt
 // appended, so the agent starts straight into the compound-engineering pass.
+// It is nil when the provider is unknown or cannot inject a prompt.
 func (r Row) CompoundCommand(options ResumeOptions, prompt string) []string {
-	switch r.Provider {
-	case ProviderClaude:
-		command := []string{"claude"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-skip-permissions")
-		}
-		return append(command, "--resume", r.ID, prompt)
-	case ProviderJCode:
-		return []string{"jcode", "run", "--no-update", "--resume", r.ID, prompt}
-	default:
-		command := []string{"codex", "resume"}
-		if options.Dangerous {
-			command = append(command, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(command, r.ID, prompt)
+	impl, ok := providerFor(r.Provider)
+	if !ok {
+		return nil
 	}
+	return impl.CompoundArgs(r, options, prompt)
 }
 
 // learningsBaseDir is the root that holds one subdirectory per project.

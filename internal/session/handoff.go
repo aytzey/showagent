@@ -44,29 +44,19 @@ func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {
 		return Row{}, fmt.Errorf("source session has no transferable user or assistant turns")
 	}
 
-	switch target {
-	case ProviderCodex:
-		return writeCodexConverted(row, turns)
-	case ProviderClaude:
-		return writeClaudeConverted(row, turns)
-	case ProviderJCode:
-		return writeJCodeConverted(row, turns)
-	default:
+	impl, ok := providerFor(target)
+	if !ok {
 		return Row{}, fmt.Errorf("unsupported target provider %q", target)
 	}
+	return impl.WriteConverted(row, turns)
 }
 
 func Transcript(row Row) ([]Turn, error) {
-	switch row.Provider {
-	case ProviderCodex:
-		return codexTranscript(row.File)
-	case ProviderClaude:
-		return claudeTranscript(row.File)
-	case ProviderJCode:
-		return jcodeTranscript(row.File)
-	default:
+	impl, ok := providerFor(row.Provider)
+	if !ok {
 		return nil, fmt.Errorf("unsupported provider %q", row.Provider)
 	}
+	return impl.Transcript(row)
 }
 
 func codexTranscript(path string) ([]Turn, error) {

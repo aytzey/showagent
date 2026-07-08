@@ -339,13 +339,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// The compound chooser is a modal: pick the agent, or cancel.
+	// The compound chooser is a modal: pick the agent by digit, or cancel.
+	// Digits follow the registry order of compound-capable providers.
 	if m.compoundChoosing {
-		switch msg.String() {
-		case "1":
-			return m.startCompound(session.ProviderCodex)
-		case "2":
-			return m.startCompound(session.ProviderClaude)
+		key := msg.String()
+		if agents := session.CompoundAgents(); len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+			if index := int(key[0] - '1'); index < len(agents) {
+				return m.startCompound(agents[index])
+			}
+		}
+		switch key {
 		case "esc", "q", "ctrl+c":
 			m.compoundChoosing = false
 			m.compoundRow = nil
@@ -1007,13 +1010,17 @@ func (m model) compoundView() string {
 		}
 		return label
 	}
+	options := make([]string, 0, 4)
+	for index, agent := range session.CompoundAgents() {
+		options = append(options, option(fmt.Sprintf("%d", index+1), session.DisplayName(agent), agent))
+	}
 	lines := []string{
 		th.title.Render("Compound engineering"),
 		"",
 		th.muted.Render("Run a compound pass on " + target + " and"),
-		th.muted.Render("pool the learnings for this project (codex + claude)."),
+		th.muted.Render("pool the learnings for this project across agents."),
 		"",
-		option("1", "Codex", session.ProviderCodex) + "      " + option("2", "Claude", session.ProviderClaude),
+		strings.Join(options, "   "),
 		"",
 		th.hint.Render("esc cancel · current mode: " + resumeModeLabel(m.dangerous)),
 	}
