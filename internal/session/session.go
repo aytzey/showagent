@@ -1,10 +1,10 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -349,6 +349,11 @@ func sessionIDFromPath(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
+// reverseLines calls fn with each non-empty line of path from last to first,
+// stopping early once fn returns false. Blocks are read back to front; the
+// fragments of a line that spans blocks are buffered up to scanBufferMax
+// bytes, and a longer line is degraded to its trailing scanBufferMax bytes so
+// a newline-poor multi-gigabyte file is never held in memory at once.
 func reverseLines(path string, fn func(string) bool) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -356,41 +361,79 @@ func reverseLines(path string, fn func(string) bool) error {
 	}
 	defer file.Close()
 
-	const blockSize int64 = 64 * 1024
-	position, err := file.Seek(0, io.SeekEnd)
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
+	position := info.Size()
 
-	buffer := []byte{}
+	// pending holds the fragments of the line currently being assembled, in
+	// reverse file order. truncated records that the line already exceeded
+	// scanBufferMax and its earlier bytes are being dropped.
+	var pending [][]byte
+	pendingSize := 0
+	truncated := false
+
+	// emit joins first (the earliest fragment of the current line) with the
+	// pending fragments, resets the line state, and passes the line to fn.
+	// It reports whether scanning should continue.
+	emit := func(first []byte) bool {
+		if truncated {
+			first = nil
+		}
+		line := make([]byte, 0, len(first)+pendingSize)
+		line = append(line, first...)
+		for i := len(pending) - 1; i >= 0; i-- {
+			line = append(line, pending[i]...)
+		}
+		pending = pending[:0]
+		pendingSize = 0
+		truncated = false
+		text := strings.TrimSpace(string(line))
+		if text == "" {
+			return true
+		}
+		return fn(text)
+	}
+
+	const blockSize = 64 * 1024
+	chunk := make([]byte, blockSize)
 	for position > 0 {
-		readSize := blockSize
+		readSize := int64(blockSize)
 		if position < readSize {
 			readSize = position
 		}
 		position -= readSize
-		if _, err := file.Seek(position, io.SeekStart); err != nil {
-			return err
-		}
-		chunk := make([]byte, readSize)
-		if _, err := io.ReadFull(file, chunk); err != nil {
+		block := chunk[:readSize]
+		if _, err := file.ReadAt(block, position); err != nil {
 			return err
 		}
 
-		buffer = append(chunk, buffer...)
-		lines := strings.Split(string(buffer), "\n")
-		buffer = []byte(lines[0])
-		for i := len(lines) - 1; i >= 1; i-- {
-			line := strings.TrimSpace(lines[i])
-			if line != "" && !fn(line) {
+		for {
+			index := bytes.LastIndexByte(block, '\n')
+			if index < 0 {
+				break
+			}
+			if !emit(block[index+1:]) {
 				return nil
 			}
+			block = block[:index]
 		}
+
+		if len(block) == 0 {
+			continue
+		}
+		if truncated || pendingSize+len(block) > scanBufferMax {
+			// The current line no longer fits: keep only its tail and drop
+			// the earlier bytes instead of buffering the whole file.
+			truncated = true
+			continue
+		}
+		pending = append(pending, append([]byte(nil), block...))
+		pendingSize += len(block)
 	}
 
-	if line := strings.TrimSpace(string(buffer)); line != "" {
-		fn(line)
-	}
+	emit(nil)
 	return nil
 }
 

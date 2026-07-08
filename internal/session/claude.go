@@ -82,6 +82,13 @@ func parseClaude(path string) (Row, bool) {
 			lastUser = text
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		// Deliberate skip: a file we cannot scan to the end (read error, or
+		// a single line beyond scanBufferMax) is dropped from discovery
+		// instead of being shown half-parsed. Conversion paths report the
+		// same condition as an error.
+		return Row{}, false
+	}
 
 	if id == "" {
 		return Row{}, false

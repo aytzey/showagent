@@ -198,7 +198,10 @@ func writeJCodeConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, err
 	}
 	content = append(content, '\n')
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := writeFileAtomic(path, func(file *os.File) error {
+		_, err := file.Write(content)
+		return err
+	}); err != nil {
 		return Row{}, err
 	}
 
