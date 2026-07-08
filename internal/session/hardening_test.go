@@ -57,6 +57,7 @@ func TestConvertWriteFailureLeavesNoPartialFile(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", jcodeHome)
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	source := codexSourceRow(t, root)
 
@@ -85,6 +86,7 @@ func TestConvertLeavesNoTempFileOnSuccess(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	source := codexSourceRow(t, root)
 	converted, err := Convert(source, ProviderClaude, HandoffOptions{})
@@ -186,6 +188,7 @@ func TestDiscoverySkipsCorruptFilesWithoutCrashing(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	// Valid sessions that must survive discovery.
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), codexSourceFixture)

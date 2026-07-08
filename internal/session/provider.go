@@ -39,6 +39,7 @@ var registry = []ProviderImpl{
 	claudeProvider{},
 	jcodeProvider{},
 	opencodeProvider{},
+	geminiProvider{},
 }
 
 func providerFor(name Provider) (ProviderImpl, bool) {

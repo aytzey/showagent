@@ -225,7 +225,7 @@ func usageError(stderr io.Writer, message string) int {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, OpenCode, and jcode sessions.
+	fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, and jcode sessions.
 
 Usage:
   showagent                          open the interactive session picker
@@ -252,6 +252,7 @@ Session locations:
   jcode     ~/.jcode/sessions             (override with JCODE_HOME)
   opencode  ~/.local/share/opencode       (override with OPENCODE_DATA_HOME;
                                            read via the opencode CLI)
+  gemini    ~/.gemini/tmp                 (override with GEMINI_CLI_HOME)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
 `)

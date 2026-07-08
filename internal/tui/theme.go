@@ -58,6 +58,7 @@ var providerAccents = map[session.Provider]badgeColors{
 	session.ProviderClaude:   {lightBg: "#8250DF", darkBg: "#D2A8FF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 	session.ProviderJCode:    {lightBg: "#1A7F37", darkBg: "#238636", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
 	session.ProviderOpenCode: {lightBg: "#1B7C8C", darkBg: "#39C5CF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderGemini:   {lightBg: "#B04A17", darkBg: "#F0883E", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 }
 
 // providerBadges builds one badge style per registered provider, so every

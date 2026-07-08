@@ -28,6 +28,7 @@ func setFixtureHomes(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFixture(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/codex"}}
@@ -185,6 +186,7 @@ func TestListJSONEmptyIsValidArray(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	code, stdout, _ := runCLI(t, "list", "--json")
 	if code != 0 {
@@ -272,6 +274,7 @@ func TestListEmptyExplainsScannedDirs(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	code, _, stderr := runCLI(t, "list")
 	if code != 1 {
