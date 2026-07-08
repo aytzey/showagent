@@ -1,176 +1,221 @@
-# showagent
+<h1 align="center">showagent</h1>
 
-**One TUI to resume, branch, and convert any local Codex or Claude Code session across agents — a single `go install`, no runtime dependencies.**
+<p align="center"><b>showagent</b> — every AI coding session on your machine, in one TUI.<br>
+Browse, search, resume, branch — and <em>convert</em> a conversation from one agent to another.<br>
+Codex · Claude Code · Gemini CLI · OpenCode · jcode</p>
 
-[![CI](https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg)](https://github.com/aytzey/showagent/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/aytzey/showagent)](https://github.com/aytzey/showagent/releases/latest)
+<p align="center">
+<a href="https://github.com/aytzey/showagent/actions/workflows/ci.yml"><img src="https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/aytzey/showagent/releases/latest"><img src="https://img.shields.io/github/v/release/aytzey/showagent" alt="Release"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
+</p>
 
-`showagent` is a fast terminal picker for local Codex, Claude Code, and optional
-JCode sessions. It scans every workspace, shows available providers in one
-timeline, and resumes the selected session with the right CLI command.
+![showagent demo](docs/demo.gif)
 
-It is built as a portable Go TUI with:
+> Started debugging in Codex and want Claude's take? Press `x`. The whole
+> conversation moves with you.
 
-- Bubble Tea v2 for the application loop and terminal renderer
-- Bubbles v2 for the searchable session list
-- Lip Gloss v2 for styling and layout
+## Why
 
-## Features
+You use more than one coding agent now — most of us do. But every agent buries
+its sessions in its own format under its own dot-directory, and yesterday's
+context is trapped in whichever tool you happened to start it in. showagent
+reads the session stores straight off disk and gives you one searchable picker
+for all of them. It is the only TUI that combines browse + search + resume +
+branch + convert across agents.
 
-- Unified session list for `codex`, `claude`, and optional `jcode`, grouped by workspace folder
-  (groups and the sessions inside them are ordered newest-first)
-- One-key compound-engineering launch (`C`): pick Codex or Claude and it resumes
-  the session and captures durable learnings into a shared, per-project pool both
-  tools read and write
-- Provider badges, relative timestamps, and a focused detail panel
-- Instant startup: sessions are scanned in the background behind a spinner
-- Adaptive theme that adjusts to light and dark terminals (and honors `NO_COLOR`)
-- `?` toggles a full keybinding overlay so the header stays compact
-- Search across provider, directory, session id, and user messages
-- Preview modes for first user message, latest user message, or both
-- Toggleable yolo resume mode for approval-free continuation
-- Selectable cross-agent transfer target and scope: all history by default, or latest N turns
-- One-key resume, branch, cross-agent conversion, and delete:
-  - Codex: `codex resume <session-id>`
-  - Codex yolo: `codex resume --dangerously-bypass-approvals-and-sandbox <session-id>`
-  - Codex delete: `codex delete --force <session-id>`
-  - Claude Code: `claude --resume <session-id>`
-  - Claude Code yolo: `claude --dangerously-skip-permissions --resume <session-id>`
-  - Claude Code delete: removes the selected local session JSONL file
-  - JCode: `jcode --no-update --resume <session-id>`
-  - JCode delete: removes the selected local session JSON file
-  - Branch creates a new local session copy without leaving the picker
-  - Cross-agent conversion writes a new target-provider session file and keeps you in the picker
-- No runtime dependencies beyond the compiled binary
-- Works well on Ubuntu, Debian, Fedora, Arch, and other Linux distributions
+- **One list for everything** — sessions from every agent, grouped by
+  workspace, fuzzy-searchable, newest first.
+- **Resume or branch anywhere** — reopen a session in its own CLI, or fork a
+  local copy to try a different direction.
+- **Convert between agents** — rewrite a session into another agent's native
+  format so that agent's own resume just works. Originals are never modified;
+  conversions are written atomically.
+- **100% local** — one static binary that reads your own files. No server, no
+  telemetry, no account.
+
+## Supported agents
+
+| Agent | CLI | Sessions read from | Env override | Convert from | Convert to |
+|---|---|---|---|:---:|:---:|
+| Codex | `codex` | `~/.codex/sessions/**/*.jsonl` | `CODEX_HOME` | ✅ | ✅ |
+| Claude Code | `claude` | `~/.claude/projects/**/*.jsonl` | `CLAUDE_HOME` | ✅ | ✅ |
+| Gemini CLI | `gemini` | `~/.gemini/tmp/<project>/chats/` | `GEMINI_CLI_HOME` | ✅ | ✅ |
+| OpenCode | `opencode` | `opencode.db`, via the `opencode` CLI | `OPENCODE_DATA_HOME` | ✅ | ✅ |
+| jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
+
+Notes:
+
+- OpenCode stores sessions in a SQLite database, so every OpenCode operation
+  (discover, export, import, delete) goes through your own `opencode` CLI —
+  showagent never writes into the database directly. OpenCode and jcode only
+  appear when their CLI is installed.
+- Converting *to* an agent requires that agent's CLI on `PATH`, so the result
+  can actually be resumed.
+- Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
+  released but **experimental**: resume runs the agent as a child process
+  instead of replacing showagent.
 
 ## Install
 
-With Go 1.25 or newer:
+```sh
+# Homebrew (available after v0.7.0)
+brew install aytzey/tap/showagent
 
-```bash
+# install script (Linux/macOS, puts the binary in ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
+
+# Go 1.25+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
-Or download a Linux binary from the GitHub releases page and put it somewhere
-on your `PATH`, for example `~/.local/bin`.
+Or grab an archive from the [releases page](https://github.com/aytzey/showagent/releases/latest)
+— `linux`/`darwin` amd64 + arm64, `windows` amd64 (experimental).
 
-Then install the companion Compound Engineering plugin for the local Codex and
-Claude Code CLIs that are present on the machine:
+## Quick start
 
-```bash
-showagent setup
+```sh
+showagent                  # open the interactive picker
+showagent list             # plain table of every session
+showagent list --json      # the same, machine-readable
+showagent resume latest    # reopen the most recent session, any agent
+showagent --help           # full CLI help
 ```
 
-`setup` is idempotent. It registers
-`EveryInc/compound-engineering-plugin` and installs
-`compound-engineering@compound-engineering-plugin` only when the plugin is
-missing.
-
-## Usage
-
-```bash
-showagent
-```
-
-`showagent setup` handles companion plugin setup. Everything else is selected
-inside the CLI.
-
-Keybindings:
+### Keybindings
 
 | Key | Action |
-| --- | --- |
-| `↑/↓`, `j/k` | Move through sessions |
-| `pgup/pgdn` | Page through sessions |
-| `/` | Search (press `esc` to clear an applied search) |
-| `?` | Toggle the full keybinding overlay |
-| `1`..`9` | Toggle provider visibility by position in the discovered provider list (`1` codex, `2` claude, `3` jcode, ...) |
-| `y` | Toggle yolo/dangerous resume mode |
-| `o` | Cycle the cross-agent transfer target for the selected session |
-| `t` | Cycle cross-agent transfer scope: all, latest 200, 100, 50, 20, or 10 turns |
-| `p` | Cycle the preview column: first -> latest -> first + latest user messages |
-| `r` | Rescan session stores (keeps cursor, search, and provider filters) |
+|---|---|
+| `↑/k`, `↓/j`, `pgup/pgdn` | Move through sessions |
+| `/` | Fuzzy search across agent, workspace, session id, and messages |
+| `enter` | Resume the selected session in its own CLI |
+| `1`..`9` | Toggle provider visibility, numbered as listed in the header bar |
+| `p` | Cycle the preview column: first → latest → first + latest message |
 | `space` | Collapse or expand the selected workspace group |
-| `enter` | Resume selected session |
-| `enter` on a group | Collapse or expand that workspace group |
-| `C` | Compound: pick Codex or Claude to resume the session and capture learnings |
-| `x` | Convert selected session to the selected target agent and select the new session |
-| `n` | Create a full local branch/copy of the selected session and select it |
-| `d`, `delete`, `backspace` | Delete selected session after second press confirmation |
-| `esc` | Clear search, close the help overlay, or cancel an armed delete (never quits) |
+| `o` | Cycle the convert target for the selected session |
+| `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
+| `x` | Convert to the target agent and select the new session |
+| `n` | Branch: create a full local copy of the session |
+| `y` | Toggle yolo resume (skip the agent's permission prompts) |
+| `C` | Compound: resume with a learnings-capture prompt (see below) |
+| `d`, `del`, `backspace` | Delete the session — second press confirms, moving disarms |
+| `r` | Rescan session stores (keeps cursor, search, and filters) |
+| `?` | Toggle the full keybinding overlay |
+| `esc` | Clear search / close overlay / cancel an armed delete (never quits) |
 | `q`, `ctrl+c` | Quit |
 
-When output is piped, `showagent` prints a plain table instead of opening the
-TUI.
+## Scripting
 
-Cross-agent conversion preserves the selected user/assistant transcript as a new
-local session in the selected target provider's format, then selects that new
-session in the picker. Press `enter` to resume it. It intentionally does not copy
-private runtime state such as tool-call internals, approval history, encrypted
-reasoning blobs, or provider attachments. The default scope is the full transcript.
+`showagent list --json` emits an array sorted newest-first — the field names
+are a stable contract:
 
-JCode support is optional. If `jcode` is not on `PATH`, `showagent` silently skips
-JCode discovery and does not show JCode controls as available targets. When
-`jcode` is present, sessions are read from `~/.jcode/sessions/*.json` and other
-providers can be converted into JCode session JSON.
+```json
+[
+  {
+    "id": "1f7c9a2e-4b31-4c8e-9d02-8a5e3f6b1c44",
+    "provider": "codex",
+    "workspace": "/home/you/code/api-server",
+    "updated": "2026-07-08T19:51:25Z",
+    "first_message": "Add rate limiting to POST /v1/charges",
+    "last_message": "the redis TTL test is flaky - mock the clock"
+  }
+]
+```
 
-## Compound Engineering
+`showagent resume <id|latest> [--yolo]` resumes without the picker, so a shell
+alias can reopen your last session in one keystroke. Exit codes: `0` success,
+`1` error (including "no sessions found"), `2` usage. When stdout is not a
+terminal, plain `showagent` prints the `list` table, so pipes just work.
 
-Press `C` on a session and choose **Codex** or **Claude**. `showagent` resumes
-that session in the chosen agent and starts it straight into a
-compound-engineering pass: review what was solved, then record the durable
-learnings as markdown.
+## How it compares
 
-Learnings are pooled **per project** but **shared across both tools**: each
-workspace gets its own directory under `~/.showagent/learnings/<project>/`, and
-both Codex and Claude read from and write to it. So knowledge compounds across
-Codex and Claude for a project, while different projects never mix.
+Great tools exist for *running* agents in parallel — showagent is about the
+sessions they leave behind. [claude-squad](https://github.com/smtg-ai/claude-squad)
+and [ccmanager](https://github.com/kbwo/ccmanager) orchestrate multiple live
+agents in tmux sessions and git worktrees, which is the right choice when you
+want several agents working at once.
+[Agent Sessions](https://github.com/jazzyalex/agent-sessions) is a polished
+macOS app for browsing session history across many agents. showagent is the
+history-first, terminal-first take: a single cross-platform binary that reads
+the session stores on disk, resumes and branches from them — and is the only
+one of the group that converts a session from one agent's format to another's.
 
-- The shared root is `~/.showagent/learnings/` (override with
-  `SHOWAGENT_LEARNINGS_DIR`); each project lands in its own subdirectory.
-- If you pick the agent that did *not* create the session, `showagent` first
-  converts the session to that provider so it has full context.
+## Compound engineering
 
-## Session Locations
+Press `C` on a session and pick an agent. showagent resumes the session there
+and starts it on a compound-engineering pass: review what was solved, then
+record the durable learnings as markdown.
 
-By default, `showagent` reads:
+Learnings are pooled per project but shared across agents: each workspace gets
+a directory under `~/.showagent/learnings/<project>/` (override with
+`SHOWAGENT_LEARNINGS_DIR`) that every agent reads and writes. Picking an agent
+that did not create the session converts it first, so it has full context.
 
-- Codex: `~/.codex/sessions/**/*.jsonl`
-- Claude Code: `~/.claude/projects/**/*.jsonl`
-- JCode, when installed: `~/.jcode/sessions/*.json`
+`showagent setup` installs the companion
+[compound-engineering plugin](https://github.com/EveryInc/compound-engineering-plugin)
+into the Codex and Claude Code CLIs found on the machine. It is idempotent and
+only installs what is missing.
 
-Environment overrides:
+## FAQ
 
-- `CODEX_HOME`
-- `CLAUDE_HOME`
-- `JCODE_HOME`
+**Is my session data sent anywhere?**
+No. showagent is fully local: it reads session files where the agents left
+them and makes no network calls. There is no server, no telemetry, and no
+account. Message previews additionally redact password-like strings and
+API keys before rendering.
 
-Claude subagent transcripts under `subagents/` are ignored so the list stays
-focused on top-level conversations.
+**How does conversion work?**
+Conversion extracts the user and assistant turns from the source transcript
+and writes a brand-new session in the target agent's native format (for
+OpenCode, via `opencode import`), so the target's own resume command picks it
+up. The original session is never modified, and files are written atomically —
+a crash cannot leave a half-written session in another tool's store. It
+intentionally does **not** copy tool-call internals, approval history,
+encrypted reasoning blobs, or provider attachments: those are private to the
+source agent and would not replay correctly anyway. `t` trims the scope to the
+latest N turns before converting.
 
-## Build From Source
+**What does delete actually do?**
+Codex sessions are deleted through `codex delete --force`; OpenCode through
+`opencode session delete` (which cascades inside its database); Claude Code,
+Gemini, and jcode by removing the session file. Delete always takes two
+presses, and moving the cursor disarms it.
 
-```bash
+**Windows?**
+Binaries are released and the whole TUI works, but resume semantics are
+approximated (child process instead of exec), so Windows is labeled
+experimental until it has seen real use.
+
+**A session is missing from the list.**
+Run `showagent list` with no sessions found and it prints exactly which
+directories were scanned and which env vars override them. `r` rescans
+in-place after you start a new conversation.
+
+## Adding a provider
+
+A provider is one self-contained file implementing the 8-method interface in
+[`internal/session/provider.go`](internal/session/provider.go) — around 250
+lines including discovery, resume arguments, transcript extraction, and
+conversion. [`gemini.go`](internal/session/gemini.go) (file-based store) and
+[`opencode.go`](internal/session/opencode.go) (CLI-based store) are the two
+templates. Register it in the `registry` slice and the TUI picks up badges,
+filter keys, and convert targets automatically. Add a matching env override
+so its tests stay hermetic. Issues and PRs welcome.
+
+## Building
+
+```sh
 git clone https://github.com/aytzey/showagent.git
 cd showagent
 go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-For a portable Linux binary:
-
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o showagent-linux-amd64 ./cmd/showagent
-```
-
-## Privacy
-
-`showagent` only reads local JSONL history files. It does not upload session
-data anywhere.
-
-Message previews apply basic redaction for password-like words and OpenAI-style
-API keys before rendering them.
+The demo GIF is recorded hermetically with [vhs](https://github.com/charmbracelet/vhs)
+against fabricated fixtures — see [`demo/README.md`](demo/README.md).
 
 ## License
 
-MIT
+MIT. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
+[Bubbles](https://github.com/charmbracelet/bubbles), and
+[Lip Gloss](https://github.com/charmbracelet/lipgloss).
