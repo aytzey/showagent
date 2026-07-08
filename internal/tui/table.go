@@ -299,7 +299,9 @@ func truncateMiddle(value string, width int) string {
 		return truncateCells(value, width)
 	}
 	clean := filepath.Clean(value)
-	right := min(width/2, lipgloss.Width(clean))
+	// Bias the budget toward the suffix: the basename side is what tells
+	// sibling workspaces apart.
+	right := min(2*width/3, lipgloss.Width(clean))
 	suffix := rightCells(clean, right)
 	prefixWidth := width - lipgloss.Width(suffix) - 3
 	return truncateCells(clean, prefixWidth) + "..." + suffix

@@ -118,6 +118,19 @@ func TestTruncateMiddleKeepsBasename(t *testing.T) {
 	}
 }
 
+func TestTruncateMiddleFavorsSuffix(t *testing.T) {
+	// Sibling workspaces that differ only near the tail must stay
+	// distinguishable after truncation.
+	a := truncateMiddle("/home/user/code/monorepo/services/api-server", 30)
+	b := truncateMiddle("/home/user/code/monorepo/services/web-client", 30)
+	if a == b {
+		t.Fatalf("sibling paths truncate identically: %q", a)
+	}
+	if !strings.HasSuffix(a, "api-server") || !strings.HasSuffix(b, "web-client") {
+		t.Fatalf("basenames lost: %q / %q", a, b)
+	}
+}
+
 func TestTruncateMiddleEdgeCases(t *testing.T) {
 	if got := truncateMiddle("abc", 3); got != "abc" {
 		t.Fatalf("exact-fit truncateMiddle = %q, want %q", got, "abc")

@@ -12,8 +12,9 @@ Codex · Claude Code · Gemini CLI · OpenCode · jcode</p>
 
 ![showagent demo](docs/demo.gif)
 
-> Started debugging in Codex and want Claude's take? Press `x`. The whole
-> conversation moves with you.
+> Started debugging in Codex and want Claude's take? Press `x`. Your
+> conversation moves with you — every user and assistant turn, rewritten in
+> the target agent's native session format.
 
 ## Why
 
@@ -52,6 +53,8 @@ Notes:
   appear when their CLI is installed.
 - Converting *to* an agent requires that agent's CLI on `PATH`, so the result
   can actually be resumed.
+- jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
+  `jcode` binary is on `PATH`, showagent never shows it.
 - Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
   released but **experimental**: resume runs the agent as a child process
   instead of replacing showagent.
@@ -162,7 +165,11 @@ only installs what is missing.
 No. showagent is fully local: it reads session files where the agents left
 them and makes no network calls. There is no server, no telemetry, and no
 account. Message previews additionally redact password-like strings and
-API keys before rendering.
+API keys before rendering (covered by tests in
+[`internal/session/session_test.go`](internal/session/session_test.go)).
+Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
+also carry GitHub build provenance — verify with
+`gh attestation verify <file> --repo aytzey/showagent`.
 
 **How does conversion work?**
 Conversion extracts the user and assistant turns from the source transcript
