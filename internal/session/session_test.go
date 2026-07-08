@@ -593,3 +593,58 @@ func TestProjectLearningsDirRejectsTraversal(t *testing.T) {
 		t.Fatalf("cwd %q = %q, want fallback", "..", got)
 	}
 }
+
+func TestScanTargetsReportEnvOverrides(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
+	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
+	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
+
+	targets := ScanTargets()
+	if len(targets) != 3 {
+		t.Fatalf("targets = %d, want 3", len(targets))
+	}
+	want := map[Provider]struct{ path, env string }{
+		ProviderCodex:  {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
+		ProviderClaude: {filepath.Join(root, "claude", "projects"), "CLAUDE_HOME"},
+		ProviderJCode:  {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
+	}
+	for _, target := range targets {
+		expected, ok := want[target.Provider]
+		if !ok {
+			t.Fatalf("unexpected provider %q", target.Provider)
+		}
+		if target.Path != expected.path || target.EnvVar != expected.env {
+			t.Fatalf("target %q = %q/%q, want %q/%q", target.Provider, target.Path, target.EnvVar, expected.path, expected.env)
+		}
+	}
+	// jcode is skipped when its CLI is missing, and the target must say so.
+	if targets[2].Note == "" {
+		t.Fatal("jcode target should carry a skip note when jcode is not installed")
+	}
+}
+
+func TestValidateResume(t *testing.T) {
+	workspace := t.TempDir()
+	row := Row{Provider: ProviderClaude, ID: "id", CWD: workspace}
+
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "empty-bin"))
+	if err := ValidateResume(row); err == nil || !strings.Contains(err.Error(), "claude not found in PATH") {
+		t.Fatalf("missing CLI err = %v, want 'claude not found in PATH'", err)
+	}
+
+	withFakeCommand(t, "claude")
+	if err := ValidateResume(row); err != nil {
+		t.Fatalf("valid resume err = %v, want nil", err)
+	}
+
+	row.CWD = filepath.Join(workspace, "gone")
+	if err := ValidateResume(row); err == nil || !strings.Contains(err.Error(), "workspace not found") {
+		t.Fatalf("missing workspace err = %v, want 'workspace not found'", err)
+	}
+
+	if err := ValidateCompound(Row{Provider: ProviderClaude, ID: "id", CWD: workspace}, ProviderCodex); err == nil || !strings.Contains(err.Error(), "codex not found in PATH") {
+		t.Fatalf("compound agent err = %v, want 'codex not found in PATH'", err)
+	}
+}

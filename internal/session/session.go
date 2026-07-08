@@ -65,20 +65,78 @@ func ProviderOrder() []Provider {
 	return []Provider{ProviderCodex, ProviderClaude, ProviderJCode}
 }
 
-func ProviderCommandAvailable(provider Provider) bool {
-	command := ""
+// providerCommand is the CLI executable that resumes sessions for provider,
+// or "" when the provider is unknown.
+func providerCommand(provider Provider) string {
 	switch provider {
 	case ProviderCodex:
-		command = "codex"
+		return "codex"
 	case ProviderClaude:
-		command = "claude"
+		return "claude"
 	case ProviderJCode:
-		command = "jcode"
+		return "jcode"
 	default:
+		return ""
+	}
+}
+
+func ProviderCommandAvailable(provider Provider) bool {
+	command := providerCommand(provider)
+	if command == "" {
 		return false
 	}
 	_, err := exec.LookPath(command)
 	return err == nil
+}
+
+// ScanTarget describes one directory Discover reads for a provider, together
+// with the environment variable that overrides its location.
+type ScanTarget struct {
+	Provider Provider
+	Path     string
+	EnvVar   string
+	// Note explains why a target is currently skipped, or is empty.
+	Note string
+}
+
+// ScanTargets reports the exact directories Discover scans right now, so
+// callers can tell the user where sessions are expected to live.
+func ScanTargets() []ScanTarget {
+	jcode := ScanTarget{Provider: ProviderJCode, Path: filepath.Join(defaultJCodeHome(), "sessions"), EnvVar: "JCODE_HOME"}
+	if !JCodeAvailable() {
+		jcode.Note = "skipped: jcode CLI not installed"
+	}
+	return []ScanTarget{
+		{Provider: ProviderCodex, Path: filepath.Join(defaultCodexHome(), "sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderClaude, Path: filepath.Join(defaultClaudeHome(), "projects"), EnvVar: "CLAUDE_HOME"},
+		jcode,
+	}
+}
+
+// ValidateResume reports why resuming row would fail, so callers can surface
+// the problem before tearing down their UI and exec-ing the provider CLI.
+func ValidateResume(row Row) error {
+	return validateLaunch(row.Provider, row.resumeCWD())
+}
+
+// ValidateCompound is ValidateResume for a compound pass: the chosen agent's
+// CLI must be on PATH and the session workspace must be a real directory.
+func ValidateCompound(row Row, agent Provider) error {
+	return validateLaunch(agent, row.resumeCWD())
+}
+
+func validateLaunch(provider Provider, cwd string) error {
+	command := providerCommand(provider)
+	if command == "" {
+		return fmt.Errorf("unsupported provider %q", provider)
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		return fmt.Errorf("%s not found in PATH", command)
+	}
+	if _, err := launchDir(cwd); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r Row) FilterValue() string {
