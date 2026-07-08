@@ -1,5 +1,10 @@
 # showagent
 
+**One TUI to resume, branch, and convert any local Codex or Claude Code session across agents — a single `go install`, no runtime dependencies.**
+
+[![CI](https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg)](https://github.com/aytzey/showagent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aytzey/showagent)](https://github.com/aytzey/showagent/releases/latest)
+
 `showagent` is a fast terminal picker for local Codex, Claude Code, and optional
 JCode sessions. It scans every workspace, shows available providers in one
 timeline, and resumes the selected session with the right CLI command.

@@ -243,8 +243,18 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 		File:      "/tmp/new.jsonl",
 		FirstUser: "new message",
 	}
+	// A codex row must already be listed so codex is a hand-off candidate even
+	// when no codex binary is installed (as on CI runners); candidate discovery
+	// otherwise falls back to exec.LookPath, which is environment-dependent.
+	codexSeed := session.Row{
+		Provider:  session.ProviderCodex,
+		ID:        "seed",
+		LastAt:    time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC),
+		File:      "/tmp/seed.jsonl",
+		FirstUser: "seed message",
+	}
 
-	updated, cmd := newModel([]session.Row{row}, firstMessage).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
+	updated, cmd := newModel([]session.Row{row, codexSeed}, firstMessage).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
 	if cmd == nil {
 		t.Fatal("expected convert command")
 	}
