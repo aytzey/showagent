@@ -287,7 +287,7 @@ func truncateMiddle(value string, width int) string {
 
 func rightCells(value string, width int) string {
 	runes := []rune(value)
-	for i := len(runes); i >= 0; i-- {
+	for i := 0; i <= len(runes); i++ {
 		candidate := string(runes[i:])
 		if lipgloss.Width(candidate) <= width {
 			return candidate

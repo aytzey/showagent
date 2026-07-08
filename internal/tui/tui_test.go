@@ -71,6 +71,59 @@ func TestTruncateCells(t *testing.T) {
 	}
 }
 
+func TestRightCellsReturnsLongestSuffix(t *testing.T) {
+	if got := rightCells("/a/b/c", 4); got != "/b/c" {
+		t.Fatalf("rightCells = %q, want %q", got, "/b/c")
+	}
+	if got := rightCells("abc", 3); got != "abc" {
+		t.Fatalf("exact-fit rightCells = %q, want %q", got, "abc")
+	}
+	if got := rightCells("abc", 0); got != "" {
+		t.Fatalf("zero-width rightCells = %q, want empty", got)
+	}
+	// Wide runes count as two cells each.
+	if got := rightCells("日本語", 4); got != "本語" {
+		t.Fatalf("wide-rune rightCells = %q, want %q", got, "本語")
+	}
+	if got := rightCells("日本語", 3); got != "語" {
+		t.Fatalf("odd-width wide-rune rightCells = %q, want %q", got, "語")
+	}
+}
+
+func TestTruncateMiddleKeepsBasename(t *testing.T) {
+	value := "/home/user/projects/some-extremely-long-workspace-name/repo"
+	width := 24
+	got := truncateMiddle(value, width)
+	if !strings.HasSuffix(got, "/repo") {
+		t.Fatalf("truncateMiddle = %q, basename lost", got)
+	}
+	if w := lipgloss.Width(got); w > width {
+		t.Fatalf("truncateMiddle = %q, width %d exceeds %d", got, w, width)
+	}
+}
+
+func TestTruncateMiddleEdgeCases(t *testing.T) {
+	if got := truncateMiddle("abc", 3); got != "abc" {
+		t.Fatalf("exact-fit truncateMiddle = %q, want %q", got, "abc")
+	}
+	// Width smaller than the ellipsis falls back to a hard cut.
+	if got := truncateMiddle("abcdef", 2); got != "ab" {
+		t.Fatalf("tiny-width truncateMiddle = %q, want %q", got, "ab")
+	}
+	if got := truncateMiddle("abcdef", 0); got != "" {
+		t.Fatalf("zero-width truncateMiddle = %q, want empty", got)
+	}
+	// Wide runes must not overflow the target width.
+	wide := "/日本語/日本語/日本語/basename"
+	got := truncateMiddle(wide, 20)
+	if w := lipgloss.Width(got); w > 20 {
+		t.Fatalf("wide-rune truncateMiddle = %q, width %d exceeds 20", got, w)
+	}
+	if !strings.HasSuffix(got, "basename") {
+		t.Fatalf("wide-rune truncateMiddle = %q, basename lost", got)
+	}
+}
+
 func TestComposeLineAlignsHeaderAndRows(t *testing.T) {
 	width := 96
 	header := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
