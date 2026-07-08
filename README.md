@@ -84,23 +84,21 @@ Keybindings:
 | `pgup/pgdn` | Page through sessions |
 | `/` | Search (press `esc` to clear an applied search) |
 | `?` | Toggle the full keybinding overlay |
-| `c` | Toggle Codex sessions |
-| `d` | Toggle Claude Code sessions |
-| `z` | Toggle JCode sessions, when JCode is installed and has local sessions |
+| `1`..`9` | Toggle provider visibility by position in the discovered provider list (`1` codex, `2` claude, `3` jcode, ...) |
 | `y` | Toggle yolo/dangerous resume mode |
 | `o` | Cycle the cross-agent transfer target for the selected session |
 | `t` | Cycle cross-agent transfer scope: all, latest 200, 100, 50, 20, or 10 turns |
-| `f` | Show first user message |
-| `l` | Show latest user message |
-| `b` | Show first + latest user messages |
+| `p` | Cycle the preview column: first -> latest -> first + latest user messages |
+| `r` | Rescan session stores (keeps cursor, search, and provider filters) |
 | `space` | Collapse or expand the selected workspace group |
 | `enter` | Resume selected session |
 | `enter` on a group | Collapse or expand that workspace group |
 | `C` | Compound: pick Codex or Claude to resume the session and capture learnings |
 | `x` | Convert selected session to the selected target agent and select the new session |
 | `n` | Create a full local branch/copy of the selected session and select it |
-| `delete`, `backspace` | Delete selected session after second press confirmation |
-| `q`, `ctrl+c` | Quit (`esc` clears an active search first) |
+| `d`, `delete`, `backspace` | Delete selected session after second press confirmation |
+| `esc` | Clear search, close the help overlay, or cancel an armed delete (never quits) |
+| `q`, `ctrl+c` | Quit |
 
 When output is piped, `showagent` prints a plain table instead of opening the
 TUI.
