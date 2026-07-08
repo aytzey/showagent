@@ -433,7 +433,3 @@ func bestTimestamp(path string) (time.Time, bool) {
 	}
 	return fallbackMTime(path)
 }
-
-func errNoExec() error {
-	return errors.New("exec is unsupported on this platform")
-}

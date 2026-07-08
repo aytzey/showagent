@@ -13,25 +13,49 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: "1.25.x"
           cache: true
-      - name: Build Linux binary
+      - name: Build and package
         env:
           CGO_ENABLED: "0"
-          GOOS: linux
+          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ github.ref_name }}
         run: |
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/showagent-linux-${GOARCH}" ./cmd/showagent
-          sha256sum "dist/showagent-linux-${GOARCH}" > "dist/showagent-linux-${GOARCH}.sha256"
+          set -eu
+          bin="showagent"
+          if [ "$GOOS" = "windows" ]; then
+            bin="showagent.exe"
+          fi
+          mkdir -p dist stage
+          go build -trimpath -ldflags "-s -w -X main.version=${TAG}" -o "stage/${bin}" ./cmd/showagent
+          cp LICENSE README.md stage/
+          name="showagent_${TAG}_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            (cd stage && zip -q "../dist/${name}.zip" "$bin" LICENSE README.md)
+            cp "stage/${bin}" "dist/${name}.exe"
+          else
+            tar -czf "dist/${name}.tar.gz" -C stage "$bin" LICENSE README.md
+            cp "stage/${bin}" "dist/${name}"
+          fi
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: showagent-linux-${{ matrix.goarch }}
+          name: showagent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
   release:
@@ -43,6 +67,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          set -eu
+          cd dist
+          sha256sum -- * > SHA256SUMS
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
