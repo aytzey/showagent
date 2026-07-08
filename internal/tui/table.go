@@ -20,20 +20,49 @@ const (
 	tableGapWidth      = 3
 )
 
-// PrintTable renders the plain, unstyled table used when output is piped.
-func PrintTable(w io.Writer, rows []session.Row) {
-	width := 120
-	_, _ = fmt.Fprintln(w, composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+// PrintTable renders the plain, unstyled table used when output is piped or
+// 'showagent list' runs. width is the terminal width; values <= 0 fall back
+// to 120. Session ids are always printed in full so the output stays usable
+// with 'showagent resume <id>'.
+func PrintTable(w io.Writer, width int, rows []session.Row) {
+	if width <= 0 {
+		width = 120
+	}
+	idWidth := len("ID")
 	for _, row := range rows {
-		_, _ = fmt.Fprintln(w, composeLine(
+		if n := lipgloss.Width(row.ID); n > idWidth {
+			idWidth = n
+		}
+	}
+	_, _ = fmt.Fprintln(w, plainLine(width, idWidth, "ID", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(w, plainLine(
 			width,
-			"  ",
+			idWidth,
+			row.ID,
 			string(row.Provider),
 			localTime(row.LastAt),
 			row.CWD,
 			previewFor(row, firstMessage),
 		))
 	}
+}
+
+// plainLine lays out one plain-table row. The id column is never truncated;
+// the workspace and message columns absorb whatever width remains.
+func plainLine(width, idWidth int, id, provider, date, cwd, preview string) string {
+	rest := width - gutterWidth - idWidth - tableProviderWidth - tableDateWidth - 4
+	cw := clamp(rest/2, 10, 46)
+	vw := max(1, rest-cw-1)
+	line := "  " + fmt.Sprintf(
+		"%-*s %-*s %-*s %-*s %s",
+		idWidth, id,
+		tableProviderWidth, truncateCells(provider, tableProviderWidth),
+		tableDateWidth, truncateCells(date, tableDateWidth),
+		cw, truncateMiddle(cwd, cw),
+		truncateCells(preview, vw),
+	)
+	return strings.TrimRight(line, " ")
 }
 
 func columnHeader(th *theme, width int, mode previewMode) string {
