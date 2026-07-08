@@ -987,13 +987,14 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	m := sizedModel(nil)
 	view := m.emptyView()
 	for _, want := range []string{
 		filepath.Join(root, "codex", "sessions"),
 		filepath.Join(root, "claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME",
 		"press r to rescan",
 	} {
 		if !strings.Contains(view, want) {

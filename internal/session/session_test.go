@@ -14,6 +14,7 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
@@ -54,6 +55,7 @@ func TestJCodeIsOptional(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	writeFile(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"), `{
@@ -74,6 +76,7 @@ func TestDiscoverFindsJCodeSessions(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	withFakeCommand(t, "jcode")
 
 	writeJCodeFixture(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"))
@@ -97,6 +100,7 @@ func TestClaudeSubagentsAreIgnored(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "session", "subagents", "agent-a.jsonl"), `
 {"type":"user","message":{"role":"user","content":"subagent"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"}
@@ -113,6 +117,7 @@ func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "cccccccc-1111-2222-3333-dddddddddddd.jsonl"), `
 {"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat text</local-command-caveat>"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
@@ -142,6 +147,7 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	writeFile(t, filepath.Join(claudeHome, "projects", claudeProjectDir(project), sessionID+".jsonl"), `
@@ -172,6 +178,7 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "22", "rollout-2026-06-22T09-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-22T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/home/aytug"}}
@@ -261,6 +268,7 @@ func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	sourcePath := filepath.Join(root, "source-codex.jsonl")
 	writeFile(t, sourcePath, `
@@ -332,6 +340,7 @@ func TestConvertClaudeToCodexRespectsScope(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 
 	sourcePath := filepath.Join(root, "source-claude.jsonl")
 	writeFile(t, sourcePath, `
@@ -382,6 +391,7 @@ func TestConvertJCodeToCodexRespectsScope(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	withFakeCommand(t, "jcode")
 
 	sourcePath := filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json")
@@ -421,6 +431,7 @@ func TestConvertCodexToJCodeCreatesSessionFile(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	jcodeHome := filepath.Join(root, "jcode")
 	t.Setenv("JCODE_HOME", jcodeHome)
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	withFakeCommand(t, "jcode")
 	writeFile(t, filepath.Join(jcodeHome, "config.toml"), `[provider]
 default_provider = "claude"
@@ -599,16 +610,18 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 3 {
-		t.Fatalf("targets = %d, want 3", len(targets))
+	if len(targets) != 4 {
+		t.Fatalf("targets = %d, want 4", len(targets))
 	}
 	want := map[Provider]struct{ path, env string }{
-		ProviderCodex:  {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
-		ProviderClaude: {filepath.Join(root, "claude", "projects"), "CLAUDE_HOME"},
-		ProviderJCode:  {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
+		ProviderCodex:    {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
+		ProviderClaude:   {filepath.Join(root, "claude", "projects"), "CLAUDE_HOME"},
+		ProviderJCode:    {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
+		ProviderOpenCode: {filepath.Join(root, "empty-opencode"), "OPENCODE_DATA_HOME"},
 	}
 	for _, target := range targets {
 		expected, ok := want[target.Provider]
@@ -619,9 +632,13 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 			t.Fatalf("target %q = %q/%q, want %q/%q", target.Provider, target.Path, target.EnvVar, expected.path, expected.env)
 		}
 	}
-	// jcode is skipped when its CLI is missing, and the target must say so.
+	// CLI-gated providers are skipped when their binary is missing, and the
+	// target must say so.
 	if targets[2].Note == "" {
 		t.Fatal("jcode target should carry a skip note when jcode is not installed")
+	}
+	if targets[3].Note == "" {
+		t.Fatal("opencode target should carry a skip note when opencode is not installed")
 	}
 }
 

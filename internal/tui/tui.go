@@ -979,7 +979,7 @@ func (m model) emptyView() string {
 		th.muted.Render("Scanned:"),
 	}
 	for _, target := range session.ScanTargets() {
-		line := fmt.Sprintf("  %-7s %s  (override with %s)", target.Provider, collapseHome(target.Path), target.EnvVar)
+		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, collapseHome(target.Path), target.EnvVar)
 		if target.Note != "" {
 			line += "  — " + target.Note
 		}

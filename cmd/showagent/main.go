@@ -146,7 +146,7 @@ func printNoSessions(stderr io.Writer) int {
 	fmt.Fprintln(stderr, "showagent: no supported local sessions found")
 	fmt.Fprintln(stderr, "scanned:")
 	for _, target := range session.ScanTargets() {
-		line := fmt.Sprintf("  %-7s %s  (override with %s)", target.Provider, target.Path, target.EnvVar)
+		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, target.Path, target.EnvVar)
 		if target.Note != "" {
 			line += "  — " + target.Note
 		}
@@ -225,7 +225,7 @@ func usageError(stderr io.Writer, message string) int {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, and jcode sessions.
+	fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, OpenCode, and jcode sessions.
 
 Usage:
   showagent                          open the interactive session picker
@@ -247,9 +247,11 @@ Picker keys:
   ? full help · esc clear search/overlay · q quit
 
 Session locations:
-  codex    ~/.codex/sessions     (override with CODEX_HOME)
-  claude   ~/.claude/projects    (override with CLAUDE_HOME)
-  jcode    ~/.jcode/sessions     (override with JCODE_HOME)
+  codex     ~/.codex/sessions             (override with CODEX_HOME)
+  claude    ~/.claude/projects            (override with CLAUDE_HOME)
+  jcode     ~/.jcode/sessions             (override with JCODE_HOME)
+  opencode  ~/.local/share/opencode       (override with OPENCODE_DATA_HOME;
+                                           read via the opencode CLI)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
 `)
