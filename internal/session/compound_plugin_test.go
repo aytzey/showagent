@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureCompoundEngineeringPluginInstallsMissingPlugins(t *testing.T) {
@@ -73,6 +74,22 @@ func TestEnsureCompoundEngineeringPluginSkipsUnavailableCLIs(t *testing.T) {
 	}
 	assertSetupResult(t, results, ProviderCodex, false, false, false, false)
 	assertSetupResult(t, results, ProviderClaude, false, false, false, false)
+}
+
+func TestCompoundPluginCommandTimesOut(t *testing.T) {
+	bin := t.TempDir()
+	path := filepath.Join(bin, "slow")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n/bin/sleep 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	saved := compoundPluginCommandTimeout
+	compoundPluginCommandTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { compoundPluginCommandTimeout = saved })
+
+	if _, err := runOutput("slow"); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("runOutput timeout err = %v", err)
+	}
 }
 
 func assertSetupResult(t *testing.T, results []CompoundPluginSetupResult, provider Provider, available bool, installed bool, marketplace bool, already bool) {

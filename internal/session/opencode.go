@@ -45,6 +45,11 @@ const ProviderOpenCode Provider = "opencode"
 // wedge discovery or conversion.
 const opencodeTimeout = 60 * time.Second
 
+const (
+	maxOpenCodeOutput = 64 << 20
+	maxOpenCodeError  = 1 << 20
+)
+
 // opencodeSessionQuery lists root sessions newest-first with their first and
 // last real user text. Column and JSON field names follow opencode's schema
 // (packages/core/src/session/sql.ts: session/message/part tables; message
@@ -181,7 +186,7 @@ func discoverOpenCode() []Row {
 		if firstUser == "" {
 			// The title is opencode's own summary of the opening prompt, so it
 			// is the next best preview when no plain user text part exists.
-			firstUser = cleanText(entry.Title)
+			firstUser = cleanPreviewText(entry.Title)
 		}
 
 		cwd := strings.TrimSpace(entry.Directory)
@@ -203,7 +208,7 @@ func discoverOpenCode() []Row {
 }
 
 func opencodeUserText(value string) string {
-	text := cleanText(value)
+	text := cleanPreviewText(value)
 	if !usefulUserText(text) {
 		return ""
 	}
@@ -246,7 +251,7 @@ func opencodeTranscript(row Row) ([]Turn, error) {
 			}
 			parts = append(parts, part.Text)
 		}
-		text := cleanText(strings.Join(parts, "\n"))
+		text := cleanTranscriptText(strings.Join(parts, "\n"))
 		if !keepTranscriptTurn(message.Info.Role, text) {
 			continue
 		}
@@ -434,7 +439,8 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 	if dir != "" {
 		command.Dir = dir
 	}
-	var stdout, stderr bytes.Buffer
+	stdout := cappedBuffer{max: maxOpenCodeOutput}
+	stderr := cappedBuffer{max: maxOpenCodeError}
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
@@ -445,6 +451,23 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("opencode %s: %w: %s", strings.Join(args, " "), err, detail)
 	}
 	return stdout.Bytes(), nil
+}
+
+type cappedBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *cappedBuffer) Write(payload []byte) (int, error) {
+	remaining := b.max - b.Len()
+	if remaining <= 0 {
+		return 0, fmt.Errorf("command output exceeds %d bytes", b.max)
+	}
+	if len(payload) <= remaining {
+		return b.Buffer.Write(payload)
+	}
+	written, _ := b.Buffer.Write(payload[:remaining])
+	return written, fmt.Errorf("command output exceeds %d bytes", b.max)
 }
 
 // decodeOpenCodeJSON unmarshals the first JSON payload in CLI output,
@@ -461,7 +484,7 @@ func decodeOpenCodeJSON(output []byte, value any) error {
 		lineOffset := offset + leading
 		offset += len(line)
 		if trimmed[0] == '[' || trimmed[0] == '{' {
-			return json.Unmarshal(output[lineOffset:], value)
+			return json.NewDecoder(bytes.NewReader(output[lineOffset:])).Decode(value)
 		}
 	}
 	return errors.New("no JSON payload in opencode output")

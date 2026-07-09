@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/aytzey/showagent/internal/session"
 )
@@ -30,7 +31,7 @@ func PrintTable(w io.Writer, width int, rows []session.Row) {
 	}
 	idWidth := len("ID")
 	for _, row := range rows {
-		if n := lipgloss.Width(row.ID); n > idWidth {
+		if n := lipgloss.Width(session.SafeDisplayText(row.ID)); n > idWidth {
 			idWidth = n
 		}
 	}
@@ -39,11 +40,11 @@ func PrintTable(w io.Writer, width int, rows []session.Row) {
 		_, _ = fmt.Fprintln(w, plainLine(
 			width,
 			idWidth,
-			row.ID,
+			session.SafeDisplayText(row.ID),
 			string(row.Provider),
 			localTime(row.LastAt),
-			row.CWD,
-			previewFor(row, firstMessage),
+			session.SafeDisplayText(row.CWD),
+			session.SafeDisplayText(previewFor(row, firstMessage)),
 		))
 	}
 }
@@ -79,7 +80,7 @@ func renderGroupHeader(th *theme, width int, h headerItem, selected bool) string
 	if h.collapsed {
 		icon = "▸"
 	}
-	label := icon + " " + collapseHome(h.path)
+	label := icon + " " + collapseHome(session.SafeDisplayText(h.path))
 	text := truncateMiddle(label, max(1, width-lipgloss.Width(count))) + count
 	if selected {
 		return th.selected.Width(width).Render(truncateCells(text, width))
@@ -106,8 +107,8 @@ func collapseHome(path string) string {
 func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
 	pw, dw, cw, vw := tableWidths(width)
 	date := relativeTime(row.LastAt)
-	workspace := collapseHome(row.CWD)
-	preview := emptyFallback(previewFor(row, mode))
+	workspace := collapseHome(session.SafeDisplayText(row.CWD))
+	preview := emptyFallback(session.SafeDisplayText(previewFor(row, mode)))
 
 	if selected {
 		inner := fmt.Sprintf(
@@ -274,18 +275,9 @@ func truncateCells(value string, width int) string {
 		return value
 	}
 	if width <= 3 {
-		return string([]rune(value)[:min(len([]rune(value)), width)])
+		return ansi.Truncate(value, width, "")
 	}
-
-	var builder strings.Builder
-	for _, r := range value {
-		next := builder.String() + string(r)
-		if lipgloss.Width(next)+3 > width {
-			break
-		}
-		builder.WriteRune(r)
-	}
-	return builder.String() + "..."
+	return ansi.Truncate(value, width, "...")
 }
 
 func truncateMiddle(value string, width int) string {

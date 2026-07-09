@@ -81,7 +81,7 @@ func TestRealCLIMutate(t *testing.T) {
 		})
 	}
 
-	targets := []Provider{ProviderCodex, ProviderClaude, ProviderGemini, ProviderOpenCode}
+	targets := []Provider{ProviderCodex, ProviderClaude, ProviderGemini, ProviderOpenCode, ProviderJCode}
 	for _, row := range rows {
 		branched, err := Branch(row)
 		if err != nil {

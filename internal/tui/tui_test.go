@@ -880,10 +880,21 @@ func TestDKeyArmsAndConfirmsDelete(t *testing.T) {
 		t.Fatal("'d' did not arm the delete confirmation")
 	}
 
-	deleted, _ := am.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
-	dm := asModel(t, deleted)
-	if len(dm.allRows) != 0 {
-		t.Fatalf("second 'd' did not delete the session: %d rows left", len(dm.allRows))
+	deleting, cmd := am.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
+	dm := asModel(t, deleting)
+	if cmd == nil || dm.busy != "delete" {
+		t.Fatalf("second 'd' did not start async delete: busy=%q cmd=%v", dm.busy, cmd)
+	}
+	if len(dm.allRows) != 1 {
+		t.Fatalf("row changed before async delete completed: %d rows", len(dm.allRows))
+	}
+	if err := session.Delete(rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	deleted, _ := dm.Update(sessionDeleteMsg{row: rows[0]})
+	done := asModel(t, deleted)
+	if done.busy != "" || len(done.allRows) != 0 {
+		t.Fatalf("delete completion left busy=%q rows=%d", done.busy, len(done.allRows))
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatalf("session file still exists after delete: %v", err)
@@ -957,9 +968,19 @@ func TestRescanPreservesCursorAndFilters(t *testing.T) {
 	if !rm.rescanning {
 		t.Fatal("'r' did not mark the model as rescanning")
 	}
+	if rm.busy != "rescan" {
+		t.Fatalf("rescan busy = %q, want rescan", rm.busy)
+	}
+	blocked, _ := rm.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
+	if got := asModel(t, blocked); got.deleteArmed != "" || got.busy != "rescan" {
+		t.Fatalf("mutation was not blocked during rescan: busy=%q armed=%q", got.busy, got.deleteArmed)
+	}
 
 	reloaded, _ := rm.Update(sessionsLoadedMsg{rows: rows})
 	got := asModel(t, reloaded)
+	if got.busy != "" || got.rescanning {
+		t.Fatalf("rescan completion left busy=%q rescanning=%v", got.busy, got.rescanning)
+	}
 	if got.providers[session.ProviderClaude] {
 		t.Fatal("rescan re-enabled a provider the user had hidden")
 	}
@@ -1033,6 +1054,33 @@ func TestHelpBarVisibleAt80x24(t *testing.T) {
 	last := lines[len(lines)-1]
 	if !strings.Contains(last, "resume") {
 		t.Fatalf("last line is not the help bar: %q", last)
+	}
+}
+
+func TestViewsNeverOverflowNarrowTerminal(t *testing.T) {
+	row := session.Row{
+		Provider:  session.ProviderCodex,
+		ID:        "019eee0c-9361-7330-b0f4-b887cbe7fab6",
+		CWD:       "/home/user/projects/a-very-long-workspace-name/repo",
+		LastAt:    time.Now(),
+		File:      "/home/user/.codex/sessions/a-very-long-file.jsonl",
+		FirstUser: strings.Repeat("long message ", 20),
+	}
+	for _, width := range []int{16, 24, 32, 39} {
+		m := newModel([]session.Row{row})
+		m.width = width
+		m.height = 24
+		m.resizeList()
+		for name, view := range map[string]string{
+			"browse":   m.browseView(),
+			"compound": func() string { m.compoundRow = &row; return m.compoundView() }(),
+		} {
+			for index, line := range strings.Split(view, "\n") {
+				if got := lipgloss.Width(line); got > width {
+					t.Fatalf("%s width %d line %d overflows: %d cells: %q", name, width, index, got, line)
+				}
+			}
+		}
 	}
 }
 

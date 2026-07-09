@@ -276,7 +276,7 @@ func geminiUserText(message geminiMessage) string {
 	if message.Type != "user" || geminiIgnoredUserText(message.Text) {
 		return ""
 	}
-	text := cleanText(message.Text)
+	text := cleanPreviewText(message.Text)
 	if !usefulUserText(text) {
 		return ""
 	}
@@ -484,7 +484,7 @@ func geminiTranscript(path string) ([]Turn, error) {
 			// info/error/warning records are UI noise, not conversation.
 			continue
 		}
-		text := cleanText(message.Text)
+		text := cleanTranscriptText(message.Text)
 		if !keepTranscriptTurn(role, text) {
 			continue
 		}
@@ -512,7 +512,7 @@ func writeGeminiConverted(source Row, turns []Turn) (Row, error) {
 	geminiHome := defaultGeminiHome()
 	projectDir := filepath.Join(geminiHome, "tmp", geminiProjectDirName(geminiHome, cwd))
 	chatsDir := filepath.Join(projectDir, "chats")
-	if err := os.MkdirAll(chatsDir, 0o755); err != nil {
+	if err := os.MkdirAll(chatsDir, 0o700); err != nil {
 		return Row{}, err
 	}
 	// Claim the project dir the way gemini-cli does, so both gemini's slug
@@ -521,7 +521,7 @@ func writeGeminiConverted(source Row, turns []Turn) (Row, error) {
 	// converted session becomes undiscoverable (and undeletable) in the picker.
 	markerPath := filepath.Join(projectDir, ".project_root")
 	if _, err := os.Stat(markerPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(markerPath, []byte(cwd+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(markerPath, []byte(cwd+"\n"), 0o600); err != nil {
 			return Row{}, err
 		}
 	}

@@ -24,12 +24,16 @@ import (
 const (
 	defaultLatestReleaseURL = "https://api.github.com/repos/aytzey/showagent/releases/latest"
 	defaultReleaseBaseURL   = "https://github.com/aytzey/showagent/releases/download"
+	maxReleaseMetadataBytes = 1 << 20
+	maxChecksumBytes        = 1 << 20
+	maxArchiveBytes         = 64 << 20
+	maxBinaryBytes          = 64 << 20
 )
 
 var (
 	latestReleaseURL   = defaultLatestReleaseURL
 	releaseBaseURL     = defaultReleaseBaseURL
-	httpClient         = http.DefaultClient
+	httpClient         = &http.Client{Timeout: 30 * time.Second}
 	currentRuntimeGOOS = runtime.GOOS
 	currentRuntimeArch = runtime.GOARCH
 )
@@ -125,7 +129,17 @@ func fetchLatestRelease(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("GitHub releases returned %s", resp.Status)
 	}
 	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if resp.ContentLength > maxReleaseMetadataBytes {
+		return "", fmt.Errorf("latest release response is too large (%d bytes)", resp.ContentLength)
+	}
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxReleaseMetadataBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(payload) > maxReleaseMetadataBytes {
+		return "", fmt.Errorf("latest release response exceeded %d bytes", maxReleaseMetadataBytes)
+	}
+	if err := json.Unmarshal(payload, &release); err != nil {
 		return "", err
 	}
 	if release.TagName == "" {
@@ -145,11 +159,11 @@ func installRelease(tag string, stdout, stderr io.Writer) error {
 	base := strings.TrimRight(releaseBaseURL, "/") + "/" + tag
 	_, _ = fmt.Fprintf(stdout, "Downloading %s (%s)...\n", asset, tag)
 
-	archiveData, err := downloadBytes(ctx, base+"/"+asset)
+	archiveData, err := downloadBytes(ctx, base+"/"+asset, maxArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", asset, err)
 	}
-	sumsData, err := downloadBytes(ctx, base+"/SHA256SUMS")
+	sumsData, err := downloadBytes(ctx, base+"/SHA256SUMS", maxChecksumBytes)
 	if err != nil {
 		return fmt.Errorf("download SHA256SUMS: %w", err)
 	}
@@ -181,7 +195,7 @@ func installRelease(tag string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func downloadBytes(ctx context.Context, rawURL string) ([]byte, error) {
+func downloadBytes(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -195,7 +209,17 @@ func downloadBytes(ctx context.Context, rawURL string) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("server returned %s", resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("download is too large (%d bytes; max %d)", resp.ContentLength, maxBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("download exceeded %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 func releaseAsset(tag string) (asset string, binaryName string, err error) {
@@ -269,6 +293,9 @@ func extractZipBinary(archiveData []byte, binaryName string, destination string)
 		if filepath.Base(entry.Name) != binaryName {
 			continue
 		}
+		if entry.UncompressedSize64 > maxBinaryBytes {
+			return fmt.Errorf("%s is too large after extraction (%d bytes)", binaryName, entry.UncompressedSize64)
+		}
 		source, err := entry.Open()
 		if err != nil {
 			return err
@@ -298,6 +325,9 @@ func extractTarBinary(archiveData []byte, binaryName string, destination string)
 		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != binaryName {
 			continue
 		}
+		if header.Size < 0 || header.Size > maxBinaryBytes {
+			return fmt.Errorf("%s is too large after extraction (%d bytes)", binaryName, header.Size)
+		}
 		return writeExtractedBinary(reader, destination)
 	}
 	return fmt.Errorf("%s not found in release archive", binaryName)
@@ -311,9 +341,14 @@ func writeExtractedBinary(source io.Reader, destination string) error {
 	if err != nil {
 		return err
 	}
-	if _, copyErr := io.Copy(out, source); copyErr != nil {
+	written, copyErr := io.Copy(out, io.LimitReader(source, maxBinaryBytes+1))
+	if copyErr != nil {
 		_ = out.Close()
 		return copyErr
+	}
+	if written > maxBinaryBytes {
+		_ = out.Close()
+		return fmt.Errorf("extracted binary exceeds %d bytes", maxBinaryBytes)
 	}
 	return out.Close()
 }
@@ -322,8 +357,13 @@ func installDestination(binaryName string) (string, error) {
 	if installDir := os.Getenv("SHOWAGENT_INSTALL_DIR"); installDir != "" {
 		return filepath.Join(expandInstallHome(installDir), binaryName), nil
 	}
-	if executable, err := os.Executable(); err == nil && strings.EqualFold(filepath.Base(executable), binaryName) && dirWritable(filepath.Dir(executable)) {
-		return executable, nil
+	if executable, err := os.Executable(); err == nil && strings.EqualFold(filepath.Base(executable), binaryName) {
+		if manager := managedInstall(executable); manager != "" {
+			return "", fmt.Errorf("this copy is managed by %s; update it with %s", manager, managedUpdateCommand(manager))
+		}
+		if dirWritable(filepath.Dir(executable)) {
+			return executable, nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -362,13 +402,50 @@ func installBinary(source string, destination string) error {
 		_ = temp.Close()
 		return err
 	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tempName, destination); err != nil {
+	if err := replaceInstalledFile(tempName, destination); err != nil {
 		return fmt.Errorf("install to %s: %w", destination, err)
 	}
+	if runtime.GOOS != "windows" {
+		if directory, err := os.Open(dir); err == nil {
+			_ = directory.Sync()
+			_ = directory.Close()
+		}
+	}
 	return nil
+}
+
+func managedInstall(executable string) string {
+	path := strings.ToLower(filepath.ToSlash(executable))
+	switch {
+	case strings.Contains(path, "/cellar/showagent/") || strings.Contains(path, "/homebrew/cellar/showagent/"):
+		return "Homebrew"
+	case strings.HasPrefix(path, "/nix/store/"):
+		return "Nix"
+	case strings.HasPrefix(path, "/snap/"):
+		return "Snap"
+	default:
+		return ""
+	}
+}
+
+func managedUpdateCommand(manager string) string {
+	switch manager {
+	case "Homebrew":
+		return "brew upgrade aytzey/tap/showagent"
+	case "Nix":
+		return "your Nix profile or flake"
+	case "Snap":
+		return "snap refresh showagent"
+	default:
+		return "the package manager that installed showagent"
+	}
 }
 
 func dirWritable(dir string) bool {
@@ -414,34 +491,39 @@ func isNewerVersion(candidate, current string) bool {
 	if !ok {
 		return true
 	}
-	for i := 0; i < len(candidateParts); i++ {
-		if candidateParts[i] != currentParts[i] {
-			return candidateParts[i] > currentParts[i]
+	for i := range candidateParts.numbers {
+		if candidateParts.numbers[i] != currentParts.numbers[i] {
+			return candidateParts.numbers[i] > currentParts.numbers[i]
 		}
 	}
-	return false
+	return currentParts.prerelease && !candidateParts.prerelease
 }
 
-func parseVersion(value string) ([3]int, bool) {
-	var result [3]int
+type semanticVersion struct {
+	numbers    [3]int
+	prerelease bool
+}
+
+func parseVersion(value string) (semanticVersion, bool) {
+	var result semanticVersion
 	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+	if cut := strings.IndexByte(value, '+'); cut >= 0 {
+		value = value[:cut]
+	}
+	if cut := strings.IndexByte(value, '-'); cut >= 0 {
+		result.prerelease = true
+		value = value[:cut]
+	}
 	fields := strings.Split(value, ".")
-	if len(fields) == 0 {
+	if len(fields) != len(result.numbers) {
 		return result, false
 	}
-	for i := 0; i < len(result); i++ {
-		if i >= len(fields) {
-			break
-		}
-		field := fields[i]
-		if cut := strings.IndexAny(field, "-+"); cut >= 0 {
-			field = field[:cut]
-		}
+	for i, field := range fields {
 		number, err := strconv.Atoi(field)
 		if err != nil || number < 0 {
 			return result, false
 		}
-		result[i] = number
+		result.numbers[i] = number
 	}
 	return result, true
 }

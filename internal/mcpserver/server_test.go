@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,12 +70,12 @@ func writeFile(t *testing.T, path, content string) {
 // newTestSession connects an in-memory MCP client to the showagent server and
 // returns the client session, so tests exercise the full tool dispatch path
 // (schema validation included) rather than the handlers in isolation.
-func newTestSession(t *testing.T) *mcp.ClientSession {
+func newTestSession(t *testing.T, options ...Options) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 
-	serverSession, err := New("test").Connect(ctx, serverTransport, nil)
+	serverSession, err := New("test", options...).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -234,6 +235,9 @@ func TestGetTranscriptTruncatesFromTheEnd(t *testing.T) {
 	if full.Provider != "codex" || full.Workspace != "/work/api-server" {
 		t.Fatalf("unexpected transcript metadata: %#v", full)
 	}
+	if !full.SecretsRedacted || full.Warning == "" {
+		t.Fatalf("transcript must declare redaction and trust boundary: %#v", full)
+	}
 	if full.Turns[0].Role != "user" || full.Turns[0].Text != "add rate limiting to the charges endpoint" {
 		t.Fatalf("unexpected first turn: %#v", full.Turns[0])
 	}
@@ -250,6 +254,48 @@ func TestGetTranscriptTruncatesFromTheEnd(t *testing.T) {
 	latest := callTool[transcriptResult](t, cs, "get_transcript", map[string]any{"id": "latest"})
 	if latest.ID != claudeWebhookID {
 		t.Fatalf("latest transcript id = %q, want newest session %q", latest.ID, claudeWebhookID)
+	}
+}
+
+func TestGetTranscriptRedactsSecretsUnlessExplicitlyIncluded(t *testing.T) {
+	codexHome, _ := setFixtureHomes(t)
+	const id = "dddddddd-1111-2222-3333-eeeeeeeeeeee"
+	googleLikeKey := "AI" + "za1234567890abcdefghijklmnop"
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "04", "rollout-"+id+".jsonl"), `
+{"timestamp":"2026-06-04T09:00:00Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/secrets"}}
+{"timestamp":"2026-06-04T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"password hunter2\napi_key=`+googleLikeKey+`"}]}}
+`)
+	cs := newTestSession(t)
+
+	redacted := callTool[transcriptResult](t, cs, "get_transcript", map[string]any{"id": id})
+	if !redacted.SecretsRedacted || strings.Contains(redacted.Turns[0].Text, "hunter2") || strings.Contains(redacted.Turns[0].Text, "AIza") {
+		t.Fatalf("default transcript leaked secrets: %#v", redacted)
+	}
+
+	verbatimCS := newTestSession(t, Options{AllowSecrets: true})
+	verbatim := callTool[transcriptResult](t, verbatimCS, "get_transcript", map[string]any{"id": id})
+	if verbatim.SecretsRedacted || !strings.Contains(verbatim.Turns[0].Text, "hunter2") || !strings.Contains(verbatim.Turns[0].Text, "AIza") {
+		t.Fatalf("explicit verbatim transcript did not preserve values: %#v", verbatim)
+	}
+	if !strings.Contains(verbatim.Turns[0].Text, "\n") {
+		t.Fatalf("transcript lost formatting: %q", verbatim.Turns[0].Text)
+	}
+}
+
+func TestGetTranscriptEnforcesHardTurnLimit(t *testing.T) {
+	codexHome, _ := setFixtureHomes(t)
+	const id = "eeeeeeee-1111-2222-3333-ffffffffffff"
+	var lines strings.Builder
+	lines.WriteString(`{"timestamp":"2026-06-05T09:00:00Z","type":"session_meta","payload":{"id":"` + id + `","cwd":"/work/large"}}` + "\n")
+	for i := 0; i < maxTranscriptTurns+25; i++ {
+		_, _ = fmt.Fprintf(&lines, `{"timestamp":"2026-06-05T09:%02d:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"turn %d"}]}}`+"\n", i%60, i)
+	}
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "05", "rollout-"+id+".jsonl"), lines.String())
+	cs := newTestSession(t)
+
+	result := callTool[transcriptResult](t, cs, "get_transcript", map[string]any{"id": id, "max_turns": 1_000_000})
+	if result.TotalTurns != maxTranscriptTurns+25 || len(result.Turns) != maxTranscriptTurns || !result.Truncated {
+		t.Fatalf("hard limit result = %d/%d truncated=%v", len(result.Turns), result.TotalTurns, result.Truncated)
 	}
 }
 
@@ -381,6 +427,25 @@ func TestNoDeleteToolExposed(t *testing.T) {
 		}
 		if strings.Contains(tool.Name, "delete") || strings.Contains(tool.Name, "remove") {
 			t.Fatalf("destructive tool %q must not be exposed over MCP", tool.Name)
+		}
+	}
+}
+
+func TestReadOnlyServerOmitsWriteTools(t *testing.T) {
+	setFixtureHomes(t)
+	cs := newTestSession(t, Options{ReadOnly: true})
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"list_sessions": true, "get_transcript": true, "resume_command": true}
+	if len(tools.Tools) != len(want) {
+		t.Fatalf("read-only tool count = %d, want %d", len(tools.Tools), len(want))
+	}
+	for _, tool := range tools.Tools {
+		if !want[tool.Name] {
+			t.Fatalf("read-only server exposed %q", tool.Name)
 		}
 	}
 }

@@ -62,21 +62,21 @@ codex_session() {
 	shift 3
 	local count=$#
 	local start=$((age + count * 90))
-	local dir="$FAKEHOME/.codex/sessions/$(daydir "$start")"
-	local file="$dir/rollout-$(filestamp "$start")-$uuid.jsonl"
+	local dir file
+	dir="$FAKEHOME/.codex/sessions/$(daydir "$start")"
+	file="$dir/rollout-$(filestamp "$start")-$uuid.jsonl"
 	mkdir -p "$dir"
 
 	printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' \
 		"$(iso "$start")" "$uuid" "$cwd" >"$file"
 
-	local index=0 role text t kind
+	local index=0 role text t
 	for entry in "$@"; do
 		index=$((index + 1))
 		t=$((age + (count - index) * 90))
 		role="${entry%%:*}"
 		text="${entry#*:}"
 		if [ "$role" = "u" ]; then
-			kind=user
 			printf '{"timestamp":"%s","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"%s"}]}}\n' \
 				"$(iso "$t")" "$text" >>"$file"
 		else
@@ -129,7 +129,8 @@ gemini_session() {
 	local start=$((age + count * 90))
 	local slug="${cwd//\//-}"
 	local dir="$FAKEHOME/.gemini/tmp/$slug"
-	local file="$dir/chats/session-$(filestamp "$start")-${uuid%%-*}.json"
+	local file
+	file="$dir/chats/session-$(filestamp "$start")-${uuid%%-*}.json"
 	mkdir -p "$dir/chats"
 	printf '%s\n' "$cwd" >"$dir/.project_root"
 
