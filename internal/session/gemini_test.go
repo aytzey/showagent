@@ -234,6 +234,18 @@ func TestConvertCodexToGeminiRoundTrips(t *testing.T) {
 		t.Fatalf("unexpected converted file name: %q", base)
 	}
 
+	// The writer must claim the freshly created hash dir with gemini-cli's own
+	// .project_root marker; the sha256 name is one-way, so without the marker
+	// the converted session has no workspace in the picker and can never be
+	// selected for deletion.
+	marker, err := os.ReadFile(filepath.Join(root, ".gemini", "tmp", geminiProjectHash(source.CWD), ".project_root"))
+	if err != nil {
+		t.Fatalf("converted project dir missing .project_root marker: %v", err)
+	}
+	if strings.TrimSpace(string(marker)) != source.CWD {
+		t.Fatalf("marker cwd = %q, want %q", strings.TrimSpace(string(marker)), source.CWD)
+	}
+
 	content, err := os.ReadFile(converted.File)
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +268,9 @@ func TestConvertCodexToGeminiRoundTrips(t *testing.T) {
 	}
 	if found == nil {
 		t.Fatalf("converted session not discovered: %#v", rows)
+	}
+	if found.CWD != source.CWD {
+		t.Fatalf("discovered cwd = %q, want %q (marker-based workspace resolution)", found.CWD, source.CWD)
 	}
 	if found.FirstUser != "build the feature" {
 		t.Fatalf("unexpected discovered preview: %q", found.FirstUser)

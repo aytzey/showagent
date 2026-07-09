@@ -510,9 +510,20 @@ func writeGeminiConverted(source Row, turns []Turn) (Row, error) {
 	now := time.Now().UTC()
 
 	geminiHome := defaultGeminiHome()
-	chatsDir := filepath.Join(geminiHome, "tmp", geminiProjectDirName(geminiHome, cwd), "chats")
+	projectDir := filepath.Join(geminiHome, "tmp", geminiProjectDirName(geminiHome, cwd))
+	chatsDir := filepath.Join(projectDir, "chats")
 	if err := os.MkdirAll(chatsDir, 0o755); err != nil {
 		return Row{}, err
+	}
+	// Claim the project dir the way gemini-cli does, so both gemini's slug
+	// migration and our own discovery can map it back to the workspace.
+	// Without the marker a freshly created hash dir resolves to no cwd and the
+	// converted session becomes undiscoverable (and undeletable) in the picker.
+	markerPath := filepath.Join(projectDir, ".project_root")
+	if _, err := os.Stat(markerPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(markerPath, []byte(cwd+"\n"), 0o644); err != nil {
+			return Row{}, err
+		}
 	}
 	path := filepath.Join(chatsDir, fmt.Sprintf(
 		// The CLI's own naming: session-<UTC minute stamp>-<sessionId[:8]>.
