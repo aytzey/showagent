@@ -22,7 +22,7 @@ import (
 // version is stamped by the release build via -ldflags "-X main.version=...".
 var version = "dev"
 
-const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | mcp | update | setup]"
+const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -163,7 +163,7 @@ func printNoSessions(stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stderr, "showagent: no supported local sessions found")
 	_, _ = fmt.Fprintln(stderr, "scanned:")
 	for _, target := range session.ScanTargets() {
-		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, target.Path, target.EnvVar)
+		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, session.SafeDisplayText(target.Path), target.EnvVar)
 		if target.Note != "" {
 			line += "  — " + target.Note
 		}
@@ -273,7 +273,7 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n\n", row.Provider, row.ID, converted.Provider, converted.ID)
+	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n\n", row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
 	printResumeRecipe(stdout, session.RecipeFor(converted, resumeOptions))
 	return 0
 }
@@ -325,14 +325,22 @@ func resolveSession(rows []session.Row, id string) (session.Row, error) {
 
 // runMCP serves the session store to MCP clients over stdio until the client
 // disconnects or the process is interrupted. It deliberately offers no delete
-// tool and never executes an agent CLI; see internal/mcpserver.
+// tool and never launches an interactive agent; see internal/mcpserver.
 func runMCP(args []string, stderr io.Writer) int {
-	if len(args) != 0 {
-		return usageError(stderr, fmt.Sprintf("mcp takes no arguments, got %q", args[0]))
+	options := mcpserver.Options{}
+	for _, arg := range args {
+		switch arg {
+		case "--read-only":
+			options.ReadOnly = true
+		case "--allow-secrets":
+			options.AllowSecrets = true
+		default:
+			return usageError(stderr, fmt.Sprintf("unknown mcp argument %q", arg))
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := mcpserver.Run(ctx, versionString()); err != nil {
+	if err := mcpserver.Run(ctx, versionString(), options); err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
@@ -377,13 +385,13 @@ func parseHandoffScope(value string) (session.HandoffOptions, error) {
 
 func printConversionPreview(w io.Writer, preview session.ConversionPreview) {
 	_, _ = fmt.Fprintf(w, "conversion preview\n")
-	_, _ = fmt.Fprintf(w, "  source:    %s %s\n", preview.SourceProvider, preview.SourceID)
-	_, _ = fmt.Fprintf(w, "  read from: %s\n", preview.SourceLocation)
+	_, _ = fmt.Fprintf(w, "  source:    %s %s\n", preview.SourceProvider, session.SafeDisplayText(preview.SourceID))
+	_, _ = fmt.Fprintf(w, "  read from: %s\n", session.SafeDisplayText(preview.SourceLocation))
 	_, _ = fmt.Fprintf(w, "  target:    %s\n", preview.TargetProvider)
-	_, _ = fmt.Fprintf(w, "  workspace: %s\n", preview.Workspace)
+	_, _ = fmt.Fprintf(w, "  workspace: %s\n", session.SafeDisplayText(preview.Workspace))
 	_, _ = fmt.Fprintf(w, "  scope:     %s (%d transferable turns)\n", preview.Scope, preview.TransferTurns)
 	if preview.LastUser != "" {
-		_, _ = fmt.Fprintf(w, "  last user: %s\n", preview.LastUser)
+		_, _ = fmt.Fprintf(w, "  last user: %s\n", session.SafeDisplayText(preview.LastUser))
 	}
 	_, _ = fmt.Fprintln(w, "  dropped:")
 	for _, dropped := range preview.Dropped {
@@ -400,10 +408,10 @@ func printConversionPreview(w io.Writer, preview session.ConversionPreview) {
 func printResumeRecipe(w io.Writer, recipe session.ResumeRecipe) {
 	_, _ = fmt.Fprintf(w, "resume recipe\n")
 	_, _ = fmt.Fprintf(w, "  provider: %s\n", recipe.Provider)
-	_, _ = fmt.Fprintf(w, "  session:  %s\n", recipe.ID)
-	_, _ = fmt.Fprintf(w, "  command:  %s\n", recipe.CommandString)
-	_, _ = fmt.Fprintf(w, "  cwd:      %s\n", emptyFallback(recipe.CWD))
-	_, _ = fmt.Fprintf(w, "  storage:  %s\n", recipe.StorageLocation)
+	_, _ = fmt.Fprintf(w, "  session:  %s\n", session.SafeDisplayText(recipe.ID))
+	_, _ = fmt.Fprintf(w, "  command:  %s\n", session.SafeDisplayText(recipe.CommandString))
+	_, _ = fmt.Fprintf(w, "  cwd:      %s\n", emptyFallback(session.SafeDisplayText(recipe.CWD)))
+	_, _ = fmt.Fprintf(w, "  storage:  %s\n", session.SafeDisplayText(recipe.StorageLocation))
 	if recipe.Note != "" {
 		_, _ = fmt.Fprintf(w, "  note:     %s\n", recipe.Note)
 	}
@@ -433,9 +441,10 @@ Usage:
                                      preview or write a native session for another agent
   showagent info <id|latest> [--yolo]
                                      print the exact resume command and storage location
-  showagent mcp                      serve session history to MCP clients over stdio
+  showagent mcp [--read-only] [--allow-secrets]
+                                     serve session history to MCP clients over stdio
                                      (search, transcripts, branch, convert; no delete)
-  showagent update                   install the latest GitHub release
+  showagent update                   update a standalone install (package-manager installs use their manager)
   showagent setup                    install the compound-engineering plugin for supported agents
 
 Flags:
@@ -446,6 +455,8 @@ Flags:
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
   --dry-run                          (convert) preview without writing anything
+  --read-only                        (mcp) omit branch/convert tools; never write session stores
+  --allow-secrets                    (mcp) return transcript values verbatim instead of redacting
 
 Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope

@@ -67,7 +67,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run"} {
+		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run", "--read-only", "--allow-secrets"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -119,7 +119,7 @@ func TestMCPRejectsArguments(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(stderr, "mcp takes no arguments") {
+	if !strings.Contains(stderr, "unknown mcp argument") {
 		t.Fatalf("stderr missing mcp usage hint:\n%s", stderr)
 	}
 }
@@ -149,6 +149,17 @@ func TestListTableIncludesSessionID(t *testing.T) {
 	}
 	if !strings.Contains(stdout, codexID) || !strings.Contains(stdout, claudeID) {
 		t.Fatalf("table must contain full session ids:\n%s", stdout)
+	}
+}
+
+func TestDefaultNonTerminalPrintsTable(t *testing.T) {
+	setFixtureHomes(t)
+	var stdout, stderr bytes.Buffer
+	if code := runDefault(&stdout, &stderr); code != 0 {
+		t.Fatalf("runDefault exit = %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), codexID) || !strings.Contains(stdout.String(), claudeID) {
+		t.Fatalf("default non-terminal output missing sessions:\n%s", stdout.String())
 	}
 }
 
@@ -249,6 +260,14 @@ func TestResumeUnknownIDExitsOne(t *testing.T) {
 	}
 }
 
+func TestResumeExistingSessionReportsMissingWorkspace(t *testing.T) {
+	setFixtureHomes(t)
+	code, _, stderr := runCLI(t, "resume", codexID)
+	if code != 1 || !strings.Contains(stderr, "workspace not found") {
+		t.Fatalf("resume missing workspace = %d, %q", code, stderr)
+	}
+}
+
 func TestResumeWithoutIDExitsTwo(t *testing.T) {
 	code, _, stderr := runCLI(t, "resume")
 	if code != 2 {
@@ -261,6 +280,65 @@ func TestResumeWithoutIDExitsTwo(t *testing.T) {
 	code, _, _ = runCLI(t, "resume", "id-one", "id-two")
 	if code != 2 {
 		t.Fatalf("two ids exit = %d, want 2", code)
+	}
+}
+
+func TestInfoRejectsInvalidArgumentsAndUnknownSessions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		code int
+		want string
+	}{
+		{name: "missing id", args: []string{"info"}, code: 2, want: "needs a session id"},
+		{name: "unknown flag", args: []string{"info", "--json"}, code: 2, want: "unknown info argument"},
+		{name: "two ids", args: []string{"info", "one", "two"}, code: 2, want: "unexpected info argument"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _, stderr := runCLI(t, tt.args...)
+			if code != tt.code || !strings.Contains(stderr, tt.want) {
+				t.Fatalf("run(%v) = %d, %q; want %d containing %q", tt.args, code, stderr, tt.code, tt.want)
+			}
+		})
+	}
+
+	setFixtureHomes(t)
+	code, _, stderr := runCLI(t, "info", "not-a-session")
+	if code != 1 || !strings.Contains(stderr, "showagent list") {
+		t.Fatalf("unknown session = %d, %q; want exit 1 with list hint", code, stderr)
+	}
+}
+
+func TestConvertRejectsMalformedArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing id", args: []string{"convert", "--to", "claude"}, want: "needs a session id"},
+		{name: "missing target flag value", args: []string{"convert", codexID, "--to"}, want: "--to needs a provider"},
+		{name: "missing target", args: []string{"convert", codexID}, want: "needs --to"},
+		{name: "missing scope", args: []string{"convert", codexID, "--to", "claude", "--scope"}, want: "--scope needs a value"},
+		{name: "invalid scope", args: []string{"convert", codexID, "--to", "claude", "--scope", "last:0"}, want: "scope must be"},
+		{name: "unknown flag", args: []string{"convert", codexID, "--to", "claude", "--wat"}, want: "unknown convert argument"},
+		{name: "two ids", args: []string{"convert", codexID, "other", "--to", "claude"}, want: "unexpected convert argument"},
+		{name: "unknown provider", args: []string{"convert", codexID, "--to", "mystery"}, want: "unsupported provider"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _, stderr := runCLI(t, tt.args...)
+			if code != 2 || !strings.Contains(stderr, tt.want) {
+				t.Fatalf("run(%v) = %d, %q; want exit 2 containing %q", tt.args, code, stderr, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetupRejectsArguments(t *testing.T) {
+	code, _, stderr := runCLI(t, "setup", "extra")
+	if code != 2 || !strings.Contains(stderr, "setup takes no arguments") {
+		t.Fatalf("setup extra argument = %d, %q", code, stderr)
 	}
 }
 
@@ -287,6 +365,23 @@ func TestConvertDryRunPrintsPreviewWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestConvertWritesTargetAndPrintsRecipe(t *testing.T) {
+	setFixtureHomes(t)
+	code, stdout, stderr := runCLI(t, "convert", codexID, "--to", "claude", "--scope", "last:1")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	for _, want := range []string{"converted codex " + codexID + " -> claude", "resume recipe", "claude --resume"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("conversion output missing %q:\n%s", want, stdout)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_HOME"), "projects", "*", "*.jsonl"))
+	if err != nil || len(matches) != 2 {
+		t.Fatalf("converted claude files = %v, %v; want original + copy", matches, err)
+	}
+}
+
 func TestInfoPrintsResumeRecipe(t *testing.T) {
 	setFixtureHomes(t)
 	code, stdout, stderr := runCLI(t, "info", claudeID)
@@ -303,6 +398,30 @@ func TestInfoPrintsResumeRecipe(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("recipe missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestSetupReportsUnavailableCLIs(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	code, stdout, stderr := runCLI(t, "setup")
+	if code != 0 {
+		t.Fatalf("setup exit = %d; stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "codex: not found") || !strings.Contains(stdout, "claude: not found") {
+		t.Fatalf("setup output = %q", stdout)
+	}
+}
+
+func TestSetupReportsCLICommandFailure(t *testing.T) {
+	bin := t.TempDir()
+	writeFixture(t, filepath.Join(bin, "codex"), "#!/bin/sh\necho setup-broke >&2\nexit 7\n")
+	if err := os.Chmod(filepath.Join(bin, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	code, _, stderr := runCLI(t, "setup")
+	if code != 1 || !strings.Contains(stderr, "setup-broke") {
+		t.Fatalf("setup command failure = %d, %q", code, stderr)
 	}
 }
 
@@ -372,6 +491,10 @@ func TestIsNewerVersion(t *testing.T) {
 		{"v0.8.0", "v0.7.0", true},
 		{"v0.7.1", "v0.7.1", false},
 		{"v1.0.0", "v0.9.9", true},
+		{"v1.0.0", "v1.0.0-rc.1", true},
+		{"v1.0.0-rc.1", "v1.0.0", false},
+		{"v1.0", "v0.9.9", false},
+		{"v1.0.0.1", "v1.0.0", false},
 		{"not-a-version", "v0.7.0", false},
 		{"v0.8.0", "dev", true},
 	}
