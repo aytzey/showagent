@@ -2,9 +2,12 @@ package session
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -12,6 +15,8 @@ const (
 	compoundPluginMarketplaceSource = "EveryInc/compound-engineering-plugin"
 	compoundPluginSelector          = "compound-engineering@compound-engineering-plugin"
 )
+
+var compoundPluginCommandTimeout = 30 * time.Second
 
 type CompoundPluginSetupResult struct {
 	Provider         Provider
@@ -134,12 +139,17 @@ func pluginListContainsCompoundEngineering(output string) bool {
 }
 
 func runOutput(name string, args ...string) (string, error) {
-	command := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), compoundPluginCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, name, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("%s %s timed out after %s", name, strings.Join(args, " "), compoundPluginCommandTimeout)
+		}
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())

@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +18,11 @@ import (
 // Claude read it before working and append to it when done, so what either tool
 // learns compounds for the other.
 func Compound(row Row, agent Provider, options ResumeOptions) error {
+	dir, err := ensureLearningsDir(row.CWD)
+	if err != nil {
+		return err
+	}
+
 	target := row
 	if agent != row.Provider {
 		converted, err := Convert(row, agent, HandoffOptions{})
@@ -23,11 +30,6 @@ func Compound(row Row, agent Provider, options ResumeOptions) error {
 			return fmt.Errorf("convert for compound failed: %w", err)
 		}
 		target = converted
-	}
-
-	dir, err := ensureLearningsDir(target.CWD)
-	if err != nil {
-		return err
 	}
 	return launch(target.resumeCWD(), target.CompoundCommand(options, compoundPrompt(dir)))
 }
@@ -56,15 +58,83 @@ func learningsBaseDir() string {
 // so learnings never bleed between projects, while Codex and Claude share the
 // same one within a project.
 func ProjectLearningsDir(cwd string) string {
-	return filepath.Join(learningsBaseDir(), claudeProjectDir(cwd))
+	key, ok := projectLearningsKey(cwd)
+	if !ok {
+		key = "-unknown-cwd"
+	}
+	return filepath.Join(learningsBaseDir(), key)
 }
 
 func ensureLearningsDir(cwd string) (string, error) {
+	if _, ok := projectLearningsKey(cwd); !ok {
+		return "", errors.New("compound engineering needs a known workspace directory")
+	}
 	dir := ProjectLearningsDir(cwd)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := migrateLegacyLearningsDir(cwd, dir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create learnings dir %s: %w", dir, err)
 	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("secure learnings dir %s: %w", dir, err)
+	}
 	return dir, nil
+}
+
+func migrateLegacyLearningsDir(cwd, destination string) error {
+	legacy := filepath.Join(learningsBaseDir(), claudeProjectDir(cwd))
+	if filepath.Clean(legacy) == filepath.Clean(destination) {
+		return nil
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect learnings dir %s: %w", destination, err)
+	}
+	info, err := os.Lstat(legacy)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect legacy learnings dir %s: %w", legacy, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if err := os.Rename(legacy, destination); err != nil {
+		return fmt.Errorf("migrate legacy learnings dir %s: %w", legacy, err)
+	}
+	return nil
+}
+
+func projectLearningsKey(cwd string) (string, bool) {
+	clean := filepath.Clean(strings.TrimSpace(cwd))
+	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "(") {
+		return "", false
+	}
+	absolute, err := filepath.Abs(clean)
+	if err != nil {
+		return "", false
+	}
+	name := filepath.Base(absolute)
+	var slug strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			slug.WriteRune(r)
+		} else {
+			slug.WriteByte('-')
+		}
+		if slug.Len() >= 48 {
+			break
+		}
+	}
+	label := strings.Trim(slug.String(), "-_")
+	if label == "" {
+		label = "project"
+	}
+	hash := sha256.Sum256([]byte(absolute))
+	return fmt.Sprintf("%s-%x", label, hash[:6]), true
 }
 
 func compoundPrompt(dir string) string {

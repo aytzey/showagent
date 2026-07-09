@@ -51,6 +51,57 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	}
 }
 
+func TestPreviewSanitizesSecretsAndTerminalControlsWithoutFalsePositives(t *testing.T) {
+	googleLikeKey := "AI" + "za1234567890abcdefghijklmnop"
+	input := `pass the tests; password hunter2; {"password": "admin"}; api_key=` + googleLikeKey + " " +
+		"\x1b]52;c;Y2xpcGJvYXJk\x07\x1b[31mred\x1b[0m\u202e"
+	got := cleanPreviewText(input)
+	if !strings.Contains(got, "pass the tests") {
+		t.Fatalf("ordinary text was over-redacted: %q", got)
+	}
+	if strings.Contains(got, "hunter2") || strings.Contains(got, "admin") || strings.Contains(got, "AIza") || strings.Contains(got, "clipboard") {
+		t.Fatalf("preview leaked a secret or terminal payload: %q", got)
+	}
+	if !strings.Contains(got, `{"password": [redacted]}`) {
+		t.Fatalf("JSON password redaction broke the surrounding key syntax: %q", got)
+	}
+	if strings.ContainsAny(got, "\x1b\x07") || strings.ContainsRune(got, '\u202e') {
+		t.Fatalf("preview retained terminal/bidi controls: %q", got)
+	}
+}
+
+func TestSafeDisplayTextStripsMetadataControlsWithoutRedacting(t *testing.T) {
+	input := "workspace\x1b]52;c;Y2xpcGJvYXJk\x07\nnext\u202e password hunter2"
+	got := SafeDisplayText(input)
+	if got != "workspace next password hunter2" {
+		t.Fatalf("SafeDisplayText = %q", got)
+	}
+}
+
+func TestTranscriptPreservesCodeFormattingAndValues(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "codex.jsonl")
+	writeFile(t, path, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"please keep this code:\n\nfunc main() {\n\tprintln(\"ok\")\n}\npassword hunter2\u001b]52;c;YmFk\u0007"}]}}
+`)
+
+	turns, err := codexTranscript(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want 1: %#v", len(turns), turns)
+	}
+	want := "please keep this code:\n\nfunc main() {\n\tprintln(\"ok\")\n}\npassword hunter2"
+	if turns[0].Text != want {
+		t.Fatalf("transcript formatting changed:\n got: %q\nwant: %q", turns[0].Text, want)
+	}
+	if redacted := RedactSecrets(turns[0].Text); strings.Contains(redacted, "hunter2") {
+		t.Fatalf("explicit redaction leaked password: %q", redacted)
+	}
+}
+
 func TestJCodeIsOptional(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
@@ -201,6 +252,31 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 	}
 	if rows[0].resumeCWD() != project {
 		t.Fatalf("resume cwd = %q, want observed cwd %q", rows[0].resumeCWD(), project)
+	}
+}
+
+func TestClaudeDoesNotGuessWorkspaceFromLossyProjectSlug(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+
+	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
+	// The bucket could mean /tmp/my-project or /tmp/my/project. With no cwd
+	// recorded in the file there is no safe way to choose one.
+	writeFile(t, filepath.Join(claudeHome, "projects", "-tmp-my-project", sessionID+".jsonl"), `
+{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-06-02T10:00:00Z","sessionId":"`+sessionID+`"}
+`)
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].CWD != "(unknown cwd)" || rows[0].LaunchCWD != "" {
+		t.Fatalf("lossy project slug produced a guessed workspace: %#v", rows[0])
 	}
 }
 
@@ -543,15 +619,109 @@ default_provider = "claude"
 	}
 }
 
+func TestJCodeDefaultProviderRequiresExactConfigKey(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("JCODE_HOME", root)
+	writeFile(t, filepath.Join(root, "config.toml"), `
+[providers.unrelated]
+default_provider = "wrong-section"
+[provider]
+default_provider_backup = "wrong"
+default_provider = "claude" # active profile
+`)
+	if got := jcodeDefaultProvider(); got != "claude" {
+		t.Fatalf("jcodeDefaultProvider = %q, want claude", got)
+	}
+}
+
+func TestJCodeCurrentSelectionUsesCLIResolvedModel(t *testing.T) {
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "jcode"), `#!/bin/sh
+printf '%s\n' '{"requested_provider":"auto","resolved_provider":"Anthropic/Claude","selected_model":"claude-opus-4-6"}'
+`)
+	if err := os.Chmod(filepath.Join(bin, "jcode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	provider, model := jcodeCurrentSelection()
+	if provider != "claude" || model != "claude-opus-4-6" {
+		t.Fatalf("current selection = %q/%q", provider, model)
+	}
+}
+
 func TestDeleteClaudeSessionRemovesFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.jsonl")
 	writeFile(t, path, `{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}`)
+	indexPath := filepath.Join(dir, "sessions-index.json")
+	writeFile(t, indexPath, `{
+  "version": 1,
+  "futureField": {"keep": true},
+  "entries": [
+    {"sessionId":"cccccccc-1111-2222-3333-dddddddddddd","fullPath":"`+path+`","firstPrompt":"sensitive prompt"},
+    {"sessionId":"eeeeeeee-1111-2222-3333-ffffffffffff","fullPath":"/other.jsonl","firstPrompt":"keep me"}
+  ]
+}`)
 
 	if err := Delete(Row{Provider: ProviderClaude, ID: "cccccccc-1111-2222-3333-dddddddddddd", File: path}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected file to be removed, stat err=%v", err)
+	}
+	index, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(index), "sensitive prompt") || !strings.Contains(string(index), "keep me") || !strings.Contains(string(index), "futureField") {
+		t.Fatalf("Claude index cleanup removed the wrong data:\n%s", index)
+	}
+	if info, err := os.Stat(indexPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("Claude index mode = %v, %v; want 0600", info, err)
+	}
+}
+
+func TestDeleteClaudeSucceedsWhenIndexIsMalformed(t *testing.T) {
+	// The index is Claude's own derived data and gets rebuilt on its next
+	// scan; a corrupt (or future-format) index must never make a session
+	// impossible to delete from showagent.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.jsonl")
+	writeFile(t, path, "{}\n")
+	indexPath := filepath.Join(dir, "sessions-index.json")
+	writeFile(t, indexPath, "{not-json")
+
+	if err := Delete(Row{Provider: ProviderClaude, ID: "session-id", File: path}); err != nil {
+		t.Fatalf("delete with malformed index = %v, want success", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("session file should be gone, stat err = %v", err)
+	}
+	if content, err := os.ReadFile(indexPath); err != nil || string(content) != "{not-json" {
+		t.Fatalf("malformed index should be left untouched, got %q, %v", content, err)
+	}
+}
+
+func TestDeleteJCodeSessionRemovesBackupsAndJournal(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session_showagent_1_deadbeef.json")
+	base := strings.TrimSuffix(path, ".json")
+	for _, artifact := range []string{path, base + ".bak", base + ".journal.jsonl"} {
+		writeFile(t, artifact, "sensitive transcript")
+	}
+
+	row := Row{Provider: ProviderJCode, ID: "session_showagent_1_deadbeef", File: path}
+	if err := Delete(row); err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range []string{path, base + ".bak", base + ".journal.jsonl"} {
+		if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+			t.Fatalf("jcode artifact still exists after delete: %s (%v)", artifact, err)
+		}
+	}
+	if err := Delete(row); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("deleting an absent jcode session = %v", err)
 	}
 }
 
@@ -642,6 +812,11 @@ func TestProjectLearningsDirIsPerProject(t *testing.T) {
 	if ProjectLearningsDir("/home/u/proj-a") != a {
 		t.Fatal("same project must map to the same dir")
 	}
+	// A lossy slug alone would collide for these two paths. The hash suffix
+	// must keep their learning pools isolated.
+	if ProjectLearningsDir("/home/u/a-b") == ProjectLearningsDir("/home/u/a/b") {
+		t.Fatal("slug-colliding workspaces mapped to the same learnings dir")
+	}
 }
 
 func TestCompoundPromptMentionsSharedDir(t *testing.T) {
@@ -667,6 +842,48 @@ func TestProjectLearningsDirRejectsTraversal(t *testing.T) {
 	// The bare ".." must collapse to the safe fallback rather than the parent.
 	if got := ProjectLearningsDir(".."); got != filepath.Join(base, "-unknown-cwd") {
 		t.Fatalf("cwd %q = %q, want fallback", "..", got)
+	}
+}
+
+func TestEnsureLearningsDirRejectsUnknownAndUsesPrivateMode(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("SHOWAGENT_LEARNINGS_DIR", base)
+	if _, err := ensureLearningsDir("(unknown cwd)"); err == nil {
+		t.Fatal("unknown workspace must not share a global learnings bucket")
+	}
+	dir, err := ensureLearningsDir("/home/u/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("learnings dir mode = %o, want 700", got)
+	}
+}
+
+func TestEnsureLearningsDirMigratesLegacyNotes(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("SHOWAGENT_LEARNINGS_DIR", base)
+	cwd := "/home/u/project"
+	legacy := filepath.Join(base, claudeProjectDir(cwd))
+	writeFile(t, filepath.Join(legacy, "2026-01-01-note.md"), "durable learning")
+
+	dir, err := ensureLearningsDir(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir == legacy {
+		t.Fatal("hashed learnings directory unexpectedly equals the legacy slug")
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "2026-01-01-note.md"))
+	if err != nil || string(content) != "durable learning" {
+		t.Fatalf("migrated note = %q, %v", content, err)
+	}
+	if _, err := os.Lstat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy directory still exists after migration: %v", err)
 	}
 }
 

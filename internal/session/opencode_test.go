@@ -394,12 +394,25 @@ func TestConvertToOpenCodeNeedsWorkspace(t *testing.T) {
 
 func TestDecodeOpenCodeJSONIgnoresBracketedBannerText(t *testing.T) {
 	var entries []opencodeSessionEntry
-	output := []byte("notice: [beta] opencode db output follows\n[{\"id\":\"ses_1\",\"created\":1,\"updated\":2}]\n")
+	output := []byte("notice: [beta] opencode db output follows\n[{\"id\":\"ses_1\",\"created\":1,\"updated\":2}]\nupgrade notice after json\n")
 	if err := decodeOpenCodeJSON(output, &entries); err != nil {
 		t.Fatalf("decodeOpenCodeJSON failed: %v", err)
 	}
 	if len(entries) != 1 || entries[0].ID != "ses_1" {
 		t.Fatalf("entries = %#v, want ses_1", entries)
+	}
+}
+
+func TestCappedBufferRejectsOversizedOutput(t *testing.T) {
+	buffer := cappedBuffer{max: 5}
+	if n, err := buffer.Write([]byte("abc")); err != nil || n != 3 {
+		t.Fatalf("first write = %d, %v", n, err)
+	}
+	if n, err := buffer.Write([]byte("def")); err == nil || n != 2 {
+		t.Fatalf("overflow write = %d, %v; want 2 and error", n, err)
+	}
+	if got := buffer.String(); got != "abcde" {
+		t.Fatalf("buffer = %q, want abcde", got)
 	}
 }
 

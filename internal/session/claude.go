@@ -2,8 +2,10 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +48,81 @@ func (claudeProvider) Delete(row Row) error {
 	if row.File == "" {
 		return errors.New("claude session file is unknown")
 	}
+	// The sessions index is Claude's own derived data in a private format:
+	// it is rebuilt by Claude on its next scan, and its schema may change
+	// under us. Clean it up on a best-effort basis, but never let a corrupt
+	// or concurrently rewritten index make a session impossible to delete.
+	_ = removeClaudeIndexEntry(row)
 	return os.Remove(row.File)
+}
+
+func removeClaudeIndexEntry(row Row) error {
+	indexPath := filepath.Join(filepath.Dir(row.File), "sessions-index.json")
+	original, err := os.ReadFile(indexPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(original, &document); err != nil {
+		return fmt.Errorf("parse %s: %w", indexPath, err)
+	}
+	var entries []json.RawMessage
+	if raw, ok := document["entries"]; !ok {
+		return nil
+	} else if err := json.Unmarshal(raw, &entries); err != nil {
+		return fmt.Errorf("parse entries in %s: %w", indexPath, err)
+	}
+
+	kept := entries[:0]
+	removed := false
+	for _, raw := range entries {
+		var entry struct {
+			SessionID string `json:"sessionId"`
+			FullPath  string `json:"fullPath"`
+		}
+		if json.Unmarshal(raw, &entry) == nil &&
+			(entry.SessionID == row.ID || samePath(entry.FullPath, row.File)) {
+			removed = true
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	if !removed {
+		return nil
+	}
+	encodedEntries, err := json.Marshal(kept)
+	if err != nil {
+		return err
+	}
+	document["entries"] = encodedEntries
+
+	// Avoid overwriting an index that changed while the session file was being
+	// removed. A concurrent Claude process can rebuild the index on its next
+	// scan; preserving its newer data is safer than forcing this cleanup.
+	current, err := os.ReadFile(indexPath)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, original) {
+		return errors.New("sessions-index.json changed concurrently")
+	}
+	return writeFileAtomic(indexPath, func(file *os.File) error {
+		encoder := json.NewEncoder(file)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(document)
+	})
+}
+
+func samePath(left, right string) bool {
+	if strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+		return false
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func (claudeProvider) Transcript(row Row) ([]Turn, error) {
@@ -71,30 +147,63 @@ type claudeMessage struct {
 }
 
 func discoverClaude(claudeHome string) []Row {
-	var rows []Row
-	walkJSONL(filepath.Join(claudeHome, "projects"), func(path string) {
+	paths := jsonlPaths(filepath.Join(claudeHome, "projects"))
+	filtered := paths[:0]
+	for _, path := range paths {
 		if strings.Contains(path, string(filepath.Separator)+"subagents"+string(filepath.Separator)) {
-			return
+			continue
 		}
-		if row, ok := parseClaude(path); ok {
-			rows = append(rows, row)
-		}
-	})
-	return rows
+		filtered = append(filtered, path)
+	}
+	return parseRowsBounded(filtered, parseClaude)
 }
 
 func parseClaude(path string) (Row, bool) {
-	id := sessionIDFromPath(path)
-	cwd := ""
-	launchCWD := ""
-	firstUser := ""
-	lastUser := ""
-	var lastAt string
 	projectDir := filepath.Base(filepath.Dir(path))
+	id, launchCWD, firstExistingCWD, firstUser, ok := scanClaudeHead(path, projectDir)
+	if !ok || id == "" {
+		return Row{}, false
+	}
+	tail := scanClaudeTail(path)
+	if tail.id != "" {
+		id = tail.id
+	}
+	cwd := tail.cwd
+	if launchCWD == "" {
+		launchCWD = existingDir(cwd)
+	}
+	if launchCWD == "" {
+		launchCWD = firstExistingCWD
+	}
 
+	timestamp, ok := parseTimestamp(tail.lastAt)
+	if !ok {
+		timestamp, ok = fallbackMTime(path)
+	}
+	if !ok {
+		return Row{}, false
+	}
+	if cwd == "" {
+		cwd = "(unknown cwd)"
+	}
+
+	return Row{
+		Provider:  ProviderClaude,
+		ID:        id,
+		LastAt:    timestamp,
+		CWD:       cwd,
+		LaunchCWD: launchCWD,
+		File:      path,
+		FirstUser: firstUser,
+		LastUser:  tail.lastUser,
+	}, true
+}
+
+func scanClaudeHead(path string, projectDir string) (id, launchCWD, firstExistingCWD, firstUser string, ok bool) {
+	id = sessionIDFromPath(path)
 	file, err := os.Open(path)
 	if err != nil {
-		return Row{}, false
+		return "", "", "", "", false
 	}
 	defer func() { _ = file.Close() }()
 
@@ -114,80 +223,63 @@ func parseClaude(path string) (Row, bool) {
 			id = record.SessionID
 		}
 		if record.CWD != "" {
-			cwd = record.CWD
-			if launchCWD == "" {
-				launchCWD = existingDir(record.CWD)
+			if firstExistingCWD == "" {
+				firstExistingCWD = existingDir(record.CWD)
 			}
 			if claudeProjectDir(record.CWD) == projectDir {
 				launchCWD = record.CWD
 			}
 		}
-		if record.Timestamp != "" {
-			lastAt = record.Timestamp
-		}
 
-		text := claudeUserText(record)
-		if text != "" {
-			if firstUser == "" {
-				firstUser = text
-			}
-			lastUser = text
+		if firstUser == "" {
+			firstUser = claudeUserText(record)
+		}
+		if id != "" && launchCWD != "" && firstUser != "" {
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Deliberate skip: a file we cannot scan to the end (read error, or
-		// a single line beyond scanBufferMax) is dropped from discovery
-		// instead of being shown half-parsed. Conversion paths report the
-		// same condition as an error.
-		return Row{}, false
+		return "", "", "", "", false
 	}
-
-	if id == "" {
-		return Row{}, false
-	}
-
-	timestamp, ok := parseTimestamp(lastAt)
-	if !ok {
-		timestamp, ok = fallbackMTime(path)
-	}
-	if !ok {
-		return Row{}, false
-	}
-	if cwd == "" {
-		cwd = "(unknown cwd)"
-	}
-	if launchCWD == "" {
-		launchCWD = claudeProjectPath(projectDir)
-	}
-
-	return Row{
-		Provider:  ProviderClaude,
-		ID:        id,
-		LastAt:    timestamp,
-		CWD:       cwd,
-		LaunchCWD: launchCWD,
-		File:      path,
-		FirstUser: firstUser,
-		LastUser:  lastUser,
-	}, true
+	return id, launchCWD, firstExistingCWD, firstUser, true
 }
 
-func claudeProjectPath(projectDir string) string {
-	projectDir = strings.TrimSpace(projectDir)
-	if projectDir == "" || projectDir == "." || projectDir == "-unknown-cwd" {
-		return ""
-	}
-	if strings.HasPrefix(projectDir, "-") {
-		return string(filepath.Separator) + strings.ReplaceAll(strings.TrimPrefix(projectDir, "-"), "-", string(filepath.Separator))
-	}
-	return strings.ReplaceAll(projectDir, "-", string(filepath.Separator))
+type claudeTail struct {
+	id       string
+	cwd      string
+	lastAt   string
+	lastUser string
+}
+
+func scanClaudeTail(path string) claudeTail {
+	var tail claudeTail
+	_ = reverseLines(path, func(line string) bool {
+		var record claudeRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			return true
+		}
+		if tail.id == "" {
+			tail.id = record.SessionID
+		}
+		if tail.cwd == "" {
+			tail.cwd = strings.TrimSpace(record.CWD)
+		}
+		if tail.lastAt == "" {
+			tail.lastAt = record.Timestamp
+		}
+		if tail.lastUser == "" {
+			tail.lastUser = claudeUserText(record)
+		}
+		return tail.id == "" || tail.cwd == "" || tail.lastAt == "" || tail.lastUser == ""
+	})
+	return tail
 }
 
 func claudeUserText(record claudeRecord) string {
 	if record.Type != "user" || record.Message == nil || record.Message.Role != "user" {
 		return ""
 	}
-	text := cleanText(textFromContent(record.Message.Content))
+	text := cleanPreviewText(textFromContent(record.Message.Content))
 	if !usefulUserText(text) {
 		return ""
 	}

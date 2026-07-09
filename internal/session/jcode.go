@@ -50,7 +50,30 @@ func (jcodeProvider) Delete(row Row) error {
 	if row.File == "" {
 		return errors.New("jcode session file is unknown")
 	}
-	return os.Remove(row.File)
+	if filepath.Ext(row.File) != ".json" {
+		return fmt.Errorf("unexpected jcode session path %q", row.File)
+	}
+	base := strings.TrimSuffix(row.File, ".json")
+	// Remove derivative copies first and the canonical session last. If a
+	// sidecar cannot be removed, the main session remains discoverable instead
+	// of leaving the picker with a stale row after a partial delete.
+	paths := []string{base + ".bak", base + ".journal.jsonl", row.File}
+	removed := false
+	var failures []error
+	for _, path := range paths {
+		if err := os.Remove(path); err == nil {
+			removed = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	if len(failures) > 0 {
+		return errors.Join(failures...)
+	}
+	if !removed {
+		return fmt.Errorf("jcode session %s not found", row.ID)
+	}
+	return nil
 }
 
 func (jcodeProvider) Transcript(row Row) ([]Turn, error) {
@@ -178,7 +201,7 @@ func jcodeTranscript(path string) ([]Turn, error) {
 	turns := make([]Turn, 0, len(session.Messages))
 	for _, message := range session.Messages {
 		role := message.Role
-		text := cleanText(textFromContent(message.Content))
+		text := cleanTranscriptText(textFromContent(message.Content))
 		if message.DisplayRole == "system" {
 			continue
 		}
@@ -198,7 +221,7 @@ func writeJCodeConverted(source Row, turns []Turn) (Row, error) {
 
 	now := time.Now().UTC()
 	path := filepath.Join(defaultJCodeHome(), "sessions", sessionID+".json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Row{}, err
 	}
 
@@ -238,7 +261,7 @@ func writeJCodeConverted(source Row, turns []Turn) (Row, error) {
 		ShortName:       "showagent",
 		Status:          "Closed",
 		LastPID:         0,
-		LastActiveAt:    now.Format(time.RFC3339Nano),
+		LastActiveAt:    updatedAt,
 		IsDebug:         false,
 		Saved:           false,
 	}
@@ -274,7 +297,12 @@ func jcodeDefaults(source Row) (string, string, string) {
 			return nonEmpty(session.ProviderKey, "openai"), nonEmpty(session.Model, "unknown"), session.ReasoningEffort
 		}
 	}
-	return nonEmpty(jcodeDefaultProvider(), "openai"), "unknown", ""
+	provider := jcodeDefaultProvider()
+	selectedProvider, model := jcodeCurrentSelection()
+	if provider == "" {
+		provider = selectedProvider
+	}
+	return nonEmpty(provider, "openai"), nonEmpty(model, "unknown"), ""
 }
 
 func jcodeDefaultProvider() string {
@@ -282,18 +310,59 @@ func jcodeDefaultProvider() string {
 	if err != nil {
 		return ""
 	}
+	section := ""
 	for _, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "default_provider") {
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) != "default_provider" || (section != "" && section != "provider") {
 			continue
 		}
-		return strings.Trim(strings.TrimSpace(parts[1]), `"`)
+		value := strings.TrimSpace(strings.SplitN(parts[1], "#", 2)[0])
+		return strings.Trim(value, `"'`)
 	}
 	return ""
+}
+
+type jcodeSelection struct {
+	RequestedProvider string `json:"requested_provider"`
+	ResolvedProvider  string `json:"resolved_provider"`
+	SelectedModel     string `json:"selected_model"`
+}
+
+func jcodeCurrentSelection() (string, string) {
+	output, err := runOutput("jcode", "--no-update", "--quiet", "provider", "current", "--json")
+	if err != nil {
+		return "", ""
+	}
+	var selection jcodeSelection
+	if json.Unmarshal([]byte(output), &selection) != nil {
+		return "", ""
+	}
+	provider := strings.TrimSpace(selection.RequestedProvider)
+	if provider == "" || provider == "auto" {
+		provider = normalizeJCodeProvider(selection.ResolvedProvider)
+	}
+	return provider, strings.TrimSpace(selection.SelectedModel)
+}
+
+func normalizeJCodeProvider(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "anthropic/claude":
+		return "claude"
+	case "jcode subscription":
+		return "jcode"
+	case "openai":
+		return "openai"
+	case "openrouter":
+		return "openrouter"
+	default:
+		return strings.ReplaceAll(value, " ", "-")
+	}
 }
 
 func jcodeSystemReminder(source Row) string {
@@ -313,7 +382,7 @@ func jcodeUserPreviews(messages []jcodeMessage) (string, string) {
 		if message.Role != "user" || message.DisplayRole == "system" {
 			continue
 		}
-		text := cleanText(textFromContent(message.Content))
+		text := cleanPreviewText(textFromContent(message.Content))
 		if !usefulUserText(text) {
 			continue
 		}

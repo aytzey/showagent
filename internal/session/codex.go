@@ -93,13 +93,7 @@ type codexMessagePayload struct {
 }
 
 func discoverCodex(codexHome string) []Row {
-	var rows []Row
-	walkJSONL(filepath.Join(codexHome, "sessions"), func(path string) {
-		if row, ok := parseCodex(path); ok {
-			rows = append(rows, row)
-		}
-	})
-	return rows
+	return parseRowsBounded(jsonlPaths(filepath.Join(codexHome, "sessions")), parseCodex)
 }
 
 func parseCodex(path string) (Row, bool) {
@@ -108,7 +102,14 @@ func parseCodex(path string) (Row, bool) {
 		return Row{}, false
 	}
 
-	lastAt, ok := bestTimestamp(path)
+	tail := scanCodexTail(path)
+	if tail.cwd != "" {
+		cwd = tail.cwd
+	}
+	lastAt, ok := tail.lastAt, tail.hasTimestamp
+	if !ok {
+		lastAt, ok = fallbackMTime(path)
+	}
 	if !ok {
 		return Row{}, false
 	}
@@ -125,7 +126,7 @@ func parseCodex(path string) (Row, bool) {
 		LaunchCWD: cwd,
 		File:      path,
 		FirstUser: firstUser,
-		LastUser:  scanCodexLastUser(path),
+		LastUser:  tail.lastUser,
 	}, true
 }
 
@@ -142,6 +143,7 @@ func scanCodexStart(path string) (string, string, string) {
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
+	metaSeen := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -157,6 +159,7 @@ func scanCodexStart(path string) (string, string, string) {
 		case "session_meta":
 			var meta codexSessionMeta
 			if json.Unmarshal(record.Payload, &meta) == nil {
+				metaSeen = true
 				if meta.ID != "" {
 					id = meta.ID
 				}
@@ -164,17 +167,15 @@ func scanCodexStart(path string) (string, string, string) {
 					cwd = meta.CWD
 				}
 			}
-		case "turn_context":
-			var context codexTurnContext
-			if json.Unmarshal(record.Payload, &context) == nil && context.CWD != "" {
-				cwd = context.CWD
-			}
 		case "response_item":
 			if firstUser == "" {
 				if role, text := codexMessage(record.Payload); role == "user" && usefulUserText(text) {
-					firstUser = text
+					firstUser = cleanPreviewText(text)
 				}
 			}
+		}
+		if metaSeen && firstUser != "" {
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -188,24 +189,47 @@ func scanCodexStart(path string) (string, string, string) {
 	return id, cwd, firstUser
 }
 
-func scanCodexLastUser(path string) string {
-	lastUser := ""
-	// A reverse-scan error deliberately degrades the preview to empty
-	// instead of dropping the row; the forward scan already validated the
-	// file well enough to list it.
+type codexTail struct {
+	cwd          string
+	lastUser     string
+	lastAt       time.Time
+	hasTimestamp bool
+}
+
+// scanCodexTail collects all tail-owned metadata in one reverse pass. Modern
+// Codex files place turn_context and timestamped response records near the
+// end, so even a 100 MiB rollout normally costs one 64 KiB block instead of
+// three full-file scans.
+func scanCodexTail(path string) codexTail {
+	var tail codexTail
 	_ = reverseLines(path, func(line string) bool {
+		if !tail.hasTimestamp {
+			tail.lastAt, tail.hasTimestamp = timestampFromLine(line)
+		}
+
 		var record codexLine
-		if err := json.Unmarshal([]byte(line), &record); err != nil || record.Type != "response_item" {
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			return true
 		}
-		role, text := codexMessage(record.Payload)
-		if role == "user" && usefulUserText(text) {
-			lastUser = text
-			return false
+		switch record.Type {
+		case "turn_context":
+			if tail.cwd == "" {
+				var turnContext codexTurnContext
+				if json.Unmarshal(record.Payload, &turnContext) == nil {
+					tail.cwd = strings.TrimSpace(turnContext.CWD)
+				}
+			}
+		case "response_item":
+			if tail.lastUser == "" {
+				role, text := codexMessage(record.Payload)
+				if role == "user" && usefulUserText(text) {
+					tail.lastUser = cleanPreviewText(text)
+				}
+			}
 		}
-		return true
+		return !tail.hasTimestamp || tail.cwd == "" || tail.lastUser == ""
 	})
-	return lastUser
+	return tail
 }
 
 func codexMessage(raw json.RawMessage) (string, string) {
@@ -216,5 +240,5 @@ func codexMessage(raw json.RawMessage) (string, string) {
 	if payload.Type != "message" {
 		return "", ""
 	}
-	return payload.Role, cleanText(textFromContent(payload.Content))
+	return payload.Role, cleanTranscriptText(textFromContent(payload.Content))
 }

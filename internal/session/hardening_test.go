@@ -101,6 +101,13 @@ func TestConvertLeavesNoTempFileOnSuccess(t *testing.T) {
 	if strings.Contains(entries[0].Name(), ".tmp-") {
 		t.Fatalf("temp file was not renamed into place: %s", entries[0].Name())
 	}
+	info, err := os.Stat(converted.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("converted transcript mode = %o, want 600", got)
+	}
 }
 
 func TestReverseLinesOrderAndEarlyStop(t *testing.T) {

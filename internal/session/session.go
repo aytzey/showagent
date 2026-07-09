@@ -9,9 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Provider string
@@ -129,12 +134,36 @@ func (r Row) FilterValue() string {
 }
 
 func Discover() []Row {
-	var rows []Row
-	for _, impl := range registry {
-		rows = append(rows, impl.Discover()...)
+	// Providers own independent stores. Scan them concurrently so a large
+	// Codex archive does not serialize Claude/Gemini discovery or the OpenCode
+	// CLI query. Results are reassembled in registry order before the final
+	// deterministic sort.
+	byProvider := make([][]Row, len(registry))
+	var wg sync.WaitGroup
+	for index, impl := range registry {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			byProvider[index] = impl.Discover()
+		}()
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].LastAt.After(rows[j].LastAt)
+	wg.Wait()
+
+	var rows []Row
+	for _, providerRows := range byProvider {
+		rows = append(rows, providerRows...)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if !rows[i].LastAt.Equal(rows[j].LastAt) {
+			return rows[i].LastAt.After(rows[j].LastAt)
+		}
+		if rows[i].Provider != rows[j].Provider {
+			return rows[i].Provider < rows[j].Provider
+		}
+		if rows[i].ID != rows[j].ID {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].File < rows[j].File
 	})
 	return rows
 }
@@ -211,11 +240,19 @@ func launchDir(cwd string) (string, error) {
 }
 
 var (
-	sessionIDPattern   = regexp.MustCompile(`(?i)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
-	timestampPattern   = regexp.MustCompile(`"timestamp"\s*:\s*"((?:\\.|[^"\\])*)"`)
-	secretValuePattern = regexp.MustCompile(`(?i)\b((?:password|passwd|pass|pwd|parola|sifre|şifre)\w*\s*(?:[:=]|is|was|idi)?\s*)(\S+)`)
-	openAIKeyPattern   = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{12,}\b`)
-	ansiPattern        = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
+	sessionIDPattern = regexp.MustCompile(`(?i)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+	timestampPattern = regexp.MustCompile(`"timestamp"\s*:\s*"((?:\\.|[^"\\])*)"`)
+
+	// Secret redaction is intentionally preview/MCP-facing only. Native
+	// session conversion preserves the transcript exactly (apart from unsafe
+	// terminal controls), including formatting and user-authored values.
+	passwordAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:password|passwd|pwd|parola|sifre|şifre)\w*["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
+	passwordBarePattern       = regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|parola|sifre|şifre)\s+)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
+	secretAssignmentPattern   = regexp.MustCompile(`(?i)\b((?:api[ _-]?key|access[ _-]?token|auth[ _-]?token|bearer[ _-]?token|client[ _-]?secret|secret(?:[ _-]?key)?)\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
+	knownSecretPattern        = regexp.MustCompile(`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b`)
+	bearerSecretPattern       = regexp.MustCompile(`(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}`)
+	jwtSecretPattern          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)
+	privateKeyPattern         = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----`)
 )
 
 func defaultCodexHome() string {
@@ -260,12 +297,64 @@ func expandHome(path string) string {
 	return path
 }
 
-func cleanText(value string) string {
-	value = ansiPattern.ReplaceAllString(value, "")
-	value = strings.Join(strings.Fields(value), " ")
-	value = secretValuePattern.ReplaceAllString(value, "${1}[redacted]")
-	value = openAIKeyPattern.ReplaceAllString(value, "[redacted-openai-key]")
-	return strings.TrimSpace(value)
+// cleanPreviewText makes untrusted session text safe and compact for terminal
+// rendering. It removes every ANSI/OSC control sequence, strips remaining
+// control and bidi-override characters, folds whitespace, and redacts common
+// credentials. It must not be used for transcript conversion because folding
+// whitespace destroys code blocks and indentation.
+func cleanPreviewText(value string) string {
+	return strings.TrimSpace(RedactSecrets(SafeDisplayText(value)))
+}
+
+// SafeDisplayText turns untrusted session metadata into one terminal-safe
+// line without redacting its contents. Keep raw IDs and paths in Row for
+// provider operations; call this only at human-facing rendering boundaries.
+func SafeDisplayText(value string) string {
+	value = stripTerminalControls(value, false)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+// cleanTranscriptText preserves newlines, tabs, and indentation while
+// removing terminal escape/control sequences that could execute when a
+// transcript is later displayed. Secret values are preserved here: a local
+// branch/convert operation is expected to carry the original conversation.
+func cleanTranscriptText(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.TrimSpace(stripTerminalControls(value, true))
+}
+
+// RedactSecrets redacts common credentials without changing surrounding
+// layout. MCP uses it before returning transcript text to a model; previews
+// additionally fold whitespace via cleanPreviewText.
+func RedactSecrets(value string) string {
+	value = privateKeyPattern.ReplaceAllString(value, "[redacted-private-key]")
+	value = passwordAssignmentPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = passwordBarePattern.ReplaceAllString(value, "${1}[redacted]")
+	value = secretAssignmentPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = bearerSecretPattern.ReplaceAllString(value, "${1}[redacted]")
+	value = knownSecretPattern.ReplaceAllString(value, "[redacted-secret]")
+	return jwtSecretPattern.ReplaceAllString(value, "[redacted-jwt]")
+}
+
+func stripTerminalControls(value string, preserveLayout bool) string {
+	value = ansi.Strip(value)
+	return strings.Map(func(r rune) rune {
+		if preserveLayout && (r == '\n' || r == '\t') {
+			return r
+		}
+		if unicode.IsControl(r) || isBidiControl(r) {
+			if !preserveLayout && unicode.IsSpace(r) {
+				return ' '
+			}
+			return -1
+		}
+		return r
+	}, value)
+}
+
+func isBidiControl(r rune) bool {
+	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
 }
 
 func usefulUserText(value string) bool {
@@ -459,18 +548,6 @@ func reverseLines(path string, fn func(string) bool) error {
 	return nil
 }
 
-func lastTimestamp(path string) (time.Time, bool) {
-	var found time.Time
-	_ = reverseLines(path, func(line string) bool {
-		if timestamp, ok := timestampFromLine(line); ok {
-			found = timestamp
-			return false
-		}
-		return true
-	})
-	return found, !found.IsZero()
-}
-
 func fallbackMTime(path string) (time.Time, bool) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -479,22 +556,56 @@ func fallbackMTime(path string) (time.Time, bool) {
 	return info.ModTime(), true
 }
 
-func walkJSONL(root string, fn func(string)) {
+func jsonlPaths(root string) []string {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		return
+		return nil
 	}
+	var paths []string
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
-		fn(path)
+		paths = append(paths, path)
 		return nil
 	})
+	sort.Strings(paths)
+	return paths
 }
 
-func bestTimestamp(path string) (time.Time, bool) {
-	if timestamp, ok := lastTimestamp(path); ok {
-		return timestamp, true
+// parseRowsBounded parses independent session files with a small worker pool.
+// Four readers keep SSDs busy without multiplying 16 MiB scanner buffers or
+// turning discovery into an unbounded goroutine fan-out on large archives.
+func parseRowsBounded(paths []string, parse func(string) (Row, bool)) []Row {
+	if len(paths) == 0 {
+		return nil
 	}
-	return fallbackMTime(path)
+	workers := min(runtime.GOMAXPROCS(0), 4, len(paths))
+	jobs := make(chan string)
+	rows := make(chan Row, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				if row, ok := parse(path); ok {
+					rows <- row
+				}
+			}
+		}()
+	}
+	go func() {
+		for _, path := range paths {
+			jobs <- path
+		}
+		close(jobs)
+		wg.Wait()
+		close(rows)
+	}()
+
+	parsed := make([]Row, 0, len(paths))
+	for row := range rows {
+		parsed = append(parsed, row)
+	}
+	return parsed
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -102,7 +103,7 @@ func claudeTranscript(path string) ([]Turn, error) {
 			continue
 		}
 		role := record.Message.Role
-		text := cleanText(textFromContent(record.Message.Content))
+		text := cleanTranscriptText(textFromContent(record.Message.Content))
 		if !keepTranscriptTurn(role, text) {
 			continue
 		}
@@ -141,7 +142,7 @@ func writeFileAtomic(path string, write func(*os.File) error) error {
 	if err := write(temp); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	if err := temp.Chmod(0o644); err != nil {
+	if err := temp.Chmod(0o600); err != nil {
 		return fmt.Errorf("chmod %s: %w", temp.Name(), err)
 	}
 	if err := temp.Sync(); err != nil {
@@ -152,6 +153,12 @@ func writeFileAtomic(path string, write func(*os.File) error) error {
 	}
 	if err := os.Rename(temp.Name(), path); err != nil {
 		return fmt.Errorf("rename %s: %w", path, err)
+	}
+	if runtime.GOOS != "windows" {
+		if directory, err := os.Open(filepath.Dir(path)); err == nil {
+			_ = directory.Sync()
+			_ = directory.Close()
+		}
 	}
 	return nil
 }
@@ -164,7 +171,7 @@ func writeCodexConverted(source Row, turns []Turn) (Row, error) {
 
 	now := time.Now()
 	path := codexSessionPath(defaultCodexHome(), sessionID, now)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Row{}, err
 	}
 
@@ -236,7 +243,7 @@ func writeClaudeConverted(source Row, turns []Turn) (Row, error) {
 
 	now := time.Now().UTC()
 	path := claudeSessionPath(defaultClaudeHome(), source.CWD, sessionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Row{}, err
 	}
 
@@ -365,10 +372,14 @@ func userPreviewFromTurns(turns []Turn) (string, string) {
 		if turn.Role != "user" {
 			continue
 		}
-		if firstUser == "" {
-			firstUser = turn.Text
+		preview := cleanPreviewText(turn.Text)
+		if preview == "" {
+			continue
 		}
-		lastUser = turn.Text
+		if firstUser == "" {
+			firstUser = preview
+		}
+		lastUser = preview
 	}
 	return firstUser, lastUser
 }
