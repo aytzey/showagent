@@ -63,6 +63,11 @@ type sessionMutationMsg struct {
 	err  error
 }
 
+type sessionDeleteMsg struct {
+	row session.Row
+	err error
+}
+
 type conversionPreviewMsg struct {
 	row     session.Row
 	target  session.Provider
@@ -314,6 +319,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasRescan := m.rescanning
 		m.loading = false
 		m.rescanning = false
+		m.busy = ""
 		m.pendingConvert = nil
 		m.allRows = msg.rows
 		if wasRescan {
@@ -338,6 +344,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case sessionMutationMsg:
 		return m.applyMutation(msg)
+	case sessionDeleteMsg:
+		return m.applyDelete(msg)
 	case conversionPreviewMsg:
 		return m.applyConversionPreview(msg)
 	case tea.KeyPressMsg:
@@ -458,7 +466,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.pendingConvert = nil
 		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
 	case key.Matches(msg, m.keys.Delete):
-		return m, m.deleteSelected()
+		return m.startDelete()
 	case key.Matches(msg, m.keys.Yolo):
 		m.dangerous = !m.dangerous
 		return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
@@ -472,6 +480,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Rescan):
 		m.pendingConvert = nil
 		m.rescanning = true
+		m.busy = "rescan"
 		m.rescanRow = nil
 		if selected, ok := m.list.SelectedItem().(item); ok {
 			row := selected.row
@@ -514,11 +523,31 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	selectRowItem(&m.list, msg.row)
 
 	recipe := session.RecipeFor(msg.row, session.ResumeOptions{Dangerous: m.dangerous})
-	status := "converted to " + string(msg.row.Provider) + " · " + recipe.CommandString
+	status := "converted to " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
 	if msg.kind == mutationBranch {
-		status = "branched " + string(msg.row.Provider) + " · " + recipe.CommandString
+		status = "branched " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
 	}
 	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+}
+
+func (m model) applyDelete(msg sessionDeleteMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	m.deleteArmed = ""
+	if msg.err != nil {
+		return m, m.list.NewStatusMessage("delete failed: " + msg.err.Error())
+	}
+
+	m.allRows = removeRow(m.allRows, msg.row)
+	if !providerExists(m.allRows, msg.row.Provider) {
+		delete(m.providers, msg.row.Provider)
+	}
+	if enabledProviderCount(m.providers) == 0 {
+		m.providers = defaultProviderFilter(m.allRows)
+	}
+	m.pruneCollapsedGroups()
+	cmd := m.list.SetItems(m.currentItems())
+	selectFirstSession(&m.list)
+	return m, tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(msg.row.Provider)+" session"))
 }
 
 func (m model) applyConversionPreview(msg conversionPreviewMsg) (tea.Model, tea.Cmd) {
@@ -727,34 +756,24 @@ func (m *model) branchSelected() tea.Cmd {
 	}
 }
 
-func (m *model) deleteSelected() tea.Cmd {
+func (m model) startDelete() (tea.Model, tea.Cmd) {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
-		return m.list.NewStatusMessage("no session selected")
+		return m, m.list.NewStatusMessage("no session selected")
 	}
 	key := rowKey(selected.row)
 	if m.deleteArmed != key {
 		m.deleteArmed = key
-		return m.list.NewStatusMessage("press delete again to permanently remove this " + string(selected.row.Provider) + " session")
+		return m, m.list.NewStatusMessage("press delete again to permanently remove this " + string(selected.row.Provider) + " session")
 	}
 
-	if err := session.Delete(selected.row); err != nil {
-		m.deleteArmed = ""
-		return m.list.NewStatusMessage("delete failed: " + err.Error())
-	}
-
+	row := selected.row
 	m.deleteArmed = ""
-	m.allRows = removeRow(m.allRows, selected.row)
-	if !providerExists(m.allRows, selected.row.Provider) {
-		delete(m.providers, selected.row.Provider)
+	m.busy = "delete"
+	deleteCmd := func() tea.Msg {
+		return sessionDeleteMsg{row: row, err: session.Delete(row)}
 	}
-	if enabledProviderCount(m.providers) == 0 {
-		m.providers = defaultProviderFilter(m.allRows)
-	}
-	m.pruneCollapsedGroups()
-	cmd := m.list.SetItems(m.currentItems())
-	selectFirstSession(&m.list)
-	return tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(selected.row.Provider)+" session"))
+	return m, tea.Batch(deleteCmd, m.list.NewStatusMessage("deleting "+string(row.Provider)+" session…"))
 }
 
 func (m model) startCompound(agent session.Provider) (tea.Model, tea.Cmd) {
@@ -815,9 +834,9 @@ func (m model) browseView() string {
 		content = clampLines(content, m.height-lipgloss.Height(helpBar))
 	}
 	if content == "" {
-		return helpBar
+		return clampLineWidths(helpBar, m.width)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, content, helpBar)
+	return clampLineWidths(lipgloss.JoinVertical(lipgloss.Left, content, helpBar), m.width)
 }
 
 // clampLines truncates value to at most maxLines terminal rows.
@@ -830,6 +849,17 @@ func clampLines(value string, maxLines int) string {
 		return value
 	}
 	return strings.Join(lines[:maxLines], "\n")
+}
+
+func clampLineWidths(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	lines := strings.Split(value, "\n")
+	for index := range lines {
+		lines[index] = truncateCells(lines[index], width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // headerView renders the title plus as many stats chips as fit the width, so
@@ -928,7 +958,7 @@ func (m model) detailView() string {
 				state = "collapsed"
 			}
 			lines := []string{
-				th.label.Render(padLabel("category")) + truncateMiddle(collapseHome(header.path), valueW),
+				th.label.Render(padLabel("category")) + truncateMiddle(collapseHome(session.SafeDisplayText(header.path)), valueW),
 				th.label.Render(padLabel("sessions")) + fmt.Sprintf("%d", header.count),
 				th.label.Render(padLabel("state")) + state,
 				th.hint.Render("enter/space → collapse or expand category"),
@@ -957,7 +987,7 @@ func (m model) detailView() string {
 		lines = append(lines,
 			th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s", pending.preview.SourceProvider, pending.preview.TargetProvider),
 			th.label.Render(padLabel("scope"))+fmt.Sprintf("%s · %d turns", pending.preview.Scope, pending.preview.TransferTurns),
-			th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(pending.preview.LastUser), valueW),
+			th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW),
 			th.label.Render(padLabel("drops"))+truncateCells(strings.Join(pending.preview.Dropped, ", "), valueW),
 			th.hint.Render("press x again to write · esc cancel · o target · t scope"),
 		)
@@ -976,13 +1006,13 @@ func (m model) detailView() string {
 	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
 	lines = append(lines,
 		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
-		th.label.Render(padLabel("session"))+row.ID,
-		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(row.CWD), valueW),
-		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(recipe.StorageLocation), valueW),
-		th.label.Render(padLabel("command"))+truncateCells(recipe.CommandString, valueW),
+		th.label.Render(padLabel("session"))+session.SafeDisplayText(row.ID),
+		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(session.SafeDisplayText(row.CWD)), valueW),
+		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(session.SafeDisplayText(recipe.StorageLocation)), valueW),
+		th.label.Render(padLabel("command"))+truncateCells(session.SafeDisplayText(recipe.CommandString), valueW),
 		th.label.Render(padLabel("updated"))+localTime(row.LastAt),
-		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(row.FirstUser), valueW),
-		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(bestLast(row)), valueW),
+		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(session.SafeDisplayText(row.FirstUser)), valueW),
+		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(session.SafeDisplayText(bestLast(row))), valueW),
 		th.hint.Render(m.resumeHint(row)),
 		th.hint.Render(m.handoffHint(row)),
 	)
@@ -1032,6 +1062,8 @@ func (m model) handoffHint(row session.Row) string {
 
 func (m model) detailLineCount() int {
 	switch {
+	case m.width > 0 && m.width < 40:
+		return 0
 	case m.height < 14:
 		return 0
 	case m.height < 20:
@@ -1058,7 +1090,7 @@ func (m model) loadingView() string {
 	if m.width <= 0 || m.height <= 0 {
 		return body
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	return clampLineWidths(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body), m.width)
 }
 
 func (m model) emptyView() string {
@@ -1071,9 +1103,18 @@ func (m model) emptyView() string {
 		th.muted.Render("Scanned:"),
 	}
 	for _, target := range session.ScanTargets() {
-		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, collapseHome(target.Path), target.EnvVar)
+		prefix := fmt.Sprintf("  %-8s ", target.Provider)
+		suffix := fmt.Sprintf("  (override with %s)", target.EnvVar)
+		pathWidth := max(1, m.width-lipgloss.Width(prefix)-lipgloss.Width(suffix))
+		if m.width <= 0 {
+			pathWidth = lipgloss.Width(target.Path)
+		}
+		line := prefix + truncateMiddle(collapseHome(session.SafeDisplayText(target.Path)), pathWidth) + suffix
 		if target.Note != "" {
-			line += "  — " + target.Note
+			note := "  — " + target.Note
+			if m.width <= 0 || lipgloss.Width(line)+lipgloss.Width(note) <= m.width {
+				line += note
+			}
 		}
 		lines = append(lines, th.muted.Render(line))
 	}
@@ -1086,14 +1127,14 @@ func (m model) emptyView() string {
 	if m.width <= 0 || m.height <= 0 {
 		return body
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	return clampLineWidths(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body), m.width)
 }
 
 func (m model) compoundView() string {
 	th := m.render.theme
 	target := "the selected session"
 	if m.compoundRow != nil {
-		target = string(m.compoundRow.Provider) + " · " + baseName(m.compoundRow.CWD)
+		target = string(m.compoundRow.Provider) + " · " + baseName(session.SafeDisplayText(m.compoundRow.CWD))
 	}
 	option := func(digit, name string, provider session.Provider) string {
 		label := th.label.Render("["+digit+"]") + " " + name
@@ -1119,11 +1160,19 @@ func (m model) compoundView() string {
 	if m.compoundNotice != "" {
 		lines = append(lines, th.deleteBanner.Render(m.compoundNotice))
 	}
-	box := th.detail.Width(min(max(m.width-6, 30), 64)).Render(strings.Join(lines, "\n"))
+	boxWidth := 64
+	if m.width > 0 {
+		boxWidth = max(1, min(m.width, 64))
+	}
+	innerWidth := max(1, boxWidth-2)
+	for index := range lines {
+		lines[index] = truncateCells(lines[index], innerWidth)
+	}
+	box := th.detail.Width(boxWidth).Render(strings.Join(lines, "\n"))
 	if m.width <= 0 || m.height <= 0 {
 		return box
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return clampLineWidths(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box), m.width)
 }
 
 // Pick runs the picker over an already-discovered set of rows (used in tests).

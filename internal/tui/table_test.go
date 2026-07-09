@@ -81,3 +81,22 @@ func TestPrintTableRespectsWidth(t *testing.T) {
 		t.Fatalf("row exceeds requested width: %d > 200", len(wideRow))
 	}
 }
+
+func TestPrintTableSanitizesUntrustedMetadata(t *testing.T) {
+	rows := []session.Row{{
+		Provider:  session.ProviderCodex,
+		ID:        "safe-id\x1b]52;c;Y2xpcGJvYXJk\x07",
+		LastAt:    time.Now(),
+		CWD:       "/work\nforged-row\u202e",
+		FirstUser: "hello\x1b[31m red",
+	}}
+	var output bytes.Buffer
+	PrintTable(&output, 120, rows)
+	got := output.String()
+	if strings.ContainsAny(got, "\x1b\x07") || strings.ContainsRune(got, '\u202e') || strings.Contains(got, "clipboard") {
+		t.Fatalf("plain table retained terminal controls: %q", got)
+	}
+	if lines := strings.Split(strings.TrimSpace(got), "\n"); len(lines) != 2 {
+		t.Fatalf("metadata injected a forged row: %q", got)
+	}
+}
