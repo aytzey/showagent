@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a focused improvement or provider integration
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is blocked or unnecessarily difficult?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Provider or ecosystem evidence
+      description: Link upstream format/CLI documentation when the request concerns an agent provider.
+  - type: textarea
+    id: safety
+    attributes:
+      label: Data and safety considerations
+      description: Note writes, deletion, network access, credentials, or transcript exposure.

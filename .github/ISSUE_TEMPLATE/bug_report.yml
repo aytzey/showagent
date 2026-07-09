@@ -1,0 +1,45 @@
+name: Bug report
+description: Report reproducible incorrect behavior in showagent
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real transcripts, credentials, or private paths. Use the Security tab for vulnerabilities.
+  - type: input
+    id: version
+    attributes:
+      label: showagent version
+      placeholder: v0.9.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, Other]
+    validations:
+      required: true
+  - type: input
+    id: providers
+    attributes:
+      label: Agent CLI and version
+      placeholder: codex-cli 0.144.0
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps using fabricated session data where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include relevant stderr or CI output; remove secrets and personal paths.

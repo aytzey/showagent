@@ -33,8 +33,8 @@ branch + convert across agents.
 - **Convert between agents** — rewrite a session into another agent's native
   format so that agent's own resume just works. Originals are never modified;
   conversions are written atomically.
-- **100% local** — one static binary that reads your own files. No server, no
-  telemetry, no account.
+- **100% local** — one static binary that reads your own files. No hosted
+  service, no telemetry, no account.
 
 ## Supported agents
 
@@ -52,8 +52,10 @@ Notes:
   (discover, export, import, delete) goes through your own `opencode` CLI —
   showagent never writes into the database directly. OpenCode and jcode only
   appear when their CLI is installed.
-- Converting *to* an agent requires that agent's CLI on `PATH`, so the result
-  can actually be resumed.
+- The picker only offers hand-off targets whose CLI is on `PATH`, so it never
+  strands a conversion. Scripted conversion to file-backed agents can still
+  prepare a session before their CLI is installed; OpenCode always requires
+  its CLI because imports go through OpenCode itself.
 - jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
   `jcode` binary is on `PATH`, showagent never shows it.
 - Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
@@ -69,7 +71,7 @@ brew install aytzey/tap/showagent
 # install script (Linux/macOS, puts the binary in ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
 
-# Go 1.25+
+# Go 1.25.12+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -87,7 +89,10 @@ showagent convert latest --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
 showagent info latest      # exact resume command + storage location
 showagent mcp              # serve session history to MCP-capable agents (stdio)
-showagent update           # install the latest GitHub release
+showagent mcp --read-only  # same search/transcript tools, without tools that write copies
+showagent mcp --allow-secrets
+                           # explicitly allow verbatim secret-like transcript values
+showagent update           # update a standalone install (Homebrew: brew upgrade aytzey/tap/showagent)
 showagent --help           # full CLI help
 ```
 
@@ -167,20 +172,32 @@ command = "showagent"
 args = ["mcp"]
 ```
 
+An MCP client can send returned transcript text to its model provider. Common
+secret-like values are therefore redacted by default, and every transcript is
+marked as untrusted historical data rather than instructions. If verbatim
+values are required, the user must explicitly start the server as
+`showagent mcp --allow-secrets`; an MCP tool call cannot bypass redaction.
+For clients that should never write session copies, register
+`showagent mcp --read-only`; that mode omits `branch_session` and
+`convert_session` entirely.
+
 Tools:
 
 | Tool | What it does |
 |---|---|
 | `list_sessions` | Search sessions across all agents — filter by provider, workspace substring, or free text over workspace + first/last user message (default 25, max 100 results) |
-| `get_transcript` | Read a session's user/assistant turns; `max_turns` keeps the most recent N (default 50) so long sessions don't flood context |
+| `get_transcript` | Read recent user/assistant turns (default 50, hard max 500); secrets are redacted unless the server was explicitly started with `--allow-secrets` |
 | `branch_session` | Fork a full local copy of a session, same agent; returns the new id, file, and resume command |
 | `convert_session` | Rewrite a session into another agent's native format; returns the new id, file, and resume command |
 | `resume_command` | The exact shell command (and cwd) that resumes a session — returned as a string, **never executed** |
 
-The MCP surface is deliberately non-destructive: there is **no delete tool**,
-and the server never executes an agent CLI. Deleting sessions stays exclusive
-to the TUI, where it takes two key presses with a human watching. Branch and
-convert only ever write new files — originals are never modified.
+The default MCP surface is deliberately non-destructive: there is **no delete
+tool**, and it never launches or resumes an interactive agent. OpenCode storage
+operations still go through the local `opencode` CLI because its sessions live
+in SQLite. Deleting sessions stays exclusive to the TUI, where it takes two key
+presses with a human watching. Branch and convert only add new sessions —
+originals are never modified — and `--read-only` removes even those additive
+tools.
 
 ## How it compares
 
@@ -214,13 +231,15 @@ only installs what is missing.
 ## FAQ
 
 **Is my session data sent anywhere?**
-No session content leaves your machine. showagent reads session files where the
-agents left them; there is no server, no telemetry, and no account. The only
-network path is the optional release updater: `showagent update`, and the
-startup "update available?" check for release builds (disable with
-`SHOWAGENT_NO_UPDATE_CHECK=1`). Message previews additionally redact
-password-like strings and API keys before rendering (covered by tests in
-[`internal/session/session_test.go`](internal/session/session_test.go)).
+showagent itself does not upload session content and has no telemetry or
+account. An MCP client may send `get_transcript` results to that client's model
+provider, so MCP transcripts redact common secrets by default; keep that
+boundary in mind before registering the server. showagent's own HTTP client is
+used only by the optional release updater and startup update check (disable
+with `SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
+Codex/Claude CLIs, which may download the requested plugin. Message previews
+also redact password-like strings and API keys before rendering (covered by
+tests in [`internal/session/session_test.go`](internal/session/session_test.go)).
 Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
 also carry GitHub build provenance — verify with
 `gh attestation verify <file> --repo aytzey/showagent`.
@@ -229,8 +248,9 @@ also carry GitHub build provenance — verify with
 Conversion extracts the user and assistant turns from the source transcript
 and writes a brand-new session in the target agent's native format (for
 OpenCode, via `opencode import`), so the target's own resume command picks it
-up. The original session is never modified, and files are written atomically —
-a crash cannot leave a half-written session in another tool's store.
+up. Code blocks, newlines, and indentation are preserved. The original session
+is never modified, and files are private (`0600`) and written atomically — a
+crash cannot leave a half-written session in another tool's store.
 
 Trust is explicit: in the TUI, the first `x` shows the hand-off preview and the
 second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
@@ -242,9 +262,10 @@ converting.
 
 **What does delete actually do?**
 Codex sessions are deleted through `codex delete --force`; OpenCode through
-`opencode session delete` (which cascades inside its database); Claude Code,
-Gemini, and jcode by removing the session file. Delete always takes two
-presses, and moving the cursor disarms it.
+`opencode session delete` (which cascades inside its database). Claude Code
+removes the JSONL plus its matching index entry, jcode removes the JSON plus
+backup/journal sidecars, and Gemini removes its session file. Delete always
+takes two presses, and moving the cursor disarms it.
 
 **Windows?**
 Binaries are released and the whole TUI works, but resume semantics are
@@ -276,8 +297,15 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
+The minimum supported toolchain is Go 1.25.12; CI also runs race tests,
+golangci-lint, `govulncheck`, and every published cross-compile target.
+
 The demo GIF is recorded hermetically with [vhs](https://github.com/charmbracelet/vhs)
 against fabricated fixtures — see [`demo/README.md`](demo/README.md).
+
+Security issues and sensitive-data exposure should be reported privately; see
+[`SECURITY.md`](SECURITY.md). Contributions are covered by
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

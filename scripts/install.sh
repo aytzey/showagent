@@ -12,6 +12,10 @@
 set -eu
 
 REPO="aytzey/showagent"
+MAX_METADATA_BYTES=1048576
+MAX_CHECKSUM_BYTES=1048576
+MAX_ARCHIVE_BYTES=67108864
+MAX_BINARY_BYTES=67108864
 
 fail() {
     echo "install.sh: $1" >&2
@@ -20,6 +24,10 @@ fail() {
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+
+download() {
+    curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 300 "$@"
+}
 
 case "$(uname -s)" in
     Linux) os="linux" ;;
@@ -35,10 +43,12 @@ esac
 
 tag="${SHOWAGENT_VERSION:-}"
 if [ -z "$tag" ]; then
-    tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" |
+    tag=$(download --max-filesize "$MAX_METADATA_BYTES" -sS "https://api.github.com/repos/${REPO}/releases/latest" |
         sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
 fi
 [ -n "$tag" ] || fail "could not determine the latest release tag"
+printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+    fail "invalid release tag: ${tag}"
 
 archive="showagent_${tag}_${os}_${arch}.tar.gz"
 base_url="https://github.com/${REPO}/releases/download/${tag}"
@@ -47,10 +57,17 @@ tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
 echo "Downloading ${archive} (${tag})..."
-curl -fsSL -o "${tmpdir}/${archive}" "${base_url}/${archive}" ||
+download --max-filesize "$MAX_ARCHIVE_BYTES" -sS -o "${tmpdir}/${archive}" "${base_url}/${archive}" ||
     fail "download failed: ${base_url}/${archive}"
-curl -fsSL -o "${tmpdir}/SHA256SUMS" "${base_url}/SHA256SUMS" ||
+download --max-filesize "$MAX_CHECKSUM_BYTES" -sS -o "${tmpdir}/SHA256SUMS" "${base_url}/SHA256SUMS" ||
     fail "download failed: ${base_url}/SHA256SUMS"
+
+archive_size=$(wc -c <"${tmpdir}/${archive}" | tr -d ' ')
+[ "$archive_size" -le "$MAX_ARCHIVE_BYTES" ] ||
+    fail "archive exceeds ${MAX_ARCHIVE_BYTES} bytes"
+checksum_size=$(wc -c <"${tmpdir}/SHA256SUMS" | tr -d ' ')
+[ "$checksum_size" -le "$MAX_CHECKSUM_BYTES" ] ||
+    fail "SHA256SUMS exceeds ${MAX_CHECKSUM_BYTES} bytes"
 
 expected=$(sed -n "s/^\([0-9a-f]\{64\}\)[[:space:]]\{1,\}\*\{0,1\}${archive}\$/\1/p" \
     "${tmpdir}/SHA256SUMS" | head -n 1)
@@ -67,18 +84,29 @@ fi
     fail "checksum mismatch for ${archive}: expected ${expected}, got ${actual}"
 
 tar -xzf "${tmpdir}/${archive}" -C "$tmpdir" showagent
+binary_size=$(wc -c <"${tmpdir}/showagent" | tr -d ' ')
+[ "$binary_size" -le "$MAX_BINARY_BYTES" ] ||
+    fail "extracted binary exceeds ${MAX_BINARY_BYTES} bytes"
 
-install_dir="${SHOWAGENT_INSTALL_DIR:-${HOME}/.local/bin}"
+[ -n "${HOME:-}" ] || [ -n "${SHOWAGENT_INSTALL_DIR:-}" ] ||
+    fail "HOME is not set; set SHOWAGENT_INSTALL_DIR"
 use_sudo=""
-if mkdir -p "$install_dir" 2>/dev/null && [ -w "$install_dir" ]; then
-    :
+if [ -n "${SHOWAGENT_INSTALL_DIR:-}" ]; then
+    install_dir="$SHOWAGENT_INSTALL_DIR"
+    mkdir -p "$install_dir" 2>/dev/null ||
+        fail "cannot create SHOWAGENT_INSTALL_DIR: ${install_dir}"
+    [ -w "$install_dir" ] ||
+        fail "SHOWAGENT_INSTALL_DIR is not writable: ${install_dir}"
 else
-    install_dir="/usr/local/bin"
-    if [ ! -w "$install_dir" ]; then
-        command -v sudo >/dev/null 2>&1 ||
-            fail "cannot write to ${install_dir} and sudo is unavailable; set SHOWAGENT_INSTALL_DIR to a writable directory"
-        use_sudo="sudo"
-        echo "Installing to ${install_dir} (requires sudo)..."
+    install_dir="${HOME}/.local/bin"
+    if ! mkdir -p "$install_dir" 2>/dev/null || [ ! -w "$install_dir" ]; then
+        install_dir="/usr/local/bin"
+        if [ ! -w "$install_dir" ]; then
+            command -v sudo >/dev/null 2>&1 ||
+                fail "cannot write to ${install_dir} and sudo is unavailable; set SHOWAGENT_INSTALL_DIR to a writable directory"
+            use_sudo="sudo"
+            echo "Installing to ${install_dir} (requires sudo)..."
+        fi
     fi
 fi
 
