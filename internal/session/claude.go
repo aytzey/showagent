@@ -115,6 +115,9 @@ func parseClaude(path string) (Row, bool) {
 		}
 		if record.CWD != "" {
 			cwd = record.CWD
+			if launchCWD == "" {
+				launchCWD = existingDir(record.CWD)
+			}
 			if claudeProjectDir(record.CWD) == projectDir {
 				launchCWD = record.CWD
 			}

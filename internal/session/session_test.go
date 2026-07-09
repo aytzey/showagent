@@ -173,6 +173,37 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	}
 }
 
+func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	project := filepath.Join(root, "fable is arama")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	t.Setenv("CLAUDE_HOME", claudeHome)
+	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+
+	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
+	projectDir := strings.ReplaceAll(claudeProjectDir(project), " ", "-")
+	writeFile(t, filepath.Join(claudeHome, "projects", projectDir, sessionID+".jsonl"), `
+{"type":"user","message":{"role":"user","content":"started in project"},"timestamp":"2026-06-02T10:00:00Z","cwd":"`+project+`","sessionId":"`+sessionID+`"}
+`)
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %d", len(rows))
+	}
+	if rows[0].CWD != project {
+		t.Fatalf("display cwd = %q, want latest cwd %q", rows[0].CWD, project)
+	}
+	if rows[0].resumeCWD() != project {
+		t.Fatalf("resume cwd = %q, want observed cwd %q", rows[0].resumeCWD(), project)
+	}
+}
+
 func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	root := t.TempDir()
 	codexHome := filepath.Join(root, "codex")
