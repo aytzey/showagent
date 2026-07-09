@@ -336,12 +336,23 @@ func claudeProjectDir(cwd string) string {
 	if clean == "" || clean == "." || strings.HasPrefix(clean, "(") {
 		return "-unknown-cwd"
 	}
-	value := strings.ReplaceAll(clean, string(filepath.Separator), "-")
-	value = strings.TrimSpace(value)
-	// Reject anything that could escape the parent when used as a single path
-	// segment (e.g. a session whose cwd is ".."), so learnings/converted files
-	// can never be written outside their intended directory.
-	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
+	// Claude Code names project directories by replacing every character that
+	// is not [a-zA-Z0-9] with "-" (spaces, dots, parentheses and non-ASCII
+	// letters all become dashes). Writing anywhere else produces sessions the
+	// claude CLI cannot resume, so mirror its rule exactly.
+	var b strings.Builder
+	b.Grow(len(clean))
+	for _, r := range clean {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	value := b.String()
+	// A slug of only dashes carries no identity, and the alphanumeric filter
+	// already makes path escapes (.., separators) impossible.
+	if strings.Trim(value, "-") == "" {
 		return "-unknown-cwd"
 	}
 	return value

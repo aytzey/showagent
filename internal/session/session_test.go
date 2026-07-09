@@ -187,7 +187,7 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
-	projectDir := strings.ReplaceAll(claudeProjectDir(project), " ", "-")
+	projectDir := claudeProjectDir(project)
 	writeFile(t, filepath.Join(claudeHome, "projects", projectDir, sessionID+".jsonl"), `
 {"type":"user","message":{"role":"user","content":"started in project"},"timestamp":"2026-06-02T10:00:00Z","cwd":"`+project+`","sessionId":"`+sessionID+`"}
 `)
@@ -201,6 +201,29 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 	}
 	if rows[0].resumeCWD() != project {
 		t.Fatalf("resume cwd = %q, want observed cwd %q", rows[0].resumeCWD(), project)
+	}
+}
+
+func TestClaudeProjectDirMatchesClaudeCLI(t *testing.T) {
+	// Expected values are directory names the real claude CLI created on disk
+	// for these cwds: every non-alphanumeric character becomes a dash.
+	cases := []struct {
+		cwd  string
+		want string
+	}{
+		{"/home/aytzey/Documents/fable is arama", "-home-aytzey-Documents-fable-is-arama"},
+		{"/home/aytzey/Desktop/2026 Projeler/ANKA-BAYKAR (another copy) repos", "-home-aytzey-Desktop-2026-Projeler-ANKA-BAYKAR--another-copy--repos"},
+		{"/home/aytzey/Desktop/Easy money websitesi Ankara Ayrancı", "-home-aytzey-Desktop-Easy-money-websitesi-Ankara-Ayranc-"},
+		{"/home/u/my.app_v2", "-home-u-my-app-v2"},
+		{"/home/aytzey", "-home-aytzey"},
+		{"..", "-unknown-cwd"},
+		{"", "-unknown-cwd"},
+		{"///", "-unknown-cwd"},
+	}
+	for _, tc := range cases {
+		if got := claudeProjectDir(tc.cwd); got != tc.want {
+			t.Errorf("claudeProjectDir(%q) = %q, want %q", tc.cwd, got, tc.want)
+		}
 	}
 }
 
