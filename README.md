@@ -82,6 +82,10 @@ showagent                  # open the interactive picker
 showagent list             # plain table of every session
 showagent list --json      # the same, machine-readable
 showagent resume latest    # reopen the most recent session, any agent
+showagent convert latest --to claude --dry-run
+                           # preview exactly what a hand-off would carry/drop
+showagent info latest      # exact resume command + storage location
+showagent update           # install the latest GitHub release
 showagent --help           # full CLI help
 ```
 
@@ -97,7 +101,7 @@ showagent --help           # full CLI help
 | `space` | Collapse or expand the selected workspace group |
 | `o` | Cycle the convert target for the selected session |
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
-| `x` | Convert to the target agent and select the new session |
+| `x` | Preview convert; press `x` again to write and select the new session |
 | `n` | Branch: create a full local copy of the session |
 | `y` | Toggle yolo resume (skip the agent's permission prompts) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
@@ -126,9 +130,20 @@ are a stable contract:
 ```
 
 `showagent resume <id|latest> [--yolo]` resumes without the picker, so a shell
-alias can reopen your last session in one keystroke. Exit codes: `0` success,
-`1` error (including "no sessions found"), `2` usage. When stdout is not a
-terminal, plain `showagent` prints the `list` table, so pipes just work.
+alias can reopen your last session in one keystroke.
+
+`showagent convert <id|latest> --to <provider> --dry-run` prints the hand-off
+before writing anything: source session, target provider, workspace, scope,
+transferable turn count, last user ask, and the agent-specific state that will
+be dropped. Remove `--dry-run` to write the converted session, then showagent
+prints the resume recipe for the new row.
+
+`showagent info <id|latest> [--yolo]` prints the exact resume command,
+working directory, and storage location for a session.
+
+Exit codes: `0` success, `1` error (including "no sessions found"), `2` usage.
+When stdout is not a terminal, plain `showagent` prints the `list` table, so
+pipes just work.
 
 ## How it compares
 
@@ -162,10 +177,12 @@ only installs what is missing.
 ## FAQ
 
 **Is my session data sent anywhere?**
-No. showagent is fully local: it reads session files where the agents left
-them and makes no network calls. There is no server, no telemetry, and no
-account. Message previews additionally redact password-like strings and
-API keys before rendering (covered by tests in
+No session content leaves your machine. showagent reads session files where the
+agents left them; there is no server, no telemetry, and no account. The only
+network path is the optional release updater: `showagent update`, and the
+startup "update available?" check for release builds (disable with
+`SHOWAGENT_NO_UPDATE_CHECK=1`). Message previews additionally redact
+password-like strings and API keys before rendering (covered by tests in
 [`internal/session/session_test.go`](internal/session/session_test.go)).
 Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
 also carry GitHub build provenance — verify with
@@ -176,11 +193,15 @@ Conversion extracts the user and assistant turns from the source transcript
 and writes a brand-new session in the target agent's native format (for
 OpenCode, via `opencode import`), so the target's own resume command picks it
 up. The original session is never modified, and files are written atomically —
-a crash cannot leave a half-written session in another tool's store. It
-intentionally does **not** copy tool-call internals, approval history,
-encrypted reasoning blobs, or provider attachments: those are private to the
-source agent and would not replay correctly anyway. `t` trims the scope to the
-latest N turns before converting.
+a crash cannot leave a half-written session in another tool's store.
+
+Trust is explicit: in the TUI, the first `x` shows the hand-off preview and the
+second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
+the same preview. Conversion intentionally does **not** copy tool-call
+internals, approval history, encrypted reasoning blobs, or provider
+attachments: those are private to the source agent and would not replay
+correctly anyway. `t` / `--scope` trims the scope to the latest N turns before
+converting.
 
 **What does delete actually do?**
 Codex sessions are deleted through `codex delete --force`; OpenCode through

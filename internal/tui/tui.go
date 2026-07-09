@@ -63,6 +63,21 @@ type sessionMutationMsg struct {
 	err  error
 }
 
+type conversionPreviewMsg struct {
+	row     session.Row
+	target  session.Provider
+	options session.HandoffOptions
+	preview session.ConversionPreview
+	err     error
+}
+
+type pendingConversion struct {
+	rowKey  string
+	target  session.Provider
+	options session.HandoffOptions
+	preview session.ConversionPreview
+}
+
 type sessionsLoadedMsg struct {
 	rows []session.Row
 }
@@ -199,6 +214,7 @@ type model struct {
 	handoffTarget    session.Provider
 	selected         *Selection
 	deleteArmed      string
+	pendingConvert   *pendingConversion
 	busy             string
 	loading          bool
 	rescanning       bool
@@ -298,6 +314,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasRescan := m.rescanning
 		m.loading = false
 		m.rescanning = false
+		m.pendingConvert = nil
 		m.allRows = msg.rows
 		if wasRescan {
 			// A rescan keeps the user's provider filter and search; only the
@@ -321,6 +338,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case sessionMutationMsg:
 		return m.applyMutation(msg)
+	case conversionPreviewMsg:
+		return m.applyConversionPreview(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -328,6 +347,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	m.reconcileDeleteArm()
+	m.reconcilePendingConversion()
 	return m, cmd
 }
 
@@ -342,13 +362,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// The compound chooser is a modal: pick the agent by digit, or cancel.
 	// Digits follow the registry order of compound-capable providers.
 	if m.compoundChoosing {
-		key := msg.String()
-		if agents := session.CompoundAgents(); len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
-			if index := int(key[0] - '1'); index < len(agents) {
+		keyStr := msg.String()
+		if agents := session.CompoundAgents(); len(keyStr) == 1 && keyStr[0] >= '1' && keyStr[0] <= '9' {
+			if index := int(keyStr[0] - '1'); index < len(agents) {
 				return m.startCompound(agents[index])
 			}
 		}
-		switch key {
+		switch keyStr {
 		case "esc", "q", "ctrl+c":
 			m.compoundChoosing = false
 			m.compoundRow = nil
@@ -363,6 +383,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		m.reconcileDeleteArm()
+		m.reconcilePendingConversion()
 		return m, cmd
 	}
 
@@ -384,6 +405,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.deleteArmed != "" {
 			m.deleteArmed = ""
 			return m, m.list.NewStatusMessage("delete cancelled")
+		}
+		if m.pendingConvert != nil {
+			m.pendingConvert = nil
+			return m, m.list.NewStatusMessage("conversion preview cleared")
 		}
 		return m, nil
 	}
@@ -425,10 +450,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.compoundNotice = ""
 		return m, nil
 	case key.Matches(msg, m.keys.Target):
+		m.pendingConvert = nil
 		return m.cycleHandoffTarget()
 	case key.Matches(msg, m.keys.Convert):
 		return m.startConvert()
 	case key.Matches(msg, m.keys.Branch):
+		m.pendingConvert = nil
 		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
 	case key.Matches(msg, m.keys.Delete):
 		return m, m.deleteSelected()
@@ -436,12 +463,14 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.dangerous = !m.dangerous
 		return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
 	case key.Matches(msg, m.keys.Scope):
+		m.pendingConvert = nil
 		m.handoff = nextHandoffScope(m.handoff)
 		return m, m.list.NewStatusMessage("hand-off scope: " + m.handoff.Label())
 	case key.Matches(msg, m.keys.Preview):
 		m.setMode(nextPreviewMode(m.mode))
 		return m, m.list.NewStatusMessage("preview: " + modeLong(m.mode))
 	case key.Matches(msg, m.keys.Rescan):
+		m.pendingConvert = nil
 		m.rescanning = true
 		m.rescanRow = nil
 		if selected, ok := m.list.SelectedItem().(item); ok {
@@ -454,6 +483,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "/" {
+		m.pendingConvert = nil
 		rebuild := m.rebuildListForSearch()
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
@@ -463,12 +493,14 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	m.reconcileDeleteArm()
+	m.reconcilePendingConversion()
 	return m, cmd
 }
 
 func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	m.busy = ""
 	m.deleteArmed = ""
+	m.pendingConvert = nil
 	if msg.err != nil {
 		return m, m.list.NewStatusMessage("action failed: " + msg.err.Error())
 	}
@@ -481,11 +513,27 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	cmd := m.list.SetItems(m.currentItems())
 	selectRowItem(&m.list, msg.row)
 
-	status := "converted to " + string(msg.row.Provider) + " · press enter to resume"
+	recipe := session.RecipeFor(msg.row, session.ResumeOptions{Dangerous: m.dangerous})
+	status := "converted to " + string(msg.row.Provider) + " · " + recipe.CommandString
 	if msg.kind == mutationBranch {
-		status = "branched " + string(msg.row.Provider) + " session · press enter to resume"
+		status = "branched " + string(msg.row.Provider) + " · " + recipe.CommandString
 	}
 	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
+}
+
+func (m model) applyConversionPreview(msg conversionPreviewMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	if msg.err != nil {
+		m.pendingConvert = nil
+		return m, m.list.NewStatusMessage("preview failed: " + msg.err.Error())
+	}
+	m.pendingConvert = &pendingConversion{
+		rowKey:  rowKey(msg.row),
+		target:  msg.target,
+		options: msg.options,
+		preview: msg.preview,
+	}
+	return m, m.list.NewStatusMessage("preview ready · press x again to write the " + string(msg.target) + " session")
 }
 
 func (m model) startMutation(cmd tea.Cmd, busy, status string) (tea.Model, tea.Cmd) {
@@ -505,7 +553,13 @@ func (m model) startConvert() (tea.Model, tea.Cmd) {
 	if target == "" {
 		return m, m.list.NewStatusMessage("no hand-off target available")
 	}
-	return m.startMutation(m.convertSelected(), "conversion", "converting to "+string(target)+"…")
+	if m.pendingConvert != nil &&
+		m.pendingConvert.rowKey == rowKey(selected.row) &&
+		m.pendingConvert.target == target &&
+		m.pendingConvert.options == m.handoff {
+		return m.startMutation(m.convertRow(selected.row, target, m.handoff), "conversion", "converting to "+string(target)+"…")
+	}
+	return m.startMutation(m.previewConversion(selected.row, target, m.handoff), "preview", "building conversion preview…")
 }
 
 func (m *model) setMode(mode previewMode) {
@@ -529,6 +583,16 @@ func (m *model) reconcileDeleteArm() {
 	}
 	if sel, ok := m.list.SelectedItem().(item); !ok || rowKey(sel.row) != m.deleteArmed {
 		m.deleteArmed = ""
+	}
+}
+
+func (m *model) reconcilePendingConversion() {
+	if m.pendingConvert == nil {
+		return
+	}
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok || rowKey(selected.row) != m.pendingConvert.rowKey {
+		m.pendingConvert = nil
 	}
 }
 
@@ -582,6 +646,7 @@ func (m model) toggleGroup(path string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
+	m.pendingConvert = nil
 	if !providerExists(m.allRows, provider) {
 		return m.list.NewStatusMessage(fmt.Sprintf("no %s sessions found", provider))
 	}
@@ -636,17 +701,14 @@ func (m model) selectResume() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m *model) convertSelected() tea.Cmd {
-	selected, ok := m.list.SelectedItem().(item)
-	if !ok {
-		return nil
+func (m *model) previewConversion(row session.Row, target session.Provider, options session.HandoffOptions) tea.Cmd {
+	return func() tea.Msg {
+		preview, err := session.PreviewConversion(row, target, options)
+		return conversionPreviewMsg{row: row, target: target, options: options, preview: preview, err: err}
 	}
-	row := selected.row
-	target := m.handoffTargetFor(row)
-	if target == "" {
-		return nil
-	}
-	options := m.handoff
+}
+
+func (m *model) convertRow(row session.Row, target session.Provider, options session.HandoffOptions) tea.Cmd {
 	return func() tea.Msg {
 		converted, err := session.Convert(row, target, options)
 		return sessionMutationMsg{kind: mutationConvert, row: converted, err: err}
@@ -891,10 +953,33 @@ func (m model) detailView() string {
 	if m.deleteArmed == rowKey(row) {
 		lines = append(lines, th.deleteBanner.Render("⚠ press delete again to permanently remove this session"))
 	}
+	if pending := m.selectedConversionPreview(row); pending != nil {
+		lines = append(lines,
+			th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s", pending.preview.SourceProvider, pending.preview.TargetProvider),
+			th.label.Render(padLabel("scope"))+fmt.Sprintf("%s · %d turns", pending.preview.Scope, pending.preview.TransferTurns),
+			th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(pending.preview.LastUser), valueW),
+			th.label.Render(padLabel("drops"))+truncateCells(strings.Join(pending.preview.Dropped, ", "), valueW),
+			th.hint.Render("press x again to write · esc cancel · o target · t scope"),
+		)
+		if len(pending.preview.Warnings) > 0 {
+			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
+		}
+		if len(lines) > count {
+			lines = lines[:count]
+		}
+		for i := range lines {
+			lines[i] = truncateCells(lines[i], innerW)
+		}
+		return th.detail.Width(width).Render(strings.Join(lines, "\n"))
+	}
+
+	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
 	lines = append(lines,
 		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
 		th.label.Render(padLabel("session"))+row.ID,
 		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(row.CWD), valueW),
+		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(recipe.StorageLocation), valueW),
+		th.label.Render(padLabel("command"))+truncateCells(recipe.CommandString, valueW),
 		th.label.Render(padLabel("updated"))+localTime(row.LastAt),
 		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(row.FirstUser), valueW),
 		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(bestLast(row)), valueW),
@@ -908,6 +993,13 @@ func (m model) detailView() string {
 		lines[i] = truncateCells(lines[i], innerW)
 	}
 	return th.detail.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func (m model) selectedConversionPreview(row session.Row) *pendingConversion {
+	if m.pendingConvert == nil || m.pendingConvert.rowKey != rowKey(row) {
+		return nil
+	}
+	return m.pendingConvert
 }
 
 func (m model) providerWord(p session.Provider) string {
@@ -947,7 +1039,7 @@ func (m model) detailLineCount() int {
 	case m.height < 28:
 		return 6
 	default:
-		return 8
+		return 10
 	}
 }
 
@@ -987,7 +1079,7 @@ func (m model) emptyView() string {
 	}
 	lines = append(lines,
 		"",
-		th.hint.Render("Start a conversation with codex or claude, then press r to rescan."),
+		th.hint.Render("Start a conversation with a supported agent, then press r to rescan."),
 		th.hint.Render("Press q to quit."),
 	)
 	body := strings.Join(lines, "\n")

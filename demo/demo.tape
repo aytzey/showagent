@@ -11,8 +11,8 @@
 # are never read or shown.
 #
 # Keys used (verify against internal/tui/keys.go before re-recording):
-#   p cycles the preview column, / searches, x converts to the target
-#   agent, enter resumes. Provider filters live on the digit keys 1..9.
+#   p cycles the preview column, / searches, x previews and x again confirms
+#   conversion to the target agent, enter resumes. Provider filters live on 1..9.
 
 Output docs/demo.gif
 
@@ -67,7 +67,9 @@ Sleep 1.5s
 Enter
 Sleep 1.5s
 
-# --- 5. money shot: convert the Codex session to Claude Code ------------------
+# --- 5. money shot: preview, then convert the Codex session to Claude Code ----
+Type "x"
+Sleep 2s
 Type "x"
 Sleep 3.5s
 
