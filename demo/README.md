@@ -10,7 +10,7 @@ binaries, so no real sessions are read and no real agent is launched.
 |---|---|
 | `demo/fixtures/gen.sh` | Fabricates `demo/.home`: 5 Codex + 5 Claude Code + 2 Gemini CLI sessions across 3 fake workspaces (`code/api-server`, `code/webapp`, `dotfiles`), timestamped relative to now. |
 | `demo/bin/codex`, `demo/bin/claude` | Stub CLIs that print a mock "session resumed" screen, so the resume-after-convert beat lands without real agents. |
-| `demo/demo.tape` | The [vhs](https://github.com/charmbracelet/vhs) script: launch, browse, preview cycle, search, convert (`x`), resume, end card. |
+| `demo/demo.tape` | The [vhs](https://github.com/charmbracelet/vhs) script: launch, browse, preview cycle, search, preview+confirm convert (`x`, `x`), resume, end card. |
 | `demo/.home`, `demo/.build` | Generated at record time; gitignored. |
 
 ## Regenerate the GIF
@@ -59,5 +59,5 @@ ffmpeg -y -ss 14 -i docs/demo.gif -frames:v 1 \
 - **Size budget**: target < 3 MB. If the GIF comes out larger, drop the
   tape to `Set Width 1000` / `Set FontSize 18`.
 - **Keybindings**: the tape encodes `/` (search), `p` (preview cycle),
-  `x` (convert / hand off), `enter` (resume). If bindings change in
+  `x` (preview / confirm hand off), `enter` (resume). If bindings change in
   `internal/tui/keys.go`, update the tape before re-recording.

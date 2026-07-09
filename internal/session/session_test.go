@@ -678,3 +678,59 @@ func TestValidateResume(t *testing.T) {
 		t.Fatalf("compound agent err = %v, want 'codex not found in PATH'", err)
 	}
 }
+
+func TestPreviewConversionSummarizesTransferWithoutWriting(t *testing.T) {
+	root := t.TempDir()
+	setEmptyHomes(t, root)
+	sourcePath := filepath.Join(root, "source.jsonl")
+	writeFile(t, sourcePath, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first ask"}]}}
+{"timestamp":"2026-06-01T09:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+{"timestamp":"2026-06-01T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"last ask"}]}}
+`)
+
+	preview, err := PreviewConversion(Row{
+		Provider: ProviderCodex,
+		ID:       "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+		CWD:      "/work/codex",
+		File:     sourcePath,
+	}, ProviderClaude, HandoffOptions{MaxTurns: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.SourceProvider != ProviderCodex || preview.TargetProvider != ProviderClaude {
+		t.Fatalf("unexpected providers: %#v", preview)
+	}
+	if preview.Scope != "last 2" || preview.TransferTurns != 2 || preview.LastUser != "last ask" {
+		t.Fatalf("unexpected transfer summary: %#v", preview)
+	}
+	if preview.SourceLocation != sourcePath {
+		t.Fatalf("source location = %q, want %q", preview.SourceLocation, sourcePath)
+	}
+	if !strings.Contains(strings.Join(preview.Dropped, " "), "tool") {
+		t.Fatalf("preview should explain dropped agent internals: %#v", preview.Dropped)
+	}
+	if _, err := os.Stat(filepath.Join(root, "claude")); !os.IsNotExist(err) {
+		t.Fatalf("dry preview should not create target files, stat err=%v", err)
+	}
+}
+
+func TestRecipeForQuotesCommandAndReportsStorage(t *testing.T) {
+	row := Row{
+		Provider: ProviderClaude,
+		ID:       "session with spaces",
+		CWD:      "/tmp/work space",
+		File:     "/tmp/claude session.jsonl",
+	}
+	recipe := RecipeFor(row, ResumeOptions{Dangerous: true})
+	if recipe.Provider != ProviderClaude || recipe.StorageLocation != row.File {
+		t.Fatalf("unexpected recipe: %#v", recipe)
+	}
+	if !strings.Contains(recipe.CommandString, "--dangerously-skip-permissions") {
+		t.Fatalf("recipe command missing yolo flag: %q", recipe.CommandString)
+	}
+	if !strings.Contains(recipe.CommandString, "'session with spaces'") {
+		t.Fatalf("recipe command did not quote session id: %q", recipe.CommandString)
+	}
+}

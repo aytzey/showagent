@@ -37,7 +37,7 @@ func defaultKeys() keyMap {
 		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
 		Target:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "target")),
-		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "hand off")),
+		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "preview")),
 		Branch:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
 		Delete:   key.NewBinding(key.WithKeys("d", "delete", "backspace"), key.WithHelp("d/del", "delete")),
 		Preview:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "preview")),

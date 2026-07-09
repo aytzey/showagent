@@ -1,5 +1,10 @@
 package session
 
+import (
+	"fmt"
+	"strings"
+)
+
 // ProviderImpl bundles everything showagent needs to support one agent CLI.
 // Adding an agent means implementing this interface in one file and appending
 // it to the registry below; no other dispatch site exists.
@@ -58,6 +63,26 @@ func ProviderOrder() []Provider {
 		order = append(order, impl.Name())
 	}
 	return order
+}
+
+// ParseProvider resolves a CLI/user-supplied provider name against the
+// registry. The returned value is the stable lowercase provider id.
+func ParseProvider(value string) (Provider, error) {
+	for _, impl := range registry {
+		if string(impl.Name()) == value {
+			return impl.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("unsupported provider %q (supported: %s)", value, strings.Join(ProviderNames(), ", "))
+}
+
+// ProviderNames returns the stable lowercase provider ids in registry order.
+func ProviderNames() []string {
+	names := make([]string, 0, len(registry))
+	for _, impl := range registry {
+		names = append(names, string(impl.Name()))
+	}
+	return names
 }
 
 // DisplayName is the human-facing name for provider ("Codex"). Unknown

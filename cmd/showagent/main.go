@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -17,7 +19,7 @@ import (
 // version is stamped by the release build via -ldflags "-X main.version=...".
 var version = "dev"
 
-const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | setup]"
+const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | update | setup]"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -41,6 +43,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runList(args[1:], stdout, stderr)
 	case "resume":
 		return runResume(args[1:], stderr)
+	case "convert":
+		return runConvert(args[1:], stdout, stderr)
+	case "info":
+		return runInfo(args[1:], stdout, stderr)
+	case "update":
+		return runUpdate(args[1:], stdout, stderr)
 	case "setup":
 		if len(args) != 1 {
 			return usageError(stderr, fmt.Sprintf("setup takes no arguments, got %q", args[1]))
@@ -61,6 +69,10 @@ func runDefault(stdout, stderr io.Writer) int {
 		}
 		tui.PrintTable(stdout, terminalWidth(stdout), rows)
 		return 0
+	}
+
+	if code, updated := maybePromptForUpdate(os.Stdin, stderr); updated {
+		return code
 	}
 
 	selection, err := tui.Run()
@@ -152,7 +164,7 @@ func printNoSessions(stderr io.Writer) int {
 		}
 		_, _ = fmt.Fprintln(stderr, line)
 	}
-	_, _ = fmt.Fprintln(stderr, "start a conversation with codex or claude, then run showagent again")
+	_, _ = fmt.Fprintln(stderr, "start a conversation with a supported agent (codex, claude, gemini, opencode, jcode), then run showagent again")
 	return 1
 }
 
@@ -182,6 +194,109 @@ func runResume(args []string, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func runConvert(args []string, stdout, stderr io.Writer) int {
+	id := ""
+	targetName := ""
+	dryRun := false
+	handoff := session.HandoffOptions{}
+	resumeOptions := session.ResumeOptions{}
+
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "--to":
+			index++
+			if index >= len(args) {
+				return usageError(stderr, "convert --to needs a provider")
+			}
+			targetName = args[index]
+		case "--dry-run":
+			dryRun = true
+		case "--scope":
+			index++
+			if index >= len(args) {
+				return usageError(stderr, "convert --scope needs a value")
+			}
+			parsed, err := parseHandoffScope(args[index])
+			if err != nil {
+				return usageError(stderr, err.Error())
+			}
+			handoff = parsed
+		case "--yolo":
+			resumeOptions.Dangerous = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return usageError(stderr, fmt.Sprintf("unknown convert argument %q", arg))
+			}
+			if id != "" {
+				return usageError(stderr, fmt.Sprintf("unexpected convert argument %q", arg))
+			}
+			id = arg
+		}
+	}
+	if id == "" {
+		return usageError(stderr, "convert needs a session id or 'latest'")
+	}
+	if targetName == "" {
+		return usageError(stderr, "convert needs --to <provider>")
+	}
+	target, err := session.ParseProvider(targetName)
+	if err != nil {
+		return usageError(stderr, err.Error())
+	}
+
+	row, err := resolveSession(session.Discover(), id)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	preview, err := session.PreviewConversion(row, target, handoff)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	if dryRun {
+		printConversionPreview(stdout, preview)
+		return 0
+	}
+
+	converted, err := session.Convert(row, target, handoff)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n\n", row.Provider, row.ID, converted.Provider, converted.ID)
+	printResumeRecipe(stdout, session.RecipeFor(converted, resumeOptions))
+	return 0
+}
+
+func runInfo(args []string, stdout, stderr io.Writer) int {
+	id := ""
+	options := session.ResumeOptions{}
+	for _, arg := range args {
+		switch {
+		case arg == "--yolo":
+			options.Dangerous = true
+		case strings.HasPrefix(arg, "-"):
+			return usageError(stderr, fmt.Sprintf("unknown info argument %q", arg))
+		case id == "":
+			id = arg
+		default:
+			return usageError(stderr, fmt.Sprintf("unexpected info argument %q", arg))
+		}
+	}
+	if id == "" {
+		return usageError(stderr, "info needs a session id or 'latest'")
+	}
+	row, err := resolveSession(session.Discover(), id)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	printResumeRecipe(stdout, session.RecipeFor(row, options))
 	return 0
 }
 
@@ -219,6 +334,67 @@ func runSetup(stdout, stderr io.Writer) int {
 	return 0
 }
 
+func parseHandoffScope(value string) (session.HandoffOptions, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "all" {
+		return session.HandoffOptions{}, nil
+	}
+	switch {
+	case strings.HasPrefix(value, "last:"):
+		value = strings.TrimPrefix(value, "last:")
+	case strings.HasPrefix(value, "last-"):
+		value = strings.TrimPrefix(value, "last-")
+	default:
+		return session.HandoffOptions{}, fmt.Errorf("scope must be 'all' or 'last:<turns>'")
+	}
+	turns, err := strconv.Atoi(value)
+	if err != nil || turns <= 0 {
+		return session.HandoffOptions{}, fmt.Errorf("scope must be 'all' or 'last:<turns>'")
+	}
+	return session.HandoffOptions{MaxTurns: turns}, nil
+}
+
+func printConversionPreview(w io.Writer, preview session.ConversionPreview) {
+	_, _ = fmt.Fprintf(w, "conversion preview\n")
+	_, _ = fmt.Fprintf(w, "  source:    %s %s\n", preview.SourceProvider, preview.SourceID)
+	_, _ = fmt.Fprintf(w, "  read from: %s\n", preview.SourceLocation)
+	_, _ = fmt.Fprintf(w, "  target:    %s\n", preview.TargetProvider)
+	_, _ = fmt.Fprintf(w, "  workspace: %s\n", preview.Workspace)
+	_, _ = fmt.Fprintf(w, "  scope:     %s (%d transferable turns)\n", preview.Scope, preview.TransferTurns)
+	if preview.LastUser != "" {
+		_, _ = fmt.Fprintf(w, "  last user: %s\n", preview.LastUser)
+	}
+	_, _ = fmt.Fprintln(w, "  dropped:")
+	for _, dropped := range preview.Dropped {
+		_, _ = fmt.Fprintf(w, "    - %s\n", dropped)
+	}
+	if len(preview.Warnings) > 0 {
+		_, _ = fmt.Fprintln(w, "  warnings:")
+		for _, warning := range preview.Warnings {
+			_, _ = fmt.Fprintf(w, "    - %s\n", warning)
+		}
+	}
+}
+
+func printResumeRecipe(w io.Writer, recipe session.ResumeRecipe) {
+	_, _ = fmt.Fprintf(w, "resume recipe\n")
+	_, _ = fmt.Fprintf(w, "  provider: %s\n", recipe.Provider)
+	_, _ = fmt.Fprintf(w, "  session:  %s\n", recipe.ID)
+	_, _ = fmt.Fprintf(w, "  command:  %s\n", recipe.CommandString)
+	_, _ = fmt.Fprintf(w, "  cwd:      %s\n", emptyFallback(recipe.CWD))
+	_, _ = fmt.Fprintf(w, "  storage:  %s\n", recipe.StorageLocation)
+	if recipe.Note != "" {
+		_, _ = fmt.Fprintf(w, "  note:     %s\n", recipe.Note)
+	}
+}
+
+func emptyFallback(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(none)"
+	}
+	return value
+}
+
 func usageError(stderr io.Writer, message string) int {
 	_, _ = fmt.Fprintf(stderr, "showagent: %s\n%s\nrun 'showagent --help' for details\n", message, usageLine)
 	return 2
@@ -232,6 +408,11 @@ Usage:
   showagent list [--json]            print sessions (plain table, or JSON with --json)
   showagent resume <id|latest> [--yolo]
                                      resume a session directly, without the picker
+  showagent convert <id|latest> --to <provider> [--scope all|last:50] [--dry-run]
+                                     preview or write a native session for another agent
+  showagent info <id|latest> [--yolo]
+                                     print the exact resume command and storage location
+  showagent update                   install the latest GitHub release
   showagent setup                    install the compound-engineering plugin for supported agents
 
 Flags:
@@ -239,10 +420,13 @@ Flags:
   -v, --version                      print version
   --json                             (list) emit a JSON array of sessions
   --yolo                             (resume) skip the agent's permission prompts
+  --to                               (convert) target provider: %s
+  --scope                            (convert) all, or last:N / last-N
+  --dry-run                          (convert) preview without writing anything
 
 Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope
-  x hand off to another agent · n branch a copy · C compound · d/del delete
+  x preview/confirm hand-off · n branch a copy · C compound · d/del delete
   p cycle preview (first/latest/both) · 1..9 toggle providers · r rescan
   ? full help · esc clear search/overlay · q quit
 
@@ -255,7 +439,7 @@ Session locations:
   gemini    ~/.gemini/tmp                 (override with GEMINI_CLI_HOME)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
-`)
+`, strings.Join(session.ProviderNames(), ", "))
 }
 
 // versionString prefers the release-stamped version and falls back to Go

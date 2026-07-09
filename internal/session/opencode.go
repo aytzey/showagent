@@ -450,11 +450,21 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 // decodeOpenCodeJSON unmarshals the first JSON payload in CLI output,
 // tolerating banner or notice lines the CLI may print before it.
 func decodeOpenCodeJSON(output []byte, value any) error {
-	index := bytes.IndexAny(output, "[{")
-	if index < 0 {
-		return errors.New("no JSON payload in opencode output")
+	offset := 0
+	for _, line := range bytes.SplitAfter(output, []byte{'\n'}) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			offset += len(line)
+			continue
+		}
+		leading := len(line) - len(bytes.TrimLeft(line, " \t\r\n"))
+		lineOffset := offset + leading
+		offset += len(line)
+		if trimmed[0] == '[' || trimmed[0] == '{' {
+			return json.Unmarshal(output[lineOffset:], value)
+		}
 	}
-	return json.Unmarshal(output[index:], value)
+	return errors.New("no JSON payload in opencode output")
 }
 
 // existingDir returns cwd when it is a real directory, and "" otherwise, for

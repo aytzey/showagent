@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +67,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json"} {
+		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -252,6 +254,124 @@ func TestResumeWithoutIDExitsTwo(t *testing.T) {
 	}
 }
 
+func TestConvertDryRunPrintsPreviewWithoutWriting(t *testing.T) {
+	setFixtureHomes(t)
+	code, stdout, stderr := runCLI(t, "convert", codexID, "--to", "claude", "--scope", "last:1", "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	for _, want := range []string{
+		"conversion preview",
+		"source:    codex " + codexID,
+		"target:    claude",
+		"scope:     last 1 (1 transferable turns)",
+		"last user: last codex message",
+		"tool calls and tool results",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("preview missing %q:\n%s", want, stdout)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_HOME"), "projects", "*", "*.jsonl")); len(matches) != 1 {
+		t.Fatalf("dry-run should not create a converted claude file, matches=%v", matches)
+	}
+}
+
+func TestInfoPrintsResumeRecipe(t *testing.T) {
+	setFixtureHomes(t)
+	code, stdout, stderr := runCLI(t, "info", claudeID)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	for _, want := range []string{
+		"resume recipe",
+		"provider: claude",
+		"session:  " + claudeID,
+		"command:  claude --resume " + claudeID,
+		"storage:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("recipe missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestParseHandoffScope(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int
+		ok    bool
+	}{
+		{"all", 0, true},
+		{"", 0, true},
+		{"last:3", 3, true},
+		{"last-4", 4, true},
+		{"3", 0, false},
+		{"last:3x", 0, false},
+		{"last:0", 0, false},
+		{"last:-1", 0, false},
+	}
+
+	for _, tt := range tests {
+		got, err := parseHandoffScope(tt.value)
+		if tt.ok {
+			if err != nil {
+				t.Fatalf("parseHandoffScope(%q) err = %v, want nil", tt.value, err)
+			}
+			if got.MaxTurns != tt.want {
+				t.Fatalf("parseHandoffScope(%q).MaxTurns = %d, want %d", tt.value, got.MaxTurns, tt.want)
+			}
+			continue
+		}
+		if err == nil {
+			t.Fatalf("parseHandoffScope(%q) err = nil, want error", tt.value)
+		}
+	}
+}
+
+func TestUpdateCheckReportsNewerRelease(t *testing.T) {
+	savedURL := latestReleaseURL
+	savedVersion := version
+	defer func() {
+		latestReleaseURL = savedURL
+		version = savedVersion
+	}()
+
+	version = "v0.7.0"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v0.8.0"}`))
+	}))
+	defer server.Close()
+	latestReleaseURL = server.URL
+
+	code, stdout, stderr := runCLI(t, "update", "--check")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "showagent v0.8.0 is available (current v0.7.0)") {
+		t.Fatalf("unexpected update check output:\n%s", stdout)
+	}
+}
+
+func TestIsNewerVersion(t *testing.T) {
+	tests := []struct {
+		candidate string
+		current   string
+		want      bool
+	}{
+		{"v0.8.0", "v0.7.0", true},
+		{"v0.7.1", "v0.7.1", false},
+		{"v1.0.0", "v0.9.9", true},
+		{"not-a-version", "v0.7.0", false},
+		{"v0.8.0", "dev", true},
+	}
+	for _, tt := range tests {
+		if got := isNewerVersion(tt.candidate, tt.current); got != tt.want {
+			t.Fatalf("isNewerVersion(%q, %q) = %v, want %v", tt.candidate, tt.current, got, tt.want)
+		}
+	}
+}
+
 func TestTerminalWidthFallsBackForNonTerminal(t *testing.T) {
 	var buf bytes.Buffer
 	if got := terminalWidth(&buf); got != 120 {
@@ -285,7 +405,7 @@ func TestListEmptyExplainsScannedDirs(t *testing.T) {
 		filepath.Join(root, "empty-codex", "sessions"),
 		filepath.Join(root, "empty-claude", "projects"),
 		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME",
-		"start a conversation with codex or claude",
+		"start a conversation with a supported agent",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)

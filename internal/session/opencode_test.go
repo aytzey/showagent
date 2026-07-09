@@ -392,6 +392,17 @@ func TestConvertToOpenCodeNeedsWorkspace(t *testing.T) {
 	}
 }
 
+func TestDecodeOpenCodeJSONIgnoresBracketedBannerText(t *testing.T) {
+	var entries []opencodeSessionEntry
+	output := []byte("notice: [beta] opencode db output follows\n[{\"id\":\"ses_1\",\"created\":1,\"updated\":2}]\n")
+	if err := decodeOpenCodeJSON(output, &entries); err != nil {
+		t.Fatalf("decodeOpenCodeJSON failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "ses_1" {
+		t.Fatalf("entries = %#v, want ses_1", entries)
+	}
+}
+
 func TestOpenCodeIDShape(t *testing.T) {
 	at := time.UnixMilli(1751504400000)
 	ascending, err := opencodeID("msg", false, at)

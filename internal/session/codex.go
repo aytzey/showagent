@@ -2,12 +2,14 @@ package session
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // codexProvider adapts the Codex CLI's session store (rollout-*.jsonl files
@@ -46,11 +48,17 @@ func (p codexProvider) CompoundArgs(row Row, options ResumeOptions, prompt strin
 // Delete shells out to the codex CLI so codex can keep its own bookkeeping
 // (history metadata) consistent instead of us unlinking the rollout file.
 func (codexProvider) Delete(row Row) error {
-	command := exec.Command("codex", "delete", "--force", row.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	command := exec.CommandContext(ctx, "codex", "delete", "--force", row.ID)
 	if info, err := os.Stat(row.CWD); err == nil && info.IsDir() {
 		command.Dir = row.CWD
 	}
 	if output, err := command.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("codex delete timed out after 30s: %w", ctx.Err())
+		}
 		return fmt.Errorf("codex delete failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil

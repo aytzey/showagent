@@ -337,16 +337,16 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 
 	updated, cmd := newModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
 	if cmd == nil {
-		t.Fatal("expected convert command")
+		t.Fatal("expected preview command")
 	}
 	busy := asModel(t, updated)
-	if busy.busy != "conversion" {
-		t.Fatalf("busy = %q, want conversion", busy.busy)
+	if busy.busy != "preview" {
+		t.Fatalf("busy = %q, want preview", busy.busy)
 	}
 
 	stillBusy, _ := busy.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
-	if got := asModel(t, stillBusy); got.busy != "conversion" {
-		t.Fatalf("busy after second action = %q, want conversion", got.busy)
+	if got := asModel(t, stillBusy); got.busy != "preview" {
+		t.Fatalf("busy after second action = %q, want preview", got.busy)
 	}
 
 	notResumed, _ := asModel(t, stillBusy).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
@@ -354,7 +354,34 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 		t.Fatal("enter selected a session while mutation was busy")
 	}
 
-	done, _ := asModel(t, notResumed).Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
+	previewed, _ := asModel(t, notResumed).Update(conversionPreviewMsg{
+		row:     row,
+		target:  session.ProviderCodex,
+		options: session.HandoffOptions{},
+		preview: session.ConversionPreview{
+			SourceProvider: session.ProviderClaude,
+			SourceID:       row.ID,
+			TargetProvider: session.ProviderCodex,
+			Scope:          "all",
+			TransferTurns:  1,
+			Dropped:        []string{"tool calls"},
+		},
+	})
+	pm := asModel(t, previewed)
+	if pm.busy != "" || pm.pendingConvert == nil {
+		t.Fatalf("preview did not arm conversion confirmation: busy=%q pending=%#v", pm.busy, pm.pendingConvert)
+	}
+
+	converting, cmd := pm.Update(tea.KeyPressMsg(tea.Key{Code: 'x'}))
+	if cmd == nil {
+		t.Fatal("second x should start conversion")
+	}
+	cm := asModel(t, converting)
+	if cm.busy != "conversion" {
+		t.Fatalf("busy after confirm = %q, want conversion", cm.busy)
+	}
+
+	done, _ := cm.Update(sessionMutationMsg{kind: mutationConvert, row: newRow})
 	got := asModel(t, done)
 	if got.busy != "" {
 		t.Fatalf("busy after mutation = %q, want empty", got.busy)
@@ -362,6 +389,48 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	selected, ok := got.list.SelectedItem().(item)
 	if !ok || selected.row.ID != "new" {
 		t.Fatalf("selected row after mutation = %#v, want new", got.list.SelectedItem())
+	}
+}
+
+func TestConversionPreviewRendersAndEscCancels(t *testing.T) {
+	withFakeCommands(t, "claude")
+	row := session.Row{
+		Provider:  session.ProviderCodex,
+		ID:        "source",
+		LastAt:    time.Now(),
+		CWD:       "/p/a",
+		File:      "/tmp/source.jsonl",
+		FirstUser: "hello",
+	}
+	m := sizedModel([]session.Row{row})
+	previewed, _ := m.Update(conversionPreviewMsg{
+		row:     row,
+		target:  session.ProviderClaude,
+		options: session.HandoffOptions{MaxTurns: 20},
+		preview: session.ConversionPreview{
+			SourceProvider: session.ProviderCodex,
+			SourceID:       "source",
+			TargetProvider: session.ProviderClaude,
+			Scope:          "last 20",
+			TransferTurns:  3,
+			LastUser:       "fix the bug",
+			Dropped:        []string{"tool calls", "runtime state"},
+		},
+	})
+	got := asModel(t, previewed)
+	if got.pendingConvert == nil {
+		t.Fatal("preview message did not set pending conversion")
+	}
+	detail := got.detailView()
+	for _, want := range []string{"codex", "claude", "last 20", "fix the bug", "press x again"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q:\n%s", want, detail)
+		}
+	}
+
+	cancelled, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if asModel(t, cancelled).pendingConvert != nil {
+		t.Fatal("esc did not clear conversion preview")
 	}
 }
 
