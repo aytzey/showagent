@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.aytzey/showagent -->
 <h1 align="center">showagent</h1>
 
 <p align="center"><b>showagent</b> — every AI coding session on your machine, in one TUI.<br>
@@ -85,6 +86,7 @@ showagent resume latest    # reopen the most recent session, any agent
 showagent convert latest --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
 showagent info latest      # exact resume command + storage location
+showagent mcp              # serve session history to MCP-capable agents (stdio)
 showagent update           # install the latest GitHub release
 showagent --help           # full CLI help
 ```
@@ -144,6 +146,41 @@ working directory, and storage location for a session.
 Exit codes: `0` success, `1` error (including "no sessions found"), `2` usage.
 When stdout is not a terminal, plain `showagent` prints the `list` table, so
 pipes just work.
+
+## Use it from inside your agent (MCP)
+
+`showagent mcp` runs a stdio MCP server, so the agent you are talking to can
+search every past coding session on your machine — from **any** agent — and
+pull one in as context or convert it to continue right there. Ask Claude Code
+"have I solved this rate-limit bug before?" and it can find the Codex session
+where you did, read the transcript, and hand you the command to resume it —
+or rewrite it as a native Claude Code session and keep going. Your session
+history stops being per-tool memory and becomes shared memory.
+
+```sh
+# Claude Code
+claude mcp add showagent -- showagent mcp
+
+# Codex (~/.codex/config.toml)
+[mcp_servers.showagent]
+command = "showagent"
+args = ["mcp"]
+```
+
+Tools:
+
+| Tool | What it does |
+|---|---|
+| `list_sessions` | Search sessions across all agents — filter by provider, workspace substring, or free text over workspace + first/last user message (default 25, max 100 results) |
+| `get_transcript` | Read a session's user/assistant turns; `max_turns` keeps the most recent N (default 50) so long sessions don't flood context |
+| `branch_session` | Fork a full local copy of a session, same agent; returns the new id, file, and resume command |
+| `convert_session` | Rewrite a session into another agent's native format; returns the new id, file, and resume command |
+| `resume_command` | The exact shell command (and cwd) that resumes a session — returned as a string, **never executed** |
+
+The MCP surface is deliberately non-destructive: there is **no delete tool**,
+and the server never executes an agent CLI. Deleting sessions stays exclusive
+to the TUI, where it takes two key presses with a human watching. Branch and
+convert only ever write new files — originals are never modified.
 
 ## How it compares
 

@@ -67,7 +67,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run"} {
+		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -111,6 +111,16 @@ func TestUnknownArgumentExitsTwo(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "usage:") || !strings.Contains(stderr, "showagent --help") {
 		t.Fatalf("stderr missing usage hint:\n%s", stderr)
+	}
+}
+
+func TestMCPRejectsArguments(t *testing.T) {
+	code, _, stderr := runCLI(t, "mcp", "--http")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "mcp takes no arguments") {
+		t.Fatalf("stderr missing mcp usage hint:\n%s", stderr)
 	}
 }
 

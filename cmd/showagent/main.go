@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 
+	"github.com/aytzey/showagent/internal/mcpserver"
 	"github.com/aytzey/showagent/internal/session"
 	"github.com/aytzey/showagent/internal/tui"
 )
@@ -19,7 +22,7 @@ import (
 // version is stamped by the release build via -ldflags "-X main.version=...".
 var version = "dev"
 
-const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | update | setup]"
+const usageLine = "usage: showagent [list [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | mcp | update | setup]"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -47,6 +50,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConvert(args[1:], stdout, stderr)
 	case "info":
 		return runInfo(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], stderr)
 	case "update":
 		return runUpdate(args[1:], stdout, stderr)
 	case "setup":
@@ -318,6 +323,22 @@ func resolveSession(rows []session.Row, id string) (session.Row, error) {
 	return session.Row{}, fmt.Errorf("session %q not found; run 'showagent list' to see session ids", id)
 }
 
+// runMCP serves the session store to MCP clients over stdio until the client
+// disconnects or the process is interrupted. It deliberately offers no delete
+// tool and never executes an agent CLI; see internal/mcpserver.
+func runMCP(args []string, stderr io.Writer) int {
+	if len(args) != 0 {
+		return usageError(stderr, fmt.Sprintf("mcp takes no arguments, got %q", args[0]))
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := mcpserver.Run(ctx, versionString()); err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func runSetup(stdout, stderr io.Writer) int {
 	results, err := session.EnsureCompoundEngineeringPlugin()
 	if err != nil {
@@ -412,6 +433,8 @@ Usage:
                                      preview or write a native session for another agent
   showagent info <id|latest> [--yolo]
                                      print the exact resume command and storage location
+  showagent mcp                      serve session history to MCP clients over stdio
+                                     (search, transcripts, branch, convert; no delete)
   showagent update                   install the latest GitHub release
   showagent setup                    install the compound-engineering plugin for supported agents
 
