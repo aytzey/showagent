@@ -14,9 +14,8 @@ import (
 // directory. If the chosen agent differs from the session's own provider, the
 // session is first converted to that provider so the agent has full context.
 //
-// The shared learnings directory is the common knowledge pool: both Codex and
-// Claude read it before working and append to it when done, so what either tool
-// learns compounds for the other.
+// The shared learnings directory is the common knowledge pool: every supported
+// compound-capable agent reads it before working and appends to it when done.
 func Compound(row Row, agent Provider, options ResumeOptions) error {
 	dir, err := ensureLearningsDir(row.CWD)
 	if err != nil {
@@ -31,7 +30,7 @@ func Compound(row Row, agent Provider, options ResumeOptions) error {
 		}
 		target = converted
 	}
-	return launch(target.resumeCWD(), target.CompoundCommand(options, compoundPrompt(dir)))
+	return launch(target.resumeCWD(), target.CompoundCommand(options, compoundPrompt(dir, agent)))
 }
 
 // CompoundCommand is the resume command for the session with an initial prompt
@@ -55,8 +54,8 @@ func learningsBaseDir() string {
 
 // ProjectLearningsDir reports the per-project, cross-tool learnings directory
 // for a workspace, without creating it. Each project gets its own subdirectory
-// so learnings never bleed between projects, while Codex and Claude share the
-// same one within a project.
+// so learnings never bleed between projects, while all supported agents share
+// the same one within a project.
 func ProjectLearningsDir(cwd string) string {
 	key, ok := projectLearningsKey(cwd)
 	if !ok {
@@ -137,11 +136,11 @@ func projectLearningsKey(cwd string) (string, bool) {
 	return fmt.Sprintf("%s-%x", label, hash[:6]), true
 }
 
-func compoundPrompt(dir string) string {
+func compoundPrompt(dir string, agent Provider) string {
 	return strings.Join([]string{
 		"Run a compound-engineering pass on the work from this session.",
 		"",
-		"This project's shared learnings directory (used by BOTH Codex and Claude for THIS project) is the path inside the fence below:",
+		"This project's shared learnings directory (used by every supported coding agent for THIS project) is the path inside the fence below:",
 		"```",
 		dir,
 		"```",
@@ -150,9 +149,9 @@ func compoundPrompt(dir string) string {
 		"Steps:",
 		"1. Read the existing notes in that directory (the *.md files) so you build on prior learnings and avoid duplicating them.",
 		"2. Identify the durable, reusable learnings from this session: the problem, the root cause, the fix, key decisions, and any gotchas or patterns worth keeping.",
-		"3. Write a concise markdown note into that directory named <date>-<slug>.md with short frontmatter (title, date, tags, tool: codex or claude) followed by the learning. If a closely related note already exists, update it instead of duplicating it.",
+		fmt.Sprintf("3. Write a concise markdown note into that directory named <date>-<slug>.md with short frontmatter (title, date, tags, tool: %s) followed by the learning. If a closely related note already exists, update it instead of duplicating it.", agent),
 		"4. Keep it factual and reusable, and never write secrets or tokens.",
 		"",
-		"This follows the compound-engineering method: each documented solution compounds the shared knowledge, so the next time either tool hits the same thing it is minutes, not hours.",
+		"This follows the compound-engineering method: each documented solution compounds the shared knowledge, so the next supported agent to hit the same thing needs minutes, not hours.",
 	}, "\n")
 }

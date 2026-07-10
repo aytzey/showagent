@@ -1046,8 +1046,8 @@ func (m model) resumeHint(row session.Row) string {
 	if row.Provider == session.ProviderClaude {
 		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts · y → normal", row.Provider)
 	}
-	if row.Provider == session.ProviderJCode {
-		return fmt.Sprintf("enter → resume with %s · yolo: no extra jcode flag · y → normal", row.Provider)
+	if row.Provider == session.ProviderJCode || row.Provider == session.ProviderPi {
+		return fmt.Sprintf("enter → resume with %s · yolo: no extra %s flag · y → normal", row.Provider, row.Provider)
 	}
 	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox · y → normal", row.Provider)
 }

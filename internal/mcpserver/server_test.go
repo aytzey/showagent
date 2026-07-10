@@ -33,6 +33,8 @@ func setFixtureHomes(t *testing.T) (codexHome, claudeHome string) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexRateLimitID+".jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexRateLimitID+`","cwd":"/work/api-server"}}
@@ -427,6 +429,29 @@ func TestNoDeleteToolExposed(t *testing.T) {
 		}
 		if strings.Contains(tool.Name, "delete") || strings.Contains(tool.Name, "remove") {
 			t.Fatalf("destructive tool %q must not be exposed over MCP", tool.Name)
+		}
+	}
+}
+
+func TestProviderToolSchemasAdvertiseRegistry(t *testing.T) {
+	setFixtureHomes(t)
+	cs := newTestSession(t)
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name != "list_sessions" && tool.Name != "convert_session" {
+			continue
+		}
+		data, err := json.Marshal(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, provider := range session.ProviderNames() {
+			if !strings.Contains(string(data), provider) {
+				t.Fatalf("%s schema does not advertise provider %q: %s", tool.Name, provider, data)
+			}
 		}
 	}
 }
