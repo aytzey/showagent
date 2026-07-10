@@ -66,7 +66,7 @@ func New(version string, options ...Options) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_sessions",
-		Description: "List local AI coding-agent sessions (Codex, Claude Code, Gemini CLI, OpenCode, jcode) newest first. " +
+		Description: "List local AI coding-agent sessions (Codex, Claude Code, Gemini CLI, OpenCode, jcode, Pi) newest first. " +
 			"Filter by provider, workspace path substring, or free-text query over workspace and first/last user message. " +
 			"Use this to find past work on a topic before pulling a session in with get_transcript or convert_session.",
 		Annotations: readOnly,
@@ -89,7 +89,7 @@ func New(version string, options ...Options) *mcp.Server {
 	if !opts.ReadOnly {
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "branch_session",
-			Description: "Fork a session: write a full local copy as a new session of the same agent, leaving the original untouched. " +
+			Description: "Fork a session: write its transferable user/assistant turns as a new native session of the same agent, leaving the original untouched. " +
 				"Returns the new session id, its file, and the exact shell command that resumes the copy (never executed by this server).",
 			Annotations: additive,
 		}, branchSession)
@@ -127,7 +127,7 @@ func Run(ctx context.Context, version string, options ...Options) error {
 }
 
 type listSessionsArgs struct {
-	Provider  string `json:"provider,omitempty" jsonschema:"only return sessions of this agent; one of the provider ids reported in results (codex, claude, gemini, opencode, jcode)"`
+	Provider  string `json:"provider,omitempty" jsonschema:"only return sessions of this agent; one of the provider ids reported in results (codex, claude, gemini, opencode, jcode, pi)"`
 	Workspace string `json:"workspace,omitempty" jsonschema:"case-insensitive substring the session's workspace path must contain"`
 	Query     string `json:"query,omitempty" jsonschema:"case-insensitive free text matched against the workspace path and the first/last user message"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"maximum sessions to return, newest first (default 25, max 100)"`
@@ -305,7 +305,7 @@ func branchSession(_ context.Context, _ *mcp.CallToolRequest, args sessionIDArgs
 
 type convertSessionArgs struct {
 	ID     string `json:"id" jsonschema:"session id from list_sessions, or 'latest' for the most recent session"`
-	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, opencode, or jcode"`
+	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, opencode, jcode, or pi"`
 }
 
 func convertSession(_ context.Context, _ *mcp.CallToolRequest, args convertSessionArgs) (*mcp.CallToolResult, newSessionResult, error) {

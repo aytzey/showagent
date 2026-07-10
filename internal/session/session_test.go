@@ -16,6 +16,8 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/work/codex"}}
@@ -796,6 +798,13 @@ func TestCompoundCommand(t *testing.T) {
 	if strings.Join(gotJ, "\x1f") != strings.Join(wantJ, "\x1f") {
 		t.Fatalf("jcode compound = %v, want %v", gotJ, wantJ)
 	}
+
+	pi := Row{Provider: ProviderPi, ID: "pid", File: "/tmp/pi.jsonl"}
+	gotPi := pi.CompoundCommand(ResumeOptions{Dangerous: true}, prompt)
+	wantPi := []string{"pi", "--session", "/tmp/pi.jsonl", prompt}
+	if strings.Join(gotPi, "\x1f") != strings.Join(wantPi, "\x1f") {
+		t.Fatalf("pi compound = %v, want %v", gotPi, wantPi)
+	}
 }
 
 func TestProjectLearningsDirIsPerProject(t *testing.T) {
@@ -820,8 +829,8 @@ func TestProjectLearningsDirIsPerProject(t *testing.T) {
 }
 
 func TestCompoundPromptMentionsSharedDir(t *testing.T) {
-	p := compoundPrompt("/tmp/base/-home-u-proj-a")
-	for _, want := range []string{"/tmp/base/-home-u-proj-a", "Codex", "Claude", "compound-engineering"} {
+	p := compoundPrompt("/tmp/base/-home-u-proj-a", ProviderPi)
+	for _, want := range []string{"/tmp/base/-home-u-proj-a", "tool: pi", "supported coding agent", "compound-engineering"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("compound prompt missing %q", want)
 		}
@@ -894,11 +903,13 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 5 {
-		t.Fatalf("targets = %d, want 5", len(targets))
+	if len(targets) != 6 {
+		t.Fatalf("targets = %d, want 6", len(targets))
 	}
 	want := map[Provider]struct{ path, env string }{
 		ProviderCodex:    {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
@@ -906,6 +917,7 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 		ProviderJCode:    {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
 		ProviderOpenCode: {filepath.Join(root, "empty-opencode"), "OPENCODE_DATA_HOME"},
 		ProviderGemini:   {filepath.Join(root, "empty-gemini", ".gemini", "tmp"), "GEMINI_CLI_HOME"},
+		ProviderPi:       {filepath.Join(root, "pi", "sessions"), "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
 	}
 	for _, target := range targets {
 		expected, ok := want[target.Provider]

@@ -621,6 +621,17 @@ func TestScopeCycling(t *testing.T) {
 	}
 }
 
+func TestPiDangerousResumeHintDoesNotClaimUnsupportedBypass(t *testing.T) {
+	withFakeCommands(t, "pi")
+	row := session.Row{Provider: session.ProviderPi, ID: "pi-session", LastAt: time.Now(), File: "/tmp/pi.jsonl"}
+	m := sizedModel([]session.Row{row})
+	m.dangerous = true
+	hint := m.resumeHint(row)
+	if !strings.Contains(hint, "no extra pi flag") || strings.Contains(hint, "bypasses approvals") {
+		t.Fatalf("Pi dangerous hint = %q", hint)
+	}
+}
+
 func TestHandoffTargetCycling(t *testing.T) {
 	// Only providers whose CLI is on PATH qualify as hand-off targets.
 	withFakeCommands(t, "claude", "jcode")
@@ -1119,13 +1130,15 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	m := sizedModel(nil)
 	view := m.emptyView()
 	for _, want := range []string{
 		filepath.Join(root, "codex", "sessions"),
 		filepath.Join(root, "claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "GEMINI_CLI_HOME",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
 		"press r to rescan",
 	} {
 		if !strings.Contains(view, want) {

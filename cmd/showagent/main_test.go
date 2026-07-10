@@ -31,6 +31,8 @@ func setFixtureHomes(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	writeFixture(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/codex"}}
@@ -67,7 +69,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "--yolo", "--json", "--dry-run", "--read-only", "--allow-secrets"} {
+		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--dry-run", "--read-only", "--allow-secrets"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -210,6 +212,8 @@ func TestListJSONEmptyIsValidArray(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	code, stdout, _ := runCLI(t, "list", "--json")
 	if code != 0 {
@@ -528,6 +532,8 @@ func TestListEmptyExplainsScannedDirs(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
 	code, _, stderr := runCLI(t, "list")
 	if code != 1 {
@@ -537,7 +543,7 @@ func TestListEmptyExplainsScannedDirs(t *testing.T) {
 		"no supported local sessions found",
 		filepath.Join(root, "empty-codex", "sessions"),
 		filepath.Join(root, "empty-claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
 		"start a conversation with a supported agent",
 	} {
 		if !strings.Contains(stderr, want) {

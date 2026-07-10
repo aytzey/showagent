@@ -3,7 +3,7 @@
 
 <p align="center"><b>showagent</b> — every AI coding session on your machine, in one TUI.<br>
 Browse, search, resume, branch — and <em>convert</em> a conversation from one agent to another.<br>
-Codex · Claude Code · Gemini CLI · OpenCode · jcode</p>
+Codex · Claude Code · Gemini CLI · OpenCode · jcode · Pi</p>
 
 <p align="center">
 <a href="https://github.com/aytzey/showagent/actions/workflows/ci.yml"><img src="https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -29,7 +29,8 @@ branch + convert across agents.
 - **One list for everything** — sessions from every agent, grouped by
   workspace, fuzzy-searchable, newest first.
 - **Resume or branch anywhere** — reopen a session in its own CLI, or fork a
-  local copy to try a different direction.
+  local native-format copy of its transferable conversation to try a different
+  direction.
 - **Convert between agents** — rewrite a session into another agent's native
   format so that agent's own resume just works. Originals are never modified;
   conversions are written atomically.
@@ -45,6 +46,7 @@ branch + convert across agents.
 | Gemini CLI | `gemini` | `~/.gemini/tmp/<project>/chats/` | `GEMINI_CLI_HOME` | ✅ | ✅ |
 | OpenCode | `opencode` | `opencode.db`, via the `opencode` CLI | `OPENCODE_DATA_HOME` | ✅ | ✅ |
 | jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
+| Pi | `pi` | `~/.pi/agent/sessions/**/*.jsonl` | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` | ✅ | ✅ |
 
 Notes:
 
@@ -58,6 +60,15 @@ Notes:
   its CLI because imports go through OpenCode itself.
 - jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
   `jcode` binary is on `PATH`, showagent never shows it.
+- Pi sessions are versioned JSONL trees. showagent follows Pi's active leaf
+  through `parentId` links, so abandoned branches are not previewed or moved
+  into another agent. Converted sessions use Pi's native v3 format, verified
+  against `@earendil-works/pi-coding-agent` 0.80.6 source plus its export and
+  RPC session loader.
+- A project-local Pi `sessionDir` is visible when showagent is launched from
+  that project. Like Pi itself, showagent cannot discover arbitrary custom
+  session roots belonging to other projects unless one is selected globally
+  with `PI_CODING_AGENT_SESSION_DIR`.
 - Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
   released but **experimental**: resume runs the agent as a child process
   instead of replacing showagent.
@@ -110,7 +121,7 @@ showagent --help           # full CLI help
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
 | `x` | Preview convert; press `x` again to write and select the new session |
 | `n` | Branch: create a full local copy of the session |
-| `y` | Toggle yolo resume (skip the agent's permission prompts) |
+| `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `d`, `del`, `backspace` | Delete the session — second press confirms, moving disarms |
 | `r` | Rescan session stores (keeps cursor, search, and filters) |
@@ -225,8 +236,9 @@ that did not create the session converts it first, so it has full context.
 
 `showagent setup` installs the companion
 [compound-engineering plugin](https://github.com/EveryInc/compound-engineering-plugin)
-into the Codex and Claude Code CLIs found on the machine. It is idempotent and
-only installs what is missing.
+into the Codex, Claude Code, and Pi CLIs found on the machine. For Pi it also
+installs the `pi-subagents` and `pi-ask-user` companion packages. The command
+is idempotent and only installs what is missing.
 
 ## FAQ
 
@@ -237,7 +249,7 @@ provider, so MCP transcripts redact common secrets by default; keep that
 boundary in mind before registering the server. showagent's own HTTP client is
 used only by the optional release updater and startup update check (disable
 with `SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
-Codex/Claude CLIs, which may download the requested plugin. Message previews
+Codex/Claude/Pi CLIs, which may download the requested plugin. Message previews
 also redact password-like strings and API keys before rendering (covered by
 tests in [`internal/session/session_test.go`](internal/session/session_test.go)).
 Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
@@ -257,15 +269,16 @@ second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
 the same preview. Conversion intentionally does **not** copy tool-call
 internals, approval history, encrypted reasoning blobs, or provider
 attachments: those are private to the source agent and would not replay
-correctly anyway. `t` / `--scope` trims the scope to the latest N turns before
-converting.
+correctly anyway. Branching uses the same safe user/assistant-turn projection;
+it does not byte-clone provider-private runtime metadata. `t` / `--scope` trims
+the scope to the latest N turns before converting.
 
 **What does delete actually do?**
 Codex sessions are deleted through `codex delete --force`; OpenCode through
 `opencode session delete` (which cascades inside its database). Claude Code
 removes the JSONL plus its matching index entry, jcode removes the JSON plus
-backup/journal sidecars, and Gemini removes its session file. Delete always
-takes two presses, and moving the cursor disarms it.
+backup/journal sidecars, and Gemini and Pi remove their session files. Delete
+always takes two presses, and moving the cursor disarms it.
 
 **Windows?**
 Binaries are released and the whole TUI works, but resume semantics are

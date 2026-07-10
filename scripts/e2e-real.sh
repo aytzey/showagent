@@ -6,11 +6,12 @@
 # with `claude -p` and `codex exec` inside throwaway workspaces, then uses
 # showagent's own Branch/Convert/Delete code paths on those rows, and verifies
 # every artifact with the target CLI itself (claude --resume, codex exec
-# resume, gemini --list-sessions, opencode export, jcode replay --export). Costs
+# resume, gemini --list-sessions, opencode export, jcode replay --export,
+# pi --export). Costs
 # a few small model calls. Only sessions whose cwd is one of the throwaway
 # workspaces are ever touched or deleted.
 #
-# Usage: scripts/e2e-real.sh   (requires: go, claude; optional: codex, gemini, opencode, jcode)
+# Usage: scripts/e2e-real.sh   (requires: go, claude; optional: codex, gemini, opencode, jcode, pi)
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -96,6 +97,28 @@ for a in json.load(open(sys.argv[1])):
 EOF
 }
 
+manifest_file() { # provider id -> file
+  python3 - "$MANIFEST" "$1" "$2" <<'EOF'
+import json, sys
+for artifact in json.load(open(sys.argv[1])):
+    if artifact["provider"] == sys.argv[2] and artifact["id"] == sys.argv[3]:
+        print(artifact["file"])
+        break
+EOF
+}
+
+pi_export_contains() { # html marker
+  python3 - "$1" "$2" <<'EOF'
+import base64, re, sys
+html = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'<script id="session-data"[^>]*>([^<]+)</script>', html)
+if not match:
+    raise SystemExit(1)
+decoded = base64.b64decode(match.group(1)).decode("utf-8")
+raise SystemExit(0 if sys.argv[2] in decoded else 1)
+EOF
+}
+
 echo "== verifying artifacts with the real CLIs"
 while IFS=$'\t' read -r id cwd; do
   [ -z "$id" ] && continue
@@ -163,6 +186,32 @@ if have jcode; then
       bad "jcode replay --export $id: $(echo "$out" | tail -3)"
     fi
   done < <(manifest_rows converted jcode)
+fi
+
+if have pi; then
+  while IFS=$'\t' read -r id cwd; do
+    [ -z "$id" ] && continue
+    file="$(manifest_file pi "$id")"
+    export_path="$WS_ROOT/pi-$id.html"
+    if pi --export "$file" "$export_path" >/dev/null 2>&1 && pi_export_contains "$export_path" "E2E-SEED"; then
+      ok "pi --export validates $id with the converted transcript"
+    else
+      bad "pi --export could not validate $id"
+    fi
+    state="$(printf '{"id":"showagent-state","type":"get_state"}\n' | (cd "$cwd" && pi --mode rpc --session "$file") 2>/dev/null)"
+    if python3 -c 'import json, sys
+expected = sys.argv[1]
+records = []
+for line in sys.stdin:
+    try: records.append(json.loads(line))
+    except json.JSONDecodeError: pass
+ok = any(r.get("id") == "showagent-state" and r.get("success") is True and r.get("data", {}).get("sessionId") == expected and r.get("data", {}).get("messageCount", 0) > 0 for r in records)
+raise SystemExit(0 if ok else 1)' "$id" <<<"$state"; then
+      ok "pi RPC resumes $id and reports its loaded transcript"
+    else
+      bad "pi RPC could not resume $id"
+    fi
+  done < <(manifest_rows converted pi)
 fi
 
 echo "== cleanup via showagent Delete"

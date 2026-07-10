@@ -64,6 +64,8 @@ func setEmptyHomes(t *testing.T, root string) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 }
 
 func TestDiscoverFindsOpenCodeSessions(t *testing.T) {
@@ -174,7 +176,7 @@ func TestOpenCodeResumeAndCompoundCommands(t *testing.T) {
 
 func TestCompoundAgentsFollowRegistryOrder(t *testing.T) {
 	agents := CompoundAgents()
-	want := []Provider{ProviderCodex, ProviderClaude, ProviderJCode, ProviderOpenCode, ProviderGemini}
+	want := []Provider{ProviderCodex, ProviderClaude, ProviderJCode, ProviderOpenCode, ProviderGemini, ProviderPi}
 	if len(agents) != len(want) {
 		t.Fatalf("agents = %v, want %v", agents, want)
 	}

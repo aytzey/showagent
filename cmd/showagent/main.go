@@ -169,7 +169,7 @@ func printNoSessions(stderr io.Writer) int {
 		}
 		_, _ = fmt.Fprintln(stderr, line)
 	}
-	_, _ = fmt.Fprintln(stderr, "start a conversation with a supported agent (codex, claude, gemini, opencode, jcode), then run showagent again")
+	_, _ = fmt.Fprintln(stderr, "start a conversation with a supported agent (codex, claude, gemini, opencode, jcode, pi), then run showagent again")
 	return 1
 }
 
@@ -430,7 +430,7 @@ func usageError(stderr io.Writer, message string) int {
 }
 
 func printHelp(w io.Writer) {
-	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, and jcode sessions.
+	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, jcode, and Pi sessions.
 
 Usage:
   showagent                          open the interactive session picker
@@ -451,7 +451,8 @@ Flags:
   -h, --help                         show this help
   -v, --version                      print version
   --json                             (list) emit a JSON array of sessions
-  --yolo                             (resume) skip the agent's permission prompts
+  --yolo                             (resume) request the provider's permission bypass
+                                     (jcode and Pi add no extra flag)
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
   --dry-run                          (convert) preview without writing anything
@@ -471,6 +472,8 @@ Session locations:
   opencode  ~/.local/share/opencode       (override with OPENCODE_DATA_HOME;
                                            read via the opencode CLI)
   gemini    ~/.gemini/tmp                 (override with GEMINI_CLI_HOME)
+  pi        ~/.pi/agent/sessions          (override with PI_CODING_AGENT_DIR or
+                                           PI_CODING_AGENT_SESSION_DIR)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
 `, strings.Join(session.ProviderNames(), ", "))

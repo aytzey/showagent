@@ -3,7 +3,7 @@
 package session
 
 // Real-CLI end-to-end helpers, driven by scripts/e2e-real.sh. These run
-// against the REAL agent homes (~/.claude, ~/.codex, ~/.gemini, opencode's
+// against the REAL agent homes (~/.claude, ~/.codex, ~/.gemini, ~/.pi, opencode's
 // data dir) and only ever touch sessions whose cwd is one of the workspaces
 // passed in SHOWAGENT_E2E_WS_LIST. Never enabled in CI: the build tag plus
 // the env guard keep `go test ./...` unaffected.
@@ -81,7 +81,7 @@ func TestRealCLIMutate(t *testing.T) {
 		})
 	}
 
-	targets := []Provider{ProviderCodex, ProviderClaude, ProviderGemini, ProviderOpenCode, ProviderJCode}
+	targets := []Provider{ProviderCodex, ProviderClaude, ProviderGemini, ProviderOpenCode, ProviderJCode, ProviderPi}
 	for _, row := range rows {
 		branched, err := Branch(row)
 		if err != nil {
