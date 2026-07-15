@@ -93,7 +93,14 @@ type codexMessagePayload struct {
 }
 
 func discoverCodex(codexHome string) []Row {
-	return parseRowsBounded(jsonlPaths(filepath.Join(codexHome, "sessions")), parseCodex)
+	// Multica keeps daemon-managed Codex conversations in per-agent/issue
+	// stores beside the user's ordinary sessions so native Codex does not index
+	// thousands of task threads. Showagent is the explicit cross-agent history
+	// browser, so include both roots here and make those local task contexts
+	// available for branch/convert/transcript handoff as well.
+	paths := jsonlPaths(filepath.Join(codexHome, "sessions"))
+	paths = append(paths, jsonlPaths(filepath.Join(codexHome, "multica-sessions"))...)
+	return parseRowsBounded(paths, parseCodex)
 }
 
 func parseCodex(path string) (Row, bool) {

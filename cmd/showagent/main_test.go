@@ -69,7 +69,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--dry-run", "--read-only", "--allow-secrets"} {
+		for _, want := range []string{"Usage:", "list", "transcript", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--max-turns", "--dry-run", "--read-only", "--allow-secrets"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -205,6 +205,20 @@ func TestListJSONShape(t *testing.T) {
 	}
 }
 
+func TestListJSONPreviewIsBoundedAndRedacted(t *testing.T) {
+	input := "api_key=super-secret " + strings.Repeat("界", maxListPreviewRunes)
+	got := listJSONPreview(input)
+	if strings.Contains(got, "super-secret") {
+		t.Fatalf("preview leaked a secret: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("long preview was not truncated: %q", got)
+	}
+	if count := len([]rune(got)); count != maxListPreviewRunes+1 {
+		t.Fatalf("preview rune count = %d, want %d", count, maxListPreviewRunes+1)
+	}
+}
+
 func TestListJSONEmptyIsValidArray(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
@@ -225,6 +239,63 @@ func TestListJSONEmptyIsValidArray(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("expected empty array, got %d items", len(items))
+	}
+}
+
+func TestTranscriptJSONRedactsAndTruncates(t *testing.T) {
+	setFixtureHomes(t)
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString("\n" + `{"timestamp":"2026-06-01T09:03:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"password=hunter2\u001b[31m\u202e"}]}}` + "\n")
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("append fixture: write=%v close=%v", writeErr, closeErr)
+	}
+
+	code, stdout, stderr := runCLI(t, "transcript", codexID, "--max-turns", "1", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	var result transcriptResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if result.ID != codexID || result.Provider != "codex" || result.Workspace != "/work/codex" {
+		t.Fatalf("unexpected metadata: %#v", result)
+	}
+	if result.TotalTurns != 3 || !result.Truncated || !result.SecretsRedacted || len(result.Turns) != 1 {
+		t.Fatalf("unexpected transcript bounds: %#v", result)
+	}
+	if strings.Contains(result.Turns[0].Text, "hunter2") || !strings.Contains(strings.ToLower(result.Turns[0].Text), "[redacted]") {
+		t.Fatalf("secret was not redacted: %#v", result.Turns[0])
+	}
+	if strings.Contains(result.Turns[0].Text, "\x1b") || strings.Contains(result.Turns[0].Text, "\u202e") {
+		t.Fatalf("terminal controls were not removed: %#v", result.Turns[0])
+	}
+	if !strings.Contains(result.Warning, "untrusted") {
+		t.Fatalf("missing trust-boundary warning: %#v", result)
+	}
+}
+
+func TestTranscriptRejectsInvalidArguments(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"transcript"}, want: "needs a session id"},
+		{args: []string{"transcript", codexID, "--max-turns"}, want: "positive integer"},
+		{args: []string{"transcript", codexID, "--max-turns", "0"}, want: "positive integer"},
+		{args: []string{"transcript", codexID, "--wat"}, want: "unknown transcript argument"},
+		{args: []string{"transcript", codexID, claudeID}, want: "unexpected transcript argument"},
+	}
+	for _, tt := range tests {
+		code, _, stderr := runCLI(t, tt.args...)
+		if code != 2 || !strings.Contains(stderr, tt.want) {
+			t.Fatalf("run(%v) = %d, %q; want exit 2 containing %q", tt.args, code, stderr, tt.want)
+		}
 	}
 }
 
