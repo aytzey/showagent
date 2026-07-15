@@ -2,15 +2,58 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.aytzey/showagent",
   "title": "showagent",
-  "description": "Every AI coding session on your machine, in one TUI and over MCP: browse, search, resume, branch, and convert sessions between Codex, Claude Code, Gemini CLI, OpenCode, jcode, and Pi.",
-  "repository": { "url": "https://github.com/aytzey/showagent", "source": "github" },
+  "description": "Search, resume and convert AI coding sessions (Claude Code, Codex, Gemini, OpenCode, Pi) over MCP.",
+  "repository": {
+    "url": "https://github.com/aytzey/showagent",
+    "source": "github"
+  },
   "websiteUrl": "https://github.com/aytzey/showagent#install",
   "version": "0.11.0",
   "packages": [
-    { "registryType": "mcpb", "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_amd64.mcpb",   "version": "0.11.0", "fileSha256": "13f02ab865b08ac3f9460dcca909a212e5e8ccae8314d1100987253cf088ed62", "transport": { "type": "stdio" } },
-    { "registryType": "mcpb", "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_arm64.mcpb",   "version": "0.11.0", "fileSha256": "0d39c29fb7008b82b2ed2d4c78f51364251a5748c67cc911e0e0965dd556f153", "transport": { "type": "stdio" } },
-    { "registryType": "mcpb", "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_amd64.mcpb",  "version": "0.11.0", "fileSha256": "1260859664d26b3038610f6011eadcf3d390de3eb55273dffa901c6fae602bcb", "transport": { "type": "stdio" } },
-    { "registryType": "mcpb", "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_arm64.mcpb",  "version": "0.11.0", "fileSha256": "e21bc7d34c221faf85b53c721b922c74e099cd8a4420e18581a166c626bc552f", "transport": { "type": "stdio" } },
-    { "registryType": "mcpb", "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_windows_amd64.mcpb", "version": "0.11.0", "fileSha256": "19e3096c650c5118d234e1f4485799c89417ef0d40052817b6cda6573d698546", "transport": { "type": "stdio" } }
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_amd64.mcpb",
+      "version": "0.11.0",
+      "fileSha256": "13f02ab865b08ac3f9460dcca909a212e5e8ccae8314d1100987253cf088ed62",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_arm64.mcpb",
+      "version": "0.11.0",
+      "fileSha256": "0d39c29fb7008b82b2ed2d4c78f51364251a5748c67cc911e0e0965dd556f153",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_amd64.mcpb",
+      "version": "0.11.0",
+      "fileSha256": "1260859664d26b3038610f6011eadcf3d390de3eb55273dffa901c6fae602bcb",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_arm64.mcpb",
+      "version": "0.11.0",
+      "fileSha256": "e21bc7d34c221faf85b53c721b922c74e099cd8a4420e18581a166c626bc552f",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_windows_amd64.mcpb",
+      "version": "0.11.0",
+      "fileSha256": "19e3096c650c5118d234e1f4485799c89417ef0d40052817b6cda6573d698546",
+      "transport": {
+        "type": "stdio"
+      }
+    }
   ]
 }
