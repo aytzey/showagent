@@ -104,6 +104,25 @@ func TestTranscriptPreservesCodeFormattingAndValues(t *testing.T) {
 	}
 }
 
+func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "multica-sessions", "default", "agent-1", "issue-1", "2026", "07", "15", "rollout-2026-07-15T12-00-00-11111111-2222-3333-4444-555555555555.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"timestamp":"2026-07-15T12:00:00Z","type":"session_meta","payload":{"id":"11111111-2222-3333-4444-555555555555","cwd":"/work/multica"}}
+{"timestamp":"2026-07-15T12:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue the local issue"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := discoverCodex(home)
+	if len(rows) != 1 || rows[0].ID != "11111111-2222-3333-4444-555555555555" || rows[0].CWD != "/work/multica" {
+		t.Fatalf("unexpected Multica session discovery: %#v", rows)
+	}
+}
+
 func TestJCodeIsOptional(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))

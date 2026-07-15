@@ -337,6 +337,13 @@ func RedactSecrets(value string) string {
 	return jwtSecretPattern.ReplaceAllString(value, "[redacted-jwt]")
 }
 
+// RedactTranscriptText prepares local handoff text for a non-interactive file:
+// preserve code layout, remove terminal/bidirectional controls, then redact
+// common credential shapes.
+func RedactTranscriptText(value string) string {
+	return RedactSecrets(stripTerminalControls(value, true))
+}
+
 func stripTerminalControls(value string, preserveLayout bool) string {
 	value = ansi.Strip(value)
 	return strings.Map(func(r rune) rune {
