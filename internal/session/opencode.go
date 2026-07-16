@@ -463,7 +463,8 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 
 	var stdout cappedBuffer
 	stdout.max = maxOpenCodeOutput
-	var stderr bytes.Buffer
+	var stderr cappedBuffer
+	stderr.max = maxOpenCodeError
 	var drain sync.WaitGroup
 	drain.Add(2)
 	go func() {
