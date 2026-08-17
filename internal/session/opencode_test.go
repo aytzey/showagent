@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -451,5 +452,43 @@ func TestOpenCodeIDShape(t *testing.T) {
 	}
 	if descending[:16] <= descendingLater[:16] {
 		t.Fatalf("descending ids out of order: %q then %q", descending, descendingLater)
+	}
+}
+
+// TestRunOpenCodeDrainsLargeOutput is the regression test for issue #10:
+// the previous runOpenCode used command.Stdout = &buf; command.Run(), which
+// silently truncated outputs that crossed the Linux pipe-buffer threshold
+// (~64 KiB) because os/exec's internal copy goroutine could lose the tail
+// of the pipe after the child exited. The fix drains stdout via StdoutPipe
+// + io.Copy and waits on both pipes before returning. The fake `opencode`
+// writes 96 KiB ending in a marker, comfortably above the pipe threshold;
+// a partial drain drops the marker.
+func TestRunOpenCodeDrainsLargeOutput(t *testing.T) {
+	const tail = "<<<SHOWAGENT_TAIL>>>"
+	pad := strings.Repeat("a", 96<<10)
+
+	bin := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+export PATH=/usr/bin:/bin
+if [ "$1" = "db" ]; then
+  head -c %d /dev/zero | tr '\0' 'a'
+  printf '%%s' %q
+fi
+`, len(pad), tail)
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	out, err := runOpenCode("", "db", "--format", "json", "select 1")
+	if err != nil {
+		t.Fatalf("runOpenCode failed: %v", err)
+	}
+	want := len(pad) + len(tail)
+	if len(out) != want {
+		t.Fatalf("captured %d bytes, want %d", len(out), want)
+	}
+	if !strings.HasSuffix(string(out), tail) {
+		t.Fatalf("tail marker missing; last 32 bytes: %q", string(out[len(out)-32:]))
 	}
 }

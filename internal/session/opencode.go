@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -431,6 +433,12 @@ func opencodeID(prefix string, descending bool, at time.Time) (string, error) {
 // runOpenCode invokes the opencode CLI, returning its stdout. dir is the
 // working directory ("" inherits showagent's). Every call is bounded by
 // opencodeTimeout so a wedged CLI cannot hang the picker.
+//
+// stdout and stderr are drained in their own goroutines via explicit pipes,
+// because discovery outputs can run into multiple megabytes (each session's
+// first/last user-message previews are included in the JSON). Setting
+// command.Stdout/Stderr to an io.Writer and letting exec.Run() drain the
+// pipes itself loses the tail of large outputs — see issue #10.
 func runOpenCode(dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeTimeout)
 	defer cancel()
@@ -439,16 +447,46 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 	if dir != "" {
 		command.Dir = dir
 	}
-	stdout := cappedBuffer{max: maxOpenCodeOutput}
-	stderr := cappedBuffer{max: maxOpenCodeError}
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("opencode %s stdout pipe: %w", strings.Join(args, " "), err)
+	}
+	stderrPipe, err := command.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("opencode %s stderr pipe: %w", strings.Join(args, " "), err)
+	}
+
+	if err := command.Start(); err != nil {
+		return nil, fmt.Errorf("opencode %s: %w", strings.Join(args, " "), err)
+	}
+
+	var stdout cappedBuffer
+	stdout.max = maxOpenCodeOutput
+	var stderr cappedBuffer
+	stderr.max = maxOpenCodeError
+	var drain sync.WaitGroup
+	drain.Add(2)
+	go func() {
+		defer drain.Done()
+		_, _ = io.Copy(&stdout, stdoutPipe)
+	}()
+	go func() {
+		defer drain.Done()
+		_, _ = io.Copy(&stderr, stderrPipe)
+	}()
+	drain.Wait()
+	waitErr := command.Wait()
+
+	if stdout.Len() > maxOpenCodeOutput {
+		return nil, fmt.Errorf("opencode %s: command output exceeds %d bytes", strings.Join(args, " "), maxOpenCodeOutput)
+	}
+	if waitErr != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
-		return nil, fmt.Errorf("opencode %s: %w: %s", strings.Join(args, " "), err, detail)
+		return nil, fmt.Errorf("opencode %s: %w: %s", strings.Join(args, " "), waitErr, detail)
 	}
 	return stdout.Bytes(), nil
 }
