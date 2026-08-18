@@ -133,6 +133,11 @@ func ValidateResume(row Row) error {
 // ValidateCompound is ValidateResume for a compound pass: the chosen agent's
 // CLI must be on PATH and the session workspace must be a real directory.
 func ValidateCompound(row Row, agent Provider) error {
+	if agent == row.Provider {
+		if err := ValidateNativeActions(row); err != nil {
+			return err
+		}
+	}
 	return validateLaunch(agent, row.resumeCWD())
 }
 

@@ -148,11 +148,9 @@ func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
 
 func TestJCodeIsOptional(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
-	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	setEmptyHomes(t, root)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	writeFile(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"), `{
@@ -170,11 +168,9 @@ func TestJCodeIsOptional(t *testing.T) {
 
 func TestDiscoverFindsJCodeSessions(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
-	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	setEmptyHomes(t, root)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	withFakeCommand(t, "jcode")
 
 	writeJCodeFixture(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"))
@@ -195,11 +191,9 @@ func TestDiscoverFindsJCodeSessions(t *testing.T) {
 func TestClaudeSubagentsAreIgnored(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "session", "subagents", "agent-a.jsonl"), `
 {"type":"user","message":{"role":"user","content":"subagent"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"}
@@ -213,11 +207,9 @@ func TestClaudeSubagentsAreIgnored(t *testing.T) {
 func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "cccccccc-1111-2222-3333-dddddddddddd.jsonl"), `
 {"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat text</local-command-caveat>"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
@@ -244,11 +236,9 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	writeFile(t, filepath.Join(claudeHome, "projects", claudeProjectDir(project), sessionID+".jsonl"), `
@@ -275,11 +265,9 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	projectDir := claudeProjectDir(project)
@@ -302,11 +290,9 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 func TestClaudeDoesNotGuessWorkspaceFromLossyProjectSlug(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	// The bucket could mean /tmp/my-project or /tmp/my/project. With no cwd
@@ -355,11 +341,10 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	setEmptyHomes(t, root)
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "22", "rollout-2026-06-22T09-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-22T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/home/aytug"}}
@@ -1059,6 +1044,20 @@ func TestValidateResume(t *testing.T) {
 
 	if err := ValidateCompound(Row{Provider: ProviderClaude, ID: "id", CWD: workspace}, ProviderCodex); err == nil || !strings.Contains(err.Error(), "codex not found in PATH") {
 		t.Fatalf("compound agent err = %v, want 'codex not found in PATH'", err)
+	}
+}
+
+func TestCompoundRejectsSameProviderHandoffOnly(t *testing.T) {
+	row := Row{Provider: ProviderCodex, ID: "multica-session", CWD: t.TempDir(), HandoffOnly: true}
+	for name, action := range map[string]func() error{
+		"validate": func() error { return ValidateCompound(row, ProviderCodex) },
+		"run":      func() error { return Compound(row, ProviderCodex, ResumeOptions{}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := action(); err == nil || !strings.Contains(err.Error(), "handoff-only") {
+				t.Fatalf("%s error = %v, want handoff-only rejection", name, err)
+			}
+		})
 	}
 }
 
