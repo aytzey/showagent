@@ -22,7 +22,7 @@ func (jcodeProvider) DisplayName() string { return "JCode" }
 func (jcodeProvider) CommandName() string { return "jcode" }
 func (jcodeProvider) Home() string        { return defaultJCodeHome() }
 
-func (p jcodeProvider) ScanTarget() ScanTarget {
+func (p jcodeProvider) ScanTargets() []ScanTarget {
 	target := ScanTarget{
 		Provider: ProviderJCode,
 		Path:     filepath.Join(p.Home(), "sessions"),
@@ -31,7 +31,7 @@ func (p jcodeProvider) ScanTarget() ScanTarget {
 	if !JCodeAvailable() {
 		target.Note = "skipped: jcode CLI not installed"
 	}
-	return target
+	return []ScanTarget{target}
 }
 
 func (p jcodeProvider) Discover() []Row {

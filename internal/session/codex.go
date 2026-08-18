@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// codexProvider adapts the Codex CLI's session store (rollout-*.jsonl files
-// under ~/.codex/sessions) to the provider registry.
+// codexProvider adapts the Codex CLI's rollout-*.jsonl session stores to the
+// provider registry.
 type codexProvider struct{}
 
 func (codexProvider) Name() Provider      { return ProviderCodex }
@@ -21,12 +21,8 @@ func (codexProvider) DisplayName() string { return "Codex" }
 func (codexProvider) CommandName() string { return "codex" }
 func (codexProvider) Home() string        { return defaultCodexHome() }
 
-func (p codexProvider) ScanTarget() ScanTarget {
-	return ScanTarget{
-		Provider: ProviderCodex,
-		Path:     filepath.Join(p.Home(), "sessions"),
-		EnvVar:   "CODEX_HOME",
-	}
+func (p codexProvider) ScanTargets() []ScanTarget {
+	return codexScanTargets(p.Home())
 }
 
 func (p codexProvider) Discover() []Row {
@@ -78,8 +74,11 @@ type codexLine struct {
 }
 
 type codexSessionMeta struct {
-	ID  string `json:"id"`
-	CWD string `json:"cwd"`
+	ID             string          `json:"id"`
+	CWD            string          `json:"cwd"`
+	Source         json.RawMessage `json:"source"`
+	ThreadSource   string          `json:"thread_source"`
+	ParentThreadID string          `json:"parent_thread_id"`
 }
 
 type codexTurnContext struct {
@@ -93,7 +92,30 @@ type codexMessagePayload struct {
 }
 
 func discoverCodex(codexHome string) []Row {
-	return parseRowsBounded(jsonlPaths(filepath.Join(codexHome, "sessions")), parseCodex)
+	// Multica keeps daemon-managed Codex conversations in per-agent/issue
+	// stores beside the user's ordinary sessions so native Codex does not index
+	// thousands of task threads. Showagent is the explicit cross-agent history
+	// browser, so include both roots here and make those local task contexts
+	// available for branch/convert/transcript handoff as well.
+	var rows []Row
+	multicaRoot := filepath.Join(codexHome, "multica-sessions")
+	for _, target := range codexScanTargets(codexHome) {
+		discovered := parseRowsBounded(jsonlPaths(target.Path), parseCodex)
+		if target.Path == multicaRoot {
+			for index := range discovered {
+				discovered[index].HandoffOnly = true
+			}
+		}
+		rows = append(rows, discovered...)
+	}
+	return rows
+}
+
+func codexScanTargets(codexHome string) []ScanTarget {
+	return []ScanTarget{
+		{Provider: ProviderCodex, Path: filepath.Join(codexHome, "sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderCodex, Path: filepath.Join(codexHome, "multica-sessions"), EnvVar: "CODEX_HOME"},
+	}
 }
 
 func parseCodex(path string) (Row, bool) {
@@ -159,6 +181,9 @@ func scanCodexStart(path string) (string, string, string) {
 		case "session_meta":
 			var meta codexSessionMeta
 			if json.Unmarshal(record.Payload, &meta) == nil {
+				if codexMetaIsSubagent(meta) {
+					return "", "", ""
+				}
 				metaSeen = true
 				if meta.ID != "" {
 					id = meta.ID
@@ -187,6 +212,16 @@ func scanCodexStart(path string) (string, string, string) {
 	}
 
 	return id, cwd, firstUser
+}
+
+func codexMetaIsSubagent(meta codexSessionMeta) bool {
+	if meta.ParentThreadID != "" || meta.ThreadSource == "subagent" {
+		return true
+	}
+	var source struct {
+		Subagent *json.RawMessage `json:"subagent"`
+	}
+	return json.Unmarshal(meta.Source, &source) == nil && source.Subagent != nil
 }
 
 type codexTail struct {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -264,8 +265,8 @@ func TestGetTranscriptRedactsSecretsUnlessExplicitlyIncluded(t *testing.T) {
 	const id = "dddddddd-1111-2222-3333-eeeeeeeeeeee"
 	googleLikeKey := "AI" + "za1234567890abcdefghijklmnop"
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "04", "rollout-"+id+".jsonl"), `
-{"timestamp":"2026-06-04T09:00:00Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/secrets"}}
-{"timestamp":"2026-06-04T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"password hunter2\napi_key=`+googleLikeKey+`"}]}}
+{"timestamp":"2026-06-04T09:00:00Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/API_KEY=workspace-secret\u001b[31m\u202e"}}
+{"timestamp":"2026-06-04T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"password hunter2\napi_key=`+googleLikeKey+`\u001b[31m\u202e"}]}}
 `)
 	cs := newTestSession(t)
 
@@ -273,11 +274,17 @@ func TestGetTranscriptRedactsSecretsUnlessExplicitlyIncluded(t *testing.T) {
 	if !redacted.SecretsRedacted || strings.Contains(redacted.Turns[0].Text, "hunter2") || strings.Contains(redacted.Turns[0].Text, "AIza") {
 		t.Fatalf("default transcript leaked secrets: %#v", redacted)
 	}
+	if strings.Contains(redacted.Workspace, "workspace-secret") || strings.ContainsAny(redacted.Workspace+redacted.Turns[0].Text, "\x1b\u202e") {
+		t.Fatalf("default transcript retained workspace secret or controls: %#v", redacted)
+	}
 
 	verbatimCS := newTestSession(t, Options{AllowSecrets: true})
 	verbatim := callTool[transcriptResult](t, verbatimCS, "get_transcript", map[string]any{"id": id})
 	if verbatim.SecretsRedacted || !strings.Contains(verbatim.Turns[0].Text, "hunter2") || !strings.Contains(verbatim.Turns[0].Text, "AIza") {
 		t.Fatalf("explicit verbatim transcript did not preserve values: %#v", verbatim)
+	}
+	if verbatim.Workspace != "/work/API_KEY=workspace-secret\x1b[31m\u202e" {
+		t.Fatalf("explicit verbatim workspace = %q, want authored value", verbatim.Workspace)
 	}
 	if !strings.Contains(verbatim.Turns[0].Text, "\n") {
 		t.Fatalf("transcript lost formatting: %q", verbatim.Turns[0].Text)
@@ -400,6 +407,34 @@ func TestResumeCommandReturnsCommandWithoutExecuting(t *testing.T) {
 	}
 	if result.File == "" {
 		t.Fatalf("resume_command should report where the session is stored")
+	}
+}
+
+func TestResumeCommandTreatsMulticaAsHandoffOnly(t *testing.T) {
+	codexHome, _ := setFixtureHomes(t)
+	const multicaID = "eeeeeeee-1111-2222-3333-ffffffffffff"
+	writeFile(t, filepath.Join(codexHome, "multica-sessions", "agent", "issue", "rollout-"+multicaID+".jsonl"), `
+{"timestamp":"2026-06-04T09:00:00Z","type":"session_meta","payload":{"id":"`+multicaID+`","cwd":"/work/multica"}}
+{"timestamp":"2026-06-04T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"handoff this task"}]}}
+`)
+	cs := newTestSession(t)
+
+	latest := callTool[resumeCommandResult](t, cs, "resume_command", map[string]any{"id": "latest"})
+	if latest.ID != claudeWebhookID {
+		t.Fatalf("latest resumable id = %q, want %q", latest.ID, claudeWebhookID)
+	}
+	text := callToolExpectError(t, cs, "resume_command", map[string]any{"id": multicaID})
+	if !strings.Contains(text, "handoff-only") {
+		t.Fatalf("explicit Multica resume error = %q, want handoff-only rejection", text)
+	}
+
+	listed := callTool[listSessionsResult](t, cs, "list_sessions", nil)
+	if !slices.Contains(sessionIDs(listed), multicaID) {
+		t.Fatalf("Multica session disappeared from list_sessions: %v", sessionIDs(listed))
+	}
+	transcript := callTool[transcriptResult](t, cs, "get_transcript", map[string]any{"id": multicaID})
+	if transcript.ID != multicaID || transcript.TotalTurns != 1 {
+		t.Fatalf("Multica transcript = %#v, want visible handoff source", transcript)
 	}
 }
 

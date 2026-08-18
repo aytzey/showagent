@@ -69,7 +69,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "resume", "convert", "info", "mcp", "update", "setup", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--dry-run", "--read-only", "--allow-secrets"} {
+		for _, want := range []string{"Usage:", "list", "transcript", "resume", "convert", "info", "mcp", "update", "setup", "~/.codex/multica-sessions", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--max-turns", "--dry-run", "--read-only", "--allow-secrets"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}
@@ -228,15 +228,126 @@ func TestListJSONEmptyIsValidArray(t *testing.T) {
 	}
 }
 
+func TestTranscriptJSONRedactsAndTruncates(t *testing.T) {
+	setFixtureHomes(t)
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString("\n" + `{"timestamp":"2026-06-01T09:03:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"password=hunter2\u001b[31m\u202e"}]}}` + "\n")
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("append fixture: write=%v close=%v", writeErr, closeErr)
+	}
+
+	code, stdout, stderr := runCLI(t, "transcript", codexID, "--max-turns", "1", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	var result transcriptResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if result.ID != codexID || result.Provider != "codex" || result.Workspace != "/work/codex" {
+		t.Fatalf("unexpected metadata: %#v", result)
+	}
+	if result.TotalTurns != 3 || !result.Truncated || !result.SecretsRedacted || len(result.Turns) != 1 {
+		t.Fatalf("unexpected transcript bounds: %#v", result)
+	}
+	if strings.Contains(result.Turns[0].Text, "hunter2") || !strings.Contains(strings.ToLower(result.Turns[0].Text), "[redacted]") {
+		t.Fatalf("secret was not redacted: %#v", result.Turns[0])
+	}
+	if strings.Contains(result.Turns[0].Text, "\x1b") || strings.Contains(result.Turns[0].Text, "\u202e") {
+		t.Fatalf("terminal controls were not removed: %#v", result.Turns[0])
+	}
+	if !strings.Contains(result.Warning, "untrusted") {
+		t.Fatalf("missing trust-boundary warning: %#v", result)
+	}
+}
+
+func TestTranscriptJSONRedactsWorkspace(t *testing.T) {
+	setFixtureHomes(t)
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl")
+	writeFixture(t, path, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/api_key=workspace-secret\u001b[31m\u202e"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}
+`)
+
+	code, stdout, stderr := runCLI(t, "transcript", codexID, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	var result transcriptResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if strings.Contains(result.Workspace, "workspace-secret") || !strings.Contains(strings.ToLower(result.Workspace), "[redacted]") {
+		t.Fatalf("workspace secret was not redacted: %q", result.Workspace)
+	}
+	if strings.ContainsAny(result.Workspace, "\x1b\u202e") {
+		t.Fatalf("workspace controls were not removed: %q", result.Workspace)
+	}
+}
+
+func TestTranscriptJSONEnforcesHardTurnLimit(t *testing.T) {
+	setFixtureHomes(t)
+	const totalTurns = maxTranscriptTurns + 25
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl")
+	writeFixture(t, path,
+		`{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/codex"}}`+"\n"+
+			strings.Repeat(`{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"turn"}]}}`+"\n", totalTurns))
+
+	code, stdout, stderr := runCLI(t, "transcript", codexID, "--max-turns", "1000000", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	var result transcriptResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if len(result.Turns) != maxTranscriptTurns || result.TotalTurns != totalTurns || !result.Truncated {
+		t.Fatalf("hard limit result = %d/%d truncated=%v", len(result.Turns), result.TotalTurns, result.Truncated)
+	}
+}
+
+func TestTranscriptRejectsInvalidArguments(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"transcript"}, want: "needs a session id"},
+		{args: []string{"transcript", codexID, "--max-turns"}, want: "positive integer"},
+		{args: []string{"transcript", codexID, "--max-turns", "0"}, want: "positive integer"},
+		{args: []string{"transcript", codexID, "--wat"}, want: "unknown transcript argument"},
+		{args: []string{"transcript", codexID, claudeID}, want: "unexpected transcript argument"},
+	}
+	for _, tt := range tests {
+		code, _, stderr := runCLI(t, tt.args...)
+		if code != 2 || !strings.Contains(stderr, tt.want) {
+			t.Fatalf("run(%v) = %d, %q; want exit 2 containing %q", tt.args, code, stderr, tt.want)
+		}
+	}
+}
+
 func TestResolveSession(t *testing.T) {
+	const multicaID = "eeeeeeee-1111-2222-3333-ffffffffffff"
 	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: multicaID, HandoffOnly: true},
 		{Provider: session.ProviderClaude, ID: claudeID},
 		{Provider: session.ProviderCodex, ID: codexID},
 	}
 
 	row, err := resolveSession(rows, "latest")
-	if err != nil || row.ID != claudeID {
+	if err != nil || row.ID != multicaID {
 		t.Fatalf("latest = %#v, %v; want first row", row, err)
+	}
+	row, err = resolveResumableSession(rows, "latest")
+	if err != nil || row.ID != claudeID {
+		t.Fatalf("latest resumable = %#v, %v; want first non-Multica row", row, err)
+	}
+	if _, err := resolveResumableSession(rows, multicaID); err == nil || !strings.Contains(err.Error(), "handoff-only") {
+		t.Fatalf("explicit Multica resume err = %v, want handoff-only rejection", err)
 	}
 
 	row, err = resolveSession(rows, codexID)
@@ -250,6 +361,27 @@ func TestResolveSession(t *testing.T) {
 
 	if _, err := resolveSession(nil, "latest"); err == nil {
 		t.Fatal("latest with no sessions must fail")
+	}
+}
+
+func TestNativeCLICommandsTreatMulticaAsHandoffOnly(t *testing.T) {
+	setFixtureHomes(t)
+	const multicaID = "eeeeeeee-1111-2222-3333-ffffffffffff"
+	writeFixture(t, filepath.Join(os.Getenv("CODEX_HOME"), "multica-sessions", "agent", "issue", "rollout-"+multicaID+".jsonl"), `
+{"timestamp":"2026-06-04T09:00:00Z","type":"session_meta","payload":{"id":"`+multicaID+`","cwd":"/work/multica"}}
+{"timestamp":"2026-06-04T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"handoff this task"}]}}
+`)
+
+	for _, command := range []string{"resume", "info"} {
+		code, _, stderr := runCLI(t, command, multicaID)
+		if code != 1 || !strings.Contains(stderr, "handoff-only") {
+			t.Fatalf("%s explicit Multica = %d, %q; want handoff-only rejection", command, code, stderr)
+		}
+	}
+
+	code, stdout, stderr := runCLI(t, "info", "latest")
+	if code != 0 || !strings.Contains(stdout, "claude --resume "+claudeID) || strings.Contains(stdout, multicaID) {
+		t.Fatalf("info latest = %d, stdout=%q, stderr=%q; want newest resumable row", code, stdout, stderr)
 	}
 }
 
@@ -549,5 +681,27 @@ func TestListEmptyExplainsScannedDirs(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}
+	}
+}
+
+func TestTranscriptJSONRedactsQuotedAndPrefixedAssignments(t *testing.T) {
+	setFixtureHomes(t)
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl")
+	writeFixture(t, path, `
+{"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/codex"}}
+{"timestamp":"2026-06-01T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"{\"api_key\": \"quoted-secret\"}\nSERVICE_ACCESS_TOKEN=prefixed-secret"}]}}
+`)
+
+	code, stdout, stderr := runCLI(t, "transcript", codexID, "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	var result transcriptResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	text := result.Turns[0].Text
+	if strings.Contains(text, "quoted-secret") || strings.Contains(text, "prefixed-secret") || strings.Count(text, "[redacted]") != 2 {
+		t.Fatalf("quoted or prefixed assignment leaked: %q", text)
 	}
 }

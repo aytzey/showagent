@@ -72,6 +72,32 @@ func TestPreviewSanitizesSecretsAndTerminalControlsWithoutFalsePositives(t *test
 	}
 }
 
+func TestRedactSecretsCoversQuotedAndPrefixedAssignments(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"quoted JSON key", `{"api_key": "quoted-secret"}`, `{"api_key": [redacted]}`},
+		{"underscore-prefixed API key", `_API_KEY=underscore-secret`, `_API_KEY=[redacted]`},
+		{"prefixed API key", `SERVICE_API_KEY=api-secret`, `SERVICE_API_KEY=[redacted]`},
+		{"prefixed access token", `CI_ACCESS_TOKEN=access-secret`, `CI_ACCESS_TOKEN=[redacted]`},
+		{"prefixed auth token", `APP_AUTH_TOKEN=auth-secret`, `APP_AUTH_TOKEN=[redacted]`},
+		{"prefixed client secret", `OAUTH_CLIENT_SECRET=client-secret`, `OAUTH_CLIENT_SECRET=[redacted]`},
+		{"prefixed session token", `WEB_SESSION_TOKEN=session-secret`, `WEB_SESSION_TOKEN=[redacted]`},
+		{"prefixed secret key", `APP_SECRET_KEY=key-secret`, `APP_SECRET_KEY=[redacted]`},
+		{"AWS secret access key", `AWS_SECRET_ACCESS_KEY=aws-secret`, `AWS_SECRET_ACCESS_KEY=[redacted]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactSecrets(tt.input); got != tt.want {
+				t.Fatalf("RedactSecrets(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSafeDisplayTextStripsMetadataControlsWithoutRedacting(t *testing.T) {
 	input := "workspace\x1b]52;c;Y2xpcGJvYXJk\x07\nnext\u202e password hunter2"
 	got := SafeDisplayText(input)
@@ -104,13 +130,28 @@ func TestTranscriptPreservesCodeFormattingAndValues(t *testing.T) {
 	}
 }
 
+func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "multica-sessions", "default", "agent-1", "issue-1", "2026", "07", "15", "rollout-2026-07-15T12-00-00-11111111-2222-3333-4444-555555555555.jsonl")
+	content := `{"timestamp":"2026-07-15T12:00:00Z","type":"session_meta","payload":{"id":"11111111-2222-3333-4444-555555555555","cwd":"/work/multica"}}
+{"timestamp":"2026-07-15T12:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue the local issue"}]}}
+`
+	writeFile(t, path, content)
+
+	rows := discoverCodex(home)
+	if len(rows) != 1 || rows[0].ID != "11111111-2222-3333-4444-555555555555" || rows[0].CWD != "/work/multica" {
+		t.Fatalf("unexpected Multica session discovery: %#v", rows)
+	}
+	if !rows[0].HandoffOnly {
+		t.Fatalf("Multica session capability = %#v, want handoff-only", rows[0])
+	}
+}
+
 func TestJCodeIsOptional(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
-	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	setEmptyHomes(t, root)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	writeFile(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"), `{
@@ -128,11 +169,9 @@ func TestJCodeIsOptional(t *testing.T) {
 
 func TestDiscoverFindsJCodeSessions(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
-	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
+	setEmptyHomes(t, root)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	withFakeCommand(t, "jcode")
 
 	writeJCodeFixture(t, filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json"))
@@ -153,11 +192,9 @@ func TestDiscoverFindsJCodeSessions(t *testing.T) {
 func TestClaudeSubagentsAreIgnored(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "session", "subagents", "agent-a.jsonl"), `
 {"type":"user","message":{"role":"user","content":"subagent"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"}
@@ -171,11 +208,9 @@ func TestClaudeSubagentsAreIgnored(t *testing.T) {
 func TestClaudeCommandNoiseIsIgnored(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(claudeHome, "projects", "-work", "cccccccc-1111-2222-3333-dddddddddddd.jsonl"), `
 {"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat text</local-command-caveat>"},"timestamp":"2026-06-02T10:00:00Z","cwd":"/work","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
@@ -202,11 +237,9 @@ func TestClaudeResumeUsesProjectBucketCWD(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	writeFile(t, filepath.Join(claudeHome, "projects", claudeProjectDir(project), sessionID+".jsonl"), `
@@ -233,11 +266,9 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	projectDir := claudeProjectDir(project)
@@ -260,11 +291,9 @@ func TestClaudeResumeUsesObservedCWDWhenProjectSlugIsLossy(t *testing.T) {
 func TestClaudeDoesNotGuessWorkspaceFromLossyProjectSlug(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, "claude")
-	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
+	setEmptyHomes(t, root)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	sessionID := "cccccccc-1111-2222-3333-dddddddddddd"
 	// The bucket could mean /tmp/my-project or /tmp/my/project. With no cwd
@@ -313,11 +342,10 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	setEmptyHomes(t, root)
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_HOME", claudeHome)
-	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
-	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "06", "22", "rollout-2026-06-22T09-00-00-aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb.jsonl"), `
 {"timestamp":"2026-06-22T09:00:00Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb","cwd":"/home/aytug"}}
@@ -343,6 +371,66 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	}
 	if !strings.Contains(converted.File, claudeProjectDir(project)) {
 		t.Fatalf("converted path = %q, want project dir %q", converted.File, claudeProjectDir(project))
+	}
+}
+
+func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	normalID := "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+	guardianID := "cccccccc-1111-2222-3333-dddddddddddd"
+	voiceID := "eeeeeeee-1111-2222-3333-ffffffffffff"
+	sourceOnlyID := "11111111-aaaa-bbbb-cccc-222222222222"
+	parentOnlyID := "33333333-aaaa-bbbb-cccc-444444444444"
+	nestedSourceOnlyID := "55555555-aaaa-bbbb-cccc-666666666666"
+
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-normal.jsonl"), `
+{"timestamp":"2026-08-12T09:00:00Z","type":"session_meta","payload":{"id":"`+normalID+`","cwd":"/work/codex","source":"cli","thread_source":"user","session_id":"`+normalID+`"}}
+{"timestamp":"2026-08-12T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real user session"}]}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-guardian.jsonl"), `
+{"timestamp":"2026-08-12T09:02:00Z","type":"session_meta","payload":{"id":"`+guardianID+`","cwd":"/work/codex","source":{"subagent":{"other":"guardian"}},"thread_source":"subagent","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
+{"timestamp":"2026-08-12T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history whose request action you are assessing..."}]}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-voice.jsonl"), `
+{"timestamp":"2026-08-12T09:04:00Z","type":"session_meta","payload":{"id":"`+voiceID+`","cwd":"/work/voice","source":"vscode","thread_source":"realtime_voice","session_id":"`+voiceID+`"}}
+{"timestamp":"2026-08-12T09:05:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real voice session"}]}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-source-only.jsonl"), `
+{"timestamp":"2026-08-12T09:06:00Z","type":"session_meta","payload":{"id":"`+sourceOnlyID+`","cwd":"/work/codex","thread_source":"subagent","session_id":"`+normalID+`"}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-parent-only.jsonl"), `
+{"timestamp":"2026-08-12T09:07:00Z","type":"session_meta","payload":{"id":"`+parentOnlyID+`","cwd":"/work/codex","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-nested-source-only.jsonl"), `
+{"timestamp":"2026-08-12T09:08:00Z","type":"session_meta","payload":{"id":"`+nestedSourceOnlyID+`","cwd":"/work/codex","source":{"subagent":{"other":"reviewer"}},"session_id":"`+normalID+`"}}
+`)
+
+	rows := discoverCodex(codexHome)
+	if len(rows) != 2 {
+		t.Fatalf("discoverCodex rows = %d, want the two root sessions: %#v", len(rows), rows)
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.ID] = true
+	}
+	if !seen[normalID] || !seen[voiceID] || seen[guardianID] || seen[sourceOnlyID] || seen[parentOnlyID] || seen[nestedSourceOnlyID] {
+		t.Fatalf("unexpected discovered sessions: %#v", rows)
+	}
+}
+
+func TestHandoffOnlyRowsRejectNativeResumeAndDelete(t *testing.T) {
+	row := Row{Provider: ProviderCodex, ID: "multica-session", HandoffOnly: true}
+	for name, action := range map[string]func() error{
+		"validate resume": func() error { return ValidateResume(row) },
+		"resume":          func() error { return Resume(row, ResumeOptions{}) },
+		"delete":          func() error { return Delete(row) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := action(); err == nil || !strings.Contains(err.Error(), "handoff-only") {
+				t.Fatalf("%s error = %v, want handoff-only rejection", name, err)
+			}
+		})
 	}
 }
 
@@ -908,32 +996,30 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 6 {
-		t.Fatalf("targets = %d, want 6", len(targets))
+	if len(targets) != 7 {
+		t.Fatalf("targets = %d, want 7", len(targets))
 	}
-	want := map[Provider]struct{ path, env string }{
-		ProviderCodex:    {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
-		ProviderClaude:   {filepath.Join(root, "claude", "projects"), "CLAUDE_HOME"},
-		ProviderJCode:    {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
-		ProviderOpenCode: {filepath.Join(root, "empty-opencode"), "OPENCODE_DATA_HOME"},
-		ProviderGemini:   {filepath.Join(root, "empty-gemini", ".gemini", "tmp"), "GEMINI_CLI_HOME"},
-		ProviderPi:       {filepath.Join(root, "pi", "sessions"), "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
+	want := []ScanTarget{
+		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "multica-sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderClaude, Path: filepath.Join(root, "claude", "projects"), EnvVar: "CLAUDE_HOME"},
+		{Provider: ProviderJCode, Path: filepath.Join(root, "jcode", "sessions"), EnvVar: "JCODE_HOME"},
+		{Provider: ProviderOpenCode, Path: filepath.Join(root, "empty-opencode"), EnvVar: "OPENCODE_DATA_HOME"},
+		{Provider: ProviderGemini, Path: filepath.Join(root, "empty-gemini", ".gemini", "tmp"), EnvVar: "GEMINI_CLI_HOME"},
+		{Provider: ProviderPi, Path: filepath.Join(root, "pi", "sessions"), EnvVar: "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
 	}
-	for _, target := range targets {
-		expected, ok := want[target.Provider]
-		if !ok {
-			t.Fatalf("unexpected provider %q", target.Provider)
-		}
-		if target.Path != expected.path || target.EnvVar != expected.env {
-			t.Fatalf("target %q = %q/%q, want %q/%q", target.Provider, target.Path, target.EnvVar, expected.path, expected.env)
+	for index, target := range targets {
+		expected := want[index]
+		if target.Provider != expected.Provider || target.Path != expected.Path || target.EnvVar != expected.EnvVar {
+			t.Fatalf("target %d = %#v, want %#v", index, target, expected)
 		}
 	}
 	// CLI-gated providers are skipped when their binary is missing, and the
 	// target must say so.
-	if targets[2].Note == "" {
+	if targets[3].Note == "" {
 		t.Fatal("jcode target should carry a skip note when jcode is not installed")
 	}
-	if targets[3].Note == "" {
+	if targets[4].Note == "" {
 		t.Fatal("opencode target should carry a skip note when opencode is not installed")
 	}
 }
@@ -959,6 +1045,20 @@ func TestValidateResume(t *testing.T) {
 
 	if err := ValidateCompound(Row{Provider: ProviderClaude, ID: "id", CWD: workspace}, ProviderCodex); err == nil || !strings.Contains(err.Error(), "codex not found in PATH") {
 		t.Fatalf("compound agent err = %v, want 'codex not found in PATH'", err)
+	}
+}
+
+func TestCompoundRejectsSameProviderHandoffOnly(t *testing.T) {
+	row := Row{Provider: ProviderCodex, ID: "multica-session", CWD: t.TempDir(), HandoffOnly: true}
+	for name, action := range map[string]func() error{
+		"validate": func() error { return ValidateCompound(row, ProviderCodex) },
+		"run":      func() error { return Compound(row, ProviderCodex, ResumeOptions{}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := action(); err == nil || !strings.Contains(err.Error(), "handoff-only") {
+				t.Fatalf("%s error = %v, want handoff-only rejection", name, err)
+			}
+		})
 	}
 }
 

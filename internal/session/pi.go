@@ -29,12 +29,12 @@ func (piProvider) DisplayName() string { return "Pi" }
 func (piProvider) CommandName() string { return "pi" }
 func (piProvider) Home() string        { return defaultPiAgentDir() }
 
-func (piProvider) ScanTarget() ScanTarget {
-	return ScanTarget{
+func (piProvider) ScanTargets() []ScanTarget {
+	return []ScanTarget{{
 		Provider: ProviderPi,
 		Path:     defaultPiSessionRoot(),
 		EnvVar:   "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR",
-	}
+	}}
 }
 
 func (piProvider) Discover() []Row {

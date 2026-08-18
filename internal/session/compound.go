@@ -17,6 +17,10 @@ import (
 // The shared learnings directory is the common knowledge pool: every supported
 // compound-capable agent reads it before working and appends to it when done.
 func Compound(row Row, agent Provider, options ResumeOptions) error {
+	if err := ValidateCompound(row, agent); err != nil {
+		return err
+	}
+
 	dir, err := ensureLearningsDir(row.CWD)
 	if err != nil {
 		return err
