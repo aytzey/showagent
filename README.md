@@ -82,7 +82,7 @@ brew install aytzey/tap/showagent
 # install script (Linux/macOS, puts the binary in ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
 
-# Go 1.25.12+
+# Go 1.25.13+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -310,7 +310,7 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-The minimum supported toolchain is Go 1.25.12; CI also runs race tests,
+The minimum supported toolchain is Go 1.25.13; CI also runs race tests,
 golangci-lint, `govulncheck`, and every published cross-compile target.
 
 The demo GIF is recorded hermetically with [vhs](https://github.com/charmbracelet/vhs)
