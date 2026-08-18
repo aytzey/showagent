@@ -108,10 +108,7 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 			if err != nil || parsed <= 0 {
 				return usageError(stderr, "transcript --max-turns needs a positive integer")
 			}
-			if parsed > maxTranscriptTurns {
-				parsed = maxTranscriptTurns
-			}
-			maxTurns = parsed
+			maxTurns = min(parsed, maxTranscriptTurns)
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return usageError(stderr, fmt.Sprintf("unknown transcript argument %q", arg))
@@ -270,11 +267,14 @@ func runList(args []string, stdout, stderr io.Writer) int {
 
 func listJSONPreview(value string) string {
 	value = session.RedactSecrets(session.SafeDisplayText(value))
-	runes := []rune(value)
-	if len(runes) <= maxListPreviewRunes {
-		return value
+	runes := 0
+	for index := range value {
+		if runes == maxListPreviewRunes {
+			return value[:index] + "…"
+		}
+		runes++
 	}
-	return string(runes[:maxListPreviewRunes]) + "…"
+	return value
 }
 
 // printNoSessions explains exactly which directories were scanned and how to
