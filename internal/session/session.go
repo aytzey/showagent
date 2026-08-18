@@ -288,7 +288,7 @@ var (
 	// terminal controls), including formatting and user-authored values.
 	passwordAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:password|passwd|pwd|parola|sifre|şifre)\w*["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
 	passwordBarePattern       = regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|parola|sifre|şifre)\s+)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
-	secretAssignmentPattern   = regexp.MustCompile(`(?i)((?:\b|["'])(?:(?:[[:alnum:]]+_)*(?:api_key|access_token|auth_token|client_secret|session_token|secret_key|secret_access_key)|api[ -]?key|access[ -]?token|auth[ -]?token|bearer[ _-]?token|client[ -]?secret|session[ -]?token|secret(?:[ -]?key)?)["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
+	secretAssignmentPattern   = regexp.MustCompile(`(?i)((?:\b|["'])_*(?:(?:[[:alnum:]]+_)*(?:api_key|access_token|auth_token|client_secret|session_token|secret_key|secret_access_key)|api[ -]?key|access[ -]?token|auth[ -]?token|bearer[ _-]?token|client[ -]?secret|session[ -]?token|secret(?:[ -]?key)?)["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
 	knownSecretPattern        = regexp.MustCompile(`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b`)
 	bearerSecretPattern       = regexp.MustCompile(`(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}`)
 	jwtSecretPattern          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)

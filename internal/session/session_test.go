@@ -79,6 +79,7 @@ func TestRedactSecretsCoversQuotedAndPrefixedAssignments(t *testing.T) {
 		want  string
 	}{
 		{"quoted JSON key", `{"api_key": "quoted-secret"}`, `{"api_key": [redacted]}`},
+		{"underscore-prefixed API key", `_API_KEY=underscore-secret`, `_API_KEY=[redacted]`},
 		{"prefixed API key", `SERVICE_API_KEY=api-secret`, `SERVICE_API_KEY=[redacted]`},
 		{"prefixed access token", `CI_ACCESS_TOKEN=access-secret`, `CI_ACCESS_TOKEN=[redacted]`},
 		{"prefixed auth token", `APP_AUTH_TOKEN=auth-secret`, `APP_AUTH_TOKEN=[redacted]`},
