@@ -78,8 +78,10 @@ type codexLine struct {
 }
 
 type codexSessionMeta struct {
-	ID  string `json:"id"`
-	CWD string `json:"cwd"`
+	ID             string `json:"id"`
+	CWD            string `json:"cwd"`
+	ThreadSource   string `json:"thread_source"`
+	ParentThreadID string `json:"parent_thread_id"`
 }
 
 type codexTurnContext struct {
@@ -166,6 +168,9 @@ func scanCodexStart(path string) (string, string, string) {
 		case "session_meta":
 			var meta codexSessionMeta
 			if json.Unmarshal(record.Payload, &meta) == nil {
+				if meta.ParentThreadID != "" || (meta.ThreadSource != "" && meta.ThreadSource != "user") {
+					return "", "", ""
+				}
 				metaSeen = true
 				if meta.ID != "" {
 					id = meta.ID

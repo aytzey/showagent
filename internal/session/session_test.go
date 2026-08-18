@@ -365,6 +365,30 @@ func TestCodexUsesLatestTurnContextCWD(t *testing.T) {
 	}
 }
 
+func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
+	root := t.TempDir()
+	codexHome := filepath.Join(root, "codex")
+	normalID := "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+	guardianID := "cccccccc-1111-2222-3333-dddddddddddd"
+
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-normal.jsonl"), `
+{"timestamp":"2026-08-12T09:00:00Z","type":"session_meta","payload":{"id":"`+normalID+`","cwd":"/work/codex","source":"cli","thread_source":"user","session_id":"`+normalID+`"}}
+{"timestamp":"2026-08-12T09:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real user session"}]}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-guardian.jsonl"), `
+{"timestamp":"2026-08-12T09:02:00Z","type":"session_meta","payload":{"id":"`+guardianID+`","cwd":"/work/codex","source":{"subagent":{"other":"guardian"}},"thread_source":"subagent","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
+{"timestamp":"2026-08-12T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history whose request action you are assessing..."}]}}
+`)
+
+	rows := discoverCodex(codexHome)
+	if len(rows) != 1 {
+		t.Fatalf("discoverCodex rows = %d, want only the user session: %#v", len(rows), rows)
+	}
+	if rows[0].ID != normalID {
+		t.Fatalf("discovered session = %q, want %q", rows[0].ID, normalID)
+	}
+}
+
 func TestResumeCommandDangerousMode(t *testing.T) {
 	codex := Row{Provider: ProviderCodex, ID: "codex-session"}
 	if got := strings.Join(codex.ResumeCommand(ResumeOptions{}), " "); got != "codex resume codex-session" {
