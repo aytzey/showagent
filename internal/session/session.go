@@ -88,9 +88,9 @@ type ScanTarget struct {
 // ScanTargets reports the exact directories Discover scans right now, so
 // callers can tell the user where sessions are expected to live.
 func ScanTargets() []ScanTarget {
-	targets := make([]ScanTarget, 0, len(registry))
+	var targets []ScanTarget
 	for _, impl := range registry {
-		targets = append(targets, impl.ScanTarget())
+		targets = append(targets, impl.ScanTargets()...)
 	}
 	return targets
 }

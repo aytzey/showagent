@@ -107,15 +107,10 @@ func TestTranscriptPreservesCodeFormattingAndValues(t *testing.T) {
 func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "multica-sessions", "default", "agent-1", "issue-1", "2026", "07", "15", "rollout-2026-07-15T12-00-00-11111111-2222-3333-4444-555555555555.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	content := `{"timestamp":"2026-07-15T12:00:00Z","type":"session_meta","payload":{"id":"11111111-2222-3333-4444-555555555555","cwd":"/work/multica"}}
 {"timestamp":"2026-07-15T12:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue the local issue"}]}}
 `
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, path, content)
 
 	rows := discoverCodex(home)
 	if len(rows) != 1 || rows[0].ID != "11111111-2222-3333-4444-555555555555" || rows[0].CWD != "/work/multica" {
@@ -371,6 +366,8 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	normalID := "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 	guardianID := "cccccccc-1111-2222-3333-dddddddddddd"
 	voiceID := "eeeeeeee-1111-2222-3333-ffffffffffff"
+	sourceOnlyID := "11111111-aaaa-bbbb-cccc-222222222222"
+	parentOnlyID := "33333333-aaaa-bbbb-cccc-444444444444"
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-normal.jsonl"), `
 {"timestamp":"2026-08-12T09:00:00Z","type":"session_meta","payload":{"id":"`+normalID+`","cwd":"/work/codex","source":"cli","thread_source":"user","session_id":"`+normalID+`"}}
@@ -384,6 +381,12 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 {"timestamp":"2026-08-12T09:04:00Z","type":"session_meta","payload":{"id":"`+voiceID+`","cwd":"/work/voice","source":"vscode","thread_source":"realtime_voice","session_id":"`+voiceID+`"}}
 {"timestamp":"2026-08-12T09:05:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real voice session"}]}}
 `)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-source-only.jsonl"), `
+{"timestamp":"2026-08-12T09:06:00Z","type":"session_meta","payload":{"id":"`+sourceOnlyID+`","cwd":"/work/codex","thread_source":"subagent","session_id":"`+normalID+`"}}
+`)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-parent-only.jsonl"), `
+{"timestamp":"2026-08-12T09:07:00Z","type":"session_meta","payload":{"id":"`+parentOnlyID+`","cwd":"/work/codex","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
+`)
 
 	rows := discoverCodex(codexHome)
 	if len(rows) != 2 {
@@ -393,7 +396,7 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	for _, row := range rows {
 		seen[row.ID] = true
 	}
-	if !seen[normalID] || !seen[voiceID] || seen[guardianID] {
+	if !seen[normalID] || !seen[voiceID] || seen[guardianID] || seen[sourceOnlyID] || seen[parentOnlyID] {
 		t.Fatalf("unexpected discovered sessions: %#v", rows)
 	}
 }
@@ -960,32 +963,30 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 6 {
-		t.Fatalf("targets = %d, want 6", len(targets))
+	if len(targets) != 7 {
+		t.Fatalf("targets = %d, want 7", len(targets))
 	}
-	want := map[Provider]struct{ path, env string }{
-		ProviderCodex:    {filepath.Join(root, "codex", "sessions"), "CODEX_HOME"},
-		ProviderClaude:   {filepath.Join(root, "claude", "projects"), "CLAUDE_HOME"},
-		ProviderJCode:    {filepath.Join(root, "jcode", "sessions"), "JCODE_HOME"},
-		ProviderOpenCode: {filepath.Join(root, "empty-opencode"), "OPENCODE_DATA_HOME"},
-		ProviderGemini:   {filepath.Join(root, "empty-gemini", ".gemini", "tmp"), "GEMINI_CLI_HOME"},
-		ProviderPi:       {filepath.Join(root, "pi", "sessions"), "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
+	want := []ScanTarget{
+		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "multica-sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderClaude, Path: filepath.Join(root, "claude", "projects"), EnvVar: "CLAUDE_HOME"},
+		{Provider: ProviderJCode, Path: filepath.Join(root, "jcode", "sessions"), EnvVar: "JCODE_HOME"},
+		{Provider: ProviderOpenCode, Path: filepath.Join(root, "empty-opencode"), EnvVar: "OPENCODE_DATA_HOME"},
+		{Provider: ProviderGemini, Path: filepath.Join(root, "empty-gemini", ".gemini", "tmp"), EnvVar: "GEMINI_CLI_HOME"},
+		{Provider: ProviderPi, Path: filepath.Join(root, "pi", "sessions"), EnvVar: "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
 	}
-	for _, target := range targets {
-		expected, ok := want[target.Provider]
-		if !ok {
-			t.Fatalf("unexpected provider %q", target.Provider)
-		}
-		if target.Path != expected.path || target.EnvVar != expected.env {
-			t.Fatalf("target %q = %q/%q, want %q/%q", target.Provider, target.Path, target.EnvVar, expected.path, expected.env)
+	for index, target := range targets {
+		expected := want[index]
+		if target.Provider != expected.Provider || target.Path != expected.Path || target.EnvVar != expected.EnvVar {
+			t.Fatalf("target %d = %#v, want %#v", index, target, expected)
 		}
 	}
 	// CLI-gated providers are skipped when their binary is missing, and the
 	// target must say so.
-	if targets[2].Note == "" {
+	if targets[3].Note == "" {
 		t.Fatal("jcode target should carry a skip note when jcode is not installed")
 	}
-	if targets[3].Note == "" {
+	if targets[4].Note == "" {
 		t.Fatal("opencode target should carry a skip note when opencode is not installed")
 	}
 }

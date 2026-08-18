@@ -20,12 +20,12 @@ func (claudeProvider) DisplayName() string { return "Claude" }
 func (claudeProvider) CommandName() string { return "claude" }
 func (claudeProvider) Home() string        { return defaultClaudeHome() }
 
-func (p claudeProvider) ScanTarget() ScanTarget {
-	return ScanTarget{
+func (p claudeProvider) ScanTargets() []ScanTarget {
+	return []ScanTarget{{
 		Provider: ProviderClaude,
 		Path:     filepath.Join(p.Home(), "projects"),
 		EnvVar:   "CLAUDE_HOME",
-	}
+	}}
 }
 
 func (p claudeProvider) Discover() []Row {

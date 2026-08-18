@@ -70,7 +70,7 @@ func (opencodeProvider) DisplayName() string { return "OpenCode" }
 func (opencodeProvider) CommandName() string { return "opencode" }
 func (opencodeProvider) Home() string        { return defaultOpenCodeDataHome() }
 
-func (p opencodeProvider) ScanTarget() ScanTarget {
+func (p opencodeProvider) ScanTargets() []ScanTarget {
 	target := ScanTarget{
 		Provider: ProviderOpenCode,
 		Path:     p.Home(),
@@ -82,7 +82,7 @@ func (p opencodeProvider) ScanTarget() ScanTarget {
 	case !opencodeDatabaseExists():
 		target.Note = "skipped: no opencode database found"
 	}
-	return target
+	return []ScanTarget{target}
 }
 
 func (opencodeProvider) Discover() []Row {

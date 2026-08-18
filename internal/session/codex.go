@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// codexProvider adapts the Codex CLI's session store (rollout-*.jsonl files
-// under ~/.codex/sessions) to the provider registry.
+// codexProvider adapts the Codex CLI's rollout-*.jsonl session stores to the
+// provider registry.
 type codexProvider struct{}
 
 func (codexProvider) Name() Provider      { return ProviderCodex }
@@ -21,12 +21,8 @@ func (codexProvider) DisplayName() string { return "Codex" }
 func (codexProvider) CommandName() string { return "codex" }
 func (codexProvider) Home() string        { return defaultCodexHome() }
 
-func (p codexProvider) ScanTarget() ScanTarget {
-	return ScanTarget{
-		Provider: ProviderCodex,
-		Path:     filepath.Join(p.Home(), "sessions"),
-		EnvVar:   "CODEX_HOME",
-	}
+func (p codexProvider) ScanTargets() []ScanTarget {
+	return codexScanTargets(p.Home())
 }
 
 func (p codexProvider) Discover() []Row {
@@ -100,9 +96,18 @@ func discoverCodex(codexHome string) []Row {
 	// thousands of task threads. Showagent is the explicit cross-agent history
 	// browser, so include both roots here and make those local task contexts
 	// available for branch/convert/transcript handoff as well.
-	paths := jsonlPaths(filepath.Join(codexHome, "sessions"))
-	paths = append(paths, jsonlPaths(filepath.Join(codexHome, "multica-sessions"))...)
+	var paths []string
+	for _, target := range codexScanTargets(codexHome) {
+		paths = append(paths, jsonlPaths(target.Path)...)
+	}
 	return parseRowsBounded(paths, parseCodex)
+}
+
+func codexScanTargets(codexHome string) []ScanTarget {
+	return []ScanTarget{
+		{Provider: ProviderCodex, Path: filepath.Join(codexHome, "sessions"), EnvVar: "CODEX_HOME"},
+		{Provider: ProviderCodex, Path: filepath.Join(codexHome, "multica-sessions"), EnvVar: "CODEX_HOME"},
+	}
 }
 
 func parseCodex(path string) (Row, bool) {

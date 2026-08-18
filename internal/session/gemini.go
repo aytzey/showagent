@@ -56,12 +56,12 @@ func (geminiProvider) DisplayName() string { return "Gemini" }
 func (geminiProvider) CommandName() string { return "gemini" }
 func (geminiProvider) Home() string        { return defaultGeminiHome() }
 
-func (p geminiProvider) ScanTarget() ScanTarget {
-	return ScanTarget{
+func (p geminiProvider) ScanTargets() []ScanTarget {
+	return []ScanTarget{{
 		Provider: ProviderGemini,
 		Path:     filepath.Join(p.Home(), "tmp"),
 		EnvVar:   "GEMINI_CLI_HOME",
-	}
+	}}
 }
 
 func (p geminiProvider) Discover() []Row {

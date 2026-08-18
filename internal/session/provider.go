@@ -17,9 +17,9 @@ type ProviderImpl interface {
 	CommandName() string
 	// Home is the provider's base data directory, honoring its env override.
 	Home() string
-	// ScanTarget reports where Discover looks for sessions right now, so
+	// ScanTargets reports where Discover looks for sessions right now, so
 	// callers can tell the user where sessions are expected to live.
-	ScanTarget() ScanTarget
+	ScanTargets() []ScanTarget
 	// Discover parses the provider's local session store into rows.
 	Discover() []Row
 	// ResumeArgs is the argv that resumes row in the provider's own CLI.
