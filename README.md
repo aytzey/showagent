@@ -95,6 +95,8 @@ Or grab an archive from the [releases page](https://github.com/aytzey/showagent/
 showagent                  # open the interactive picker
 showagent list             # plain table of every session
 showagent list --json      # the same, machine-readable
+showagent transcript latest --max-turns 50 --json
+                           # bounded, secret-redacted context for local handoff
 showagent resume latest    # reopen the most recent session, any agent
 showagent convert latest --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
@@ -149,6 +151,10 @@ are a stable contract:
 
 `showagent resume <id|latest> [--yolo]` resumes without the picker, so a shell
 alias can reopen your last session in one keystroke.
+
+`showagent transcript <id|latest> [--max-turns N] [--json]` exports the most
+recent turns for local tools that need a bounded context handoff. Output is
+always secret-redacted, marked as untrusted history, and capped at 500 turns.
 
 `showagent convert <id|latest> --to <provider> --dry-run` prints the hand-off
 before writing anything: source session, target provider, workspace, scope,
