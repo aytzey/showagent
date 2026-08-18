@@ -168,7 +168,7 @@ func scanCodexStart(path string) (string, string, string) {
 		case "session_meta":
 			var meta codexSessionMeta
 			if json.Unmarshal(record.Payload, &meta) == nil {
-				if meta.ParentThreadID != "" || (meta.ThreadSource != "" && meta.ThreadSource != "user") {
+				if meta.ParentThreadID != "" || meta.ThreadSource == "subagent" {
 					return "", "", ""
 				}
 				metaSeen = true

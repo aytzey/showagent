@@ -370,6 +370,7 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	codexHome := filepath.Join(root, "codex")
 	normalID := "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 	guardianID := "cccccccc-1111-2222-3333-dddddddddddd"
+	voiceID := "eeeeeeee-1111-2222-3333-ffffffffffff"
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-normal.jsonl"), `
 {"timestamp":"2026-08-12T09:00:00Z","type":"session_meta","payload":{"id":"`+normalID+`","cwd":"/work/codex","source":"cli","thread_source":"user","session_id":"`+normalID+`"}}
@@ -379,13 +380,21 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 {"timestamp":"2026-08-12T09:02:00Z","type":"session_meta","payload":{"id":"`+guardianID+`","cwd":"/work/codex","source":{"subagent":{"other":"guardian"}},"thread_source":"subagent","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
 {"timestamp":"2026-08-12T09:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history whose request action you are assessing..."}]}}
 `)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-voice.jsonl"), `
+{"timestamp":"2026-08-12T09:04:00Z","type":"session_meta","payload":{"id":"`+voiceID+`","cwd":"/work/voice","source":"vscode","thread_source":"realtime_voice","session_id":"`+voiceID+`"}}
+{"timestamp":"2026-08-12T09:05:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real voice session"}]}}
+`)
 
 	rows := discoverCodex(codexHome)
-	if len(rows) != 1 {
-		t.Fatalf("discoverCodex rows = %d, want only the user session: %#v", len(rows), rows)
+	if len(rows) != 2 {
+		t.Fatalf("discoverCodex rows = %d, want the two root sessions: %#v", len(rows), rows)
 	}
-	if rows[0].ID != normalID {
-		t.Fatalf("discovered session = %q, want %q", rows[0].ID, normalID)
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.ID] = true
+	}
+	if !seen[normalID] || !seen[voiceID] || seen[guardianID] {
+		t.Fatalf("unexpected discovered sessions: %#v", rows)
 	}
 }
 
