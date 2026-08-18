@@ -74,10 +74,11 @@ type codexLine struct {
 }
 
 type codexSessionMeta struct {
-	ID             string `json:"id"`
-	CWD            string `json:"cwd"`
-	ThreadSource   string `json:"thread_source"`
-	ParentThreadID string `json:"parent_thread_id"`
+	ID             string          `json:"id"`
+	CWD            string          `json:"cwd"`
+	Source         json.RawMessage `json:"source"`
+	ThreadSource   string          `json:"thread_source"`
+	ParentThreadID string          `json:"parent_thread_id"`
 }
 
 type codexTurnContext struct {
@@ -96,11 +97,18 @@ func discoverCodex(codexHome string) []Row {
 	// thousands of task threads. Showagent is the explicit cross-agent history
 	// browser, so include both roots here and make those local task contexts
 	// available for branch/convert/transcript handoff as well.
-	var paths []string
+	var rows []Row
+	multicaRoot := filepath.Join(codexHome, "multica-sessions")
 	for _, target := range codexScanTargets(codexHome) {
-		paths = append(paths, jsonlPaths(target.Path)...)
+		discovered := parseRowsBounded(jsonlPaths(target.Path), parseCodex)
+		if target.Path == multicaRoot {
+			for index := range discovered {
+				discovered[index].HandoffOnly = true
+			}
+		}
+		rows = append(rows, discovered...)
 	}
-	return parseRowsBounded(paths, parseCodex)
+	return rows
 }
 
 func codexScanTargets(codexHome string) []ScanTarget {
@@ -173,7 +181,7 @@ func scanCodexStart(path string) (string, string, string) {
 		case "session_meta":
 			var meta codexSessionMeta
 			if json.Unmarshal(record.Payload, &meta) == nil {
-				if meta.ParentThreadID != "" || meta.ThreadSource == "subagent" {
+				if codexMetaIsSubagent(meta) {
 					return "", "", ""
 				}
 				metaSeen = true
@@ -204,6 +212,16 @@ func scanCodexStart(path string) (string, string, string) {
 	}
 
 	return id, cwd, firstUser
+}
+
+func codexMetaIsSubagent(meta codexSessionMeta) bool {
+	if meta.ParentThreadID != "" || meta.ThreadSource == "subagent" {
+		return true
+	}
+	var source struct {
+		Subagent *json.RawMessage `json:"subagent"`
+	}
+	return json.Unmarshal(meta.Source, &source) == nil && source.Subagent != nil
 }
 
 type codexTail struct {

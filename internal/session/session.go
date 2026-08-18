@@ -39,8 +39,11 @@ type Row struct {
 	CWD       string
 	LaunchCWD string
 	File      string
-	FirstUser string
-	LastUser  string
+	// HandoffOnly allows browsing and copying the session, but not native
+	// resume or delete actions against its provider store.
+	HandoffOnly bool
+	FirstUser   string
+	LastUser    string
 }
 
 type ResumeOptions struct {
@@ -50,11 +53,34 @@ type ResumeOptions struct {
 // ResumeCommand is the argv that resumes r in its own CLI, or nil when the
 // provider is unknown.
 func (r Row) ResumeCommand(options ResumeOptions) []string {
+	if r.HandoffOnly {
+		return nil
+	}
 	impl, ok := providerFor(r.Provider)
 	if !ok {
 		return nil
 	}
 	return impl.ResumeArgs(r, options)
+}
+
+// ValidateNativeActions rejects rows whose backing store is intentionally
+// available only as a source for transcript, branch, and conversion handoffs.
+func ValidateNativeActions(row Row) error {
+	if row.HandoffOnly {
+		return fmt.Errorf("session %q is handoff-only; native resume and delete are unavailable (use branch or convert first)", row.ID)
+	}
+	return nil
+}
+
+// LatestResumable returns the first native-action-capable row from a
+// newest-first discovery result.
+func LatestResumable(rows []Row) (Row, bool) {
+	for _, row := range rows {
+		if !row.HandoffOnly {
+			return row, true
+		}
+	}
+	return Row{}, false
 }
 
 // providerCommand is the CLI executable that resumes sessions for provider,
@@ -98,6 +124,9 @@ func ScanTargets() []ScanTarget {
 // ValidateResume reports why resuming row would fail, so callers can surface
 // the problem before tearing down their UI and exec-ing the provider CLI.
 func ValidateResume(row Row) error {
+	if err := ValidateNativeActions(row); err != nil {
+		return err
+	}
 	return validateLaunch(row.Provider, row.resumeCWD())
 }
 
@@ -169,6 +198,9 @@ func Discover() []Row {
 }
 
 func Resume(row Row, options ResumeOptions) error {
+	if err := ValidateNativeActions(row); err != nil {
+		return err
+	}
 	return launch(row.resumeCWD(), row.ResumeCommand(options))
 }
 
@@ -192,6 +224,9 @@ func Branch(row Row) (Row, error) {
 }
 
 func Delete(row Row) error {
+	if err := ValidateNativeActions(row); err != nil {
+		return err
+	}
 	impl, ok := providerFor(row.Provider)
 	if !ok {
 		return fmt.Errorf("unsupported provider %q", row.Provider)
@@ -248,7 +283,7 @@ var (
 	// terminal controls), including formatting and user-authored values.
 	passwordAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:password|passwd|pwd|parola|sifre|şifre)\w*["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
 	passwordBarePattern       = regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|parola|sifre|şifre)\s+)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
-	secretAssignmentPattern   = regexp.MustCompile(`(?i)\b((?:api[ _-]?key|access[ _-]?token|auth[ _-]?token|bearer[ _-]?token|client[ _-]?secret|secret(?:[ _-]?key)?)\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
+	secretAssignmentPattern   = regexp.MustCompile(`(?i)((?:\b|["'])(?:(?:[[:alnum:]]+_)*(?:api_key|access_token|auth_token|client_secret|session_token|secret_key|secret_access_key)|api[ -]?key|access[ -]?token|auth[ -]?token|bearer[ _-]?token|client[ -]?secret|session[ -]?token|secret(?:[ -]?key)?)["']?\s*(?::|=|\bis\b|\bwas\b|\bidi\b)\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
 	knownSecretPattern        = regexp.MustCompile(`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b`)
 	bearerSecretPattern       = regexp.MustCompile(`(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}`)
 	jwtSecretPattern          = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)

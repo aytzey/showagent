@@ -72,6 +72,31 @@ func TestPreviewSanitizesSecretsAndTerminalControlsWithoutFalsePositives(t *test
 	}
 }
 
+func TestRedactSecretsCoversQuotedAndPrefixedAssignments(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"quoted JSON key", `{"api_key": "quoted-secret"}`, `{"api_key": [redacted]}`},
+		{"prefixed API key", `SERVICE_API_KEY=api-secret`, `SERVICE_API_KEY=[redacted]`},
+		{"prefixed access token", `CI_ACCESS_TOKEN=access-secret`, `CI_ACCESS_TOKEN=[redacted]`},
+		{"prefixed auth token", `APP_AUTH_TOKEN=auth-secret`, `APP_AUTH_TOKEN=[redacted]`},
+		{"prefixed client secret", `OAUTH_CLIENT_SECRET=client-secret`, `OAUTH_CLIENT_SECRET=[redacted]`},
+		{"prefixed session token", `WEB_SESSION_TOKEN=session-secret`, `WEB_SESSION_TOKEN=[redacted]`},
+		{"prefixed secret key", `APP_SECRET_KEY=key-secret`, `APP_SECRET_KEY=[redacted]`},
+		{"AWS secret access key", `AWS_SECRET_ACCESS_KEY=aws-secret`, `AWS_SECRET_ACCESS_KEY=[redacted]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactSecrets(tt.input); got != tt.want {
+				t.Fatalf("RedactSecrets(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSafeDisplayTextStripsMetadataControlsWithoutRedacting(t *testing.T) {
 	input := "workspace\x1b]52;c;Y2xpcGJvYXJk\x07\nnext\u202e password hunter2"
 	got := SafeDisplayText(input)
@@ -115,6 +140,9 @@ func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
 	rows := discoverCodex(home)
 	if len(rows) != 1 || rows[0].ID != "11111111-2222-3333-4444-555555555555" || rows[0].CWD != "/work/multica" {
 		t.Fatalf("unexpected Multica session discovery: %#v", rows)
+	}
+	if !rows[0].HandoffOnly {
+		t.Fatalf("Multica session capability = %#v, want handoff-only", rows[0])
 	}
 }
 
@@ -368,6 +396,7 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	voiceID := "eeeeeeee-1111-2222-3333-ffffffffffff"
 	sourceOnlyID := "11111111-aaaa-bbbb-cccc-222222222222"
 	parentOnlyID := "33333333-aaaa-bbbb-cccc-444444444444"
+	nestedSourceOnlyID := "55555555-aaaa-bbbb-cccc-666666666666"
 
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-normal.jsonl"), `
 {"timestamp":"2026-08-12T09:00:00Z","type":"session_meta","payload":{"id":"`+normalID+`","cwd":"/work/codex","source":"cli","thread_source":"user","session_id":"`+normalID+`"}}
@@ -387,6 +416,9 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-parent-only.jsonl"), `
 {"timestamp":"2026-08-12T09:07:00Z","type":"session_meta","payload":{"id":"`+parentOnlyID+`","cwd":"/work/codex","session_id":"`+normalID+`","parent_thread_id":"`+normalID+`"}}
 `)
+	writeFile(t, filepath.Join(codexHome, "sessions", "2026", "08", "12", "rollout-nested-source-only.jsonl"), `
+{"timestamp":"2026-08-12T09:08:00Z","type":"session_meta","payload":{"id":"`+nestedSourceOnlyID+`","cwd":"/work/codex","source":{"subagent":{"other":"reviewer"}},"session_id":"`+normalID+`"}}
+`)
 
 	rows := discoverCodex(codexHome)
 	if len(rows) != 2 {
@@ -396,8 +428,23 @@ func TestCodexSubagentRolloutsAreIgnored(t *testing.T) {
 	for _, row := range rows {
 		seen[row.ID] = true
 	}
-	if !seen[normalID] || !seen[voiceID] || seen[guardianID] || seen[sourceOnlyID] || seen[parentOnlyID] {
+	if !seen[normalID] || !seen[voiceID] || seen[guardianID] || seen[sourceOnlyID] || seen[parentOnlyID] || seen[nestedSourceOnlyID] {
 		t.Fatalf("unexpected discovered sessions: %#v", rows)
+	}
+}
+
+func TestHandoffOnlyRowsRejectNativeResumeAndDelete(t *testing.T) {
+	row := Row{Provider: ProviderCodex, ID: "multica-session", HandoffOnly: true}
+	for name, action := range map[string]func() error{
+		"validate resume": func() error { return ValidateResume(row) },
+		"resume":          func() error { return Resume(row, ResumeOptions{}) },
+		"delete":          func() error { return Delete(row) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := action(); err == nil || !strings.Contains(err.Error(), "handoff-only") {
+				t.Fatalf("%s error = %v, want handoff-only rejection", name, err)
+			}
+		})
 	}
 }
 
