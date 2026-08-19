@@ -288,7 +288,7 @@ func writeClaudeConverted(source Row, turns []Turn) (Row, error) {
 					"id":            syntheticClaudeAPIID("msg", messageID),
 					"type":          "message",
 					"role":          "assistant",
-					"model":         "converted-transcript",
+					"model":         "<synthetic>",
 					"content":       []map[string]string{{"type": "text", "text": turn.Text}},
 					"stop_reason":   "end_turn",
 					"stop_sequence": nil,
