@@ -531,6 +531,9 @@ func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(content), `"model":"<synthetic>"`) {
+		t.Fatalf("converted claude assistant model is not synthetic:\n%s", content)
+	}
 	if !strings.Contains(string(content), `"id":"msg_`) {
 		t.Fatalf("converted claude assistant message id is not API-shaped:\n%s", content)
 	}
