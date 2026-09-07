@@ -1,63 +1,82 @@
-# Demo recording
+# Sample demo
 
-Everything needed to (re)record the README GIF. The recording is hermetic:
-it runs against a fabricated `demo/.home` and stub `codex`/`claude`
-binaries, so no real sessions are read and no real agent is launched.
+The VHS recording illustrates **Codex → Claude conversation conversion** with
+fabricated sessions. Its final CLI screen is explicitly simulated. It does not
+prove that a real Claude/Codex CLI loaded the copy or that a model continued the
+conversation; those require separate, versioned compatibility checks.
 
-## Layout
+## Run it safely
 
-| Path | Purpose |
-|---|---|
-| `demo/fixtures/gen.sh` | Fabricates `demo/.home`: 5 Codex + 5 Claude Code + 2 Gemini CLI sessions across 3 fake workspaces (`code/api-server`, `code/webapp`, `dotfiles`), timestamped relative to now. |
-| `demo/bin/codex`, `demo/bin/claude` | Stub CLIs that print a mock "session resumed" screen, so the resume-after-convert beat lands without real agents. |
-| `demo/demo.tape` | The [vhs](https://github.com/charmbracelet/vhs) script: launch, browse, preview cycle, search, preview+confirm convert (`x`, `x`), resume, end card. |
-| `demo/.home`, `demo/.build` | Generated at record time; gitignored. |
-
-## Regenerate the GIF
-
-From the repo root:
+From the repository root on Linux/macOS:
 
 ```sh
-# 1. Build the binary the tape runs (kept out of the repo tree's PATH).
+mkdir -p demo/.build
 go build -o demo/.build/showagent ./cmd/showagent
+bash demo/run-isolated.sh             # sample TUI
+bash demo/run-isolated.sh list --json # sample sessions, no real agent needed
+bash demo/run-isolated.sh --shell     # isolated shell used by the recording
+```
 
-# 2. Record. The tape regenerates demo/.home itself so timestamps are fresh.
+`SHOWAGENT_DEMO_BINARY` can point to an existing built binary. The runner creates
+a **new owned directory** under `demo/.runs` each time and prints its location.
+Generated directories are kept for inspection, gitignored, and never recursively
+deleted by the runner. The generator refuses an existing destination, including
+an existing directory containing agent files.
+
+The child environment is rebuilt with `env -i`: HOME, USERPROFILE, AppData/XDG,
+temporary files, all six provider stores, both Pi overrides, and the learnings directory point
+inside the sample root. Update checks are disabled. The working directory also
+changes into that root, so caller-local Pi settings are not read. PATH contains
+only the two demo stubs; an installed real `pi`, `opencode`, or other agent cannot
+become a target. Required Bash/system helpers are resolved before isolation.
+
+The native Windows binary can be used for CLI fixture smoke checks from Git
+Bash. The VHS recording and POSIX executable stubs target Linux/macOS; this is
+not a Windows native-resume test.
+
+## Record the illustration
+
+```sh
 vhs demo/demo.tape
 ```
 
-The result is written to `docs/demo.gif`. Requirements: `vhs` and `ttyd`
-on PATH, plus `ffmpeg`; fixture generation needs GNU date (on macOS:
-`brew install coreutils` and run with `DATE_BIN=gdate`).
+The tape produces `docs/demo.gif` and `docs/demo.mp4`. The `demo.yml` GitHub
+workflow records on Linux and uploads both for visual review; it never commits
+or publishes the recording automatically. Keep the GIF in the README and use
+the MP4 when a publishing channel needs video.
 
-If vhs is not installed locally, the container fallback works too:
+Requires VHS, ttyd, and ffmpeg, plus GNU date for fixtures. On macOS install
+coreutils or set `DATE_BIN=gdate`; the generator detects `gdate` automatically.
+The tape uses the same isolated runner as the manual demo. It opens with the
+Codex → Claude outcome, previews and confirms the conversion, then hands the
+resume command to an explicitly labeled stub. No fabricated model answer or
+restored-message count is shown.
+
+The intended loop is about 15–25 seconds at 1200×700, with a GIF budget of 3 MB.
+After recording, inspect `docs/demo.gif` at its actual display size. Keep the
+label **“Sample sessions; simulated CLI output”** beside any published embed.
+Editing a tape does not regenerate or verify the existing media asset.
+
+## Fixtures and regression checks
+
+`fixtures/gen.sh` writes 5 Codex, 5 Claude, and 2 Gemini sessions across three
+sample workspaces. It JSON-escapes paths and messages, including quotes,
+backslashes, control characters, and Unicode. To inspect fresh fixtures:
 
 ```sh
-docker run --rm -v "$PWD:/vhs" ghcr.io/charmbracelet/vhs demo/demo.tape
+bash demo/fixtures/gen.sh # prints a new owned root; never reuses demo/.home
+NOW=2026-09-06T12:00:00Z bash demo/fixtures/gen.sh # fixed timestamps
 ```
 
-The social-preview card (`docs/social-preview.png`, 1280x640) is a single
-frame lifted from the GIF at the convert moment:
+Python 3.9+ runs the regression checks. A built binary enables the full launcher
+smoke test; without one those checks are explicitly skipped.
 
 ```sh
-ffmpeg -y -ss 14 -i docs/demo.gif -frames:v 1 \
-  -vf "scale=-1:640:flags=lanczos,pad=1280:640:(ow-iw)/2:0:color=0x1e1e2e" \
-  docs/social-preview.png
+SHOWAGENT_DEMO_BINARY="$PWD/demo/.build/showagent" python3 demo/test_demo.py -v
+shellcheck demo/run-isolated.sh demo/fixtures/gen.sh demo/bin/*
+shellcheck --shell=bash demo/shell.rc
 ```
 
-(Adjust `-ss` so the frame shows the freshly converted row selected.)
-
-## Tweaking
-
-- **Fixtures**: edit `demo/fixtures/gen.sh`. Message texts must stay
-  JSON-safe (no double quotes or backslashes). Run it standalone to
-  inspect the output: `demo/fixtures/gen.sh /tmp/fakehome`, then
-  `HOME=/tmp/fakehome CODEX_HOME=/tmp/fakehome/.codex CLAUDE_HOME=/tmp/fakehome/.claude JCODE_HOME=/tmp/fakehome/.jcode GEMINI_CLI_HOME=/tmp/fakehome showagent list`
-  prints the plain table of everything that parsed.
-- **Timestamps**: pin with `NOW=2026-07-08T12:00:00Z demo/fixtures/gen.sh`
-  for reproducible output; by default they are relative to the current
-  time so the TUI shows "2h ago".
-- **Size budget**: target < 3 MB. If the GIF comes out larger, drop the
-  tape to `Set Width 1000` / `Set FontSize 18`.
-- **Keybindings**: the tape encodes `/` (search), `p` (preview cycle),
-  `x` (preview / confirm hand off), `enter` (resume). If bindings change in
-  `internal/tui/keys.go`, update the tape before re-recording.
+The tests use only owned synthetic directories. They check refusal to overwrite
+existing data, JSON paths, foreign Pi overrides, and source preservation during
+preview/conversion. They do not invoke real agent CLIs or model accounts.

@@ -1,0 +1,41 @@
+name: demo
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/demo.yml'
+      - 'demo/**'
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the sample binary
+        run: |
+          mkdir -p demo/.build
+          go build -o demo/.build/showagent ./cmd/showagent
+      - name: Record isolated sample sessions
+        uses: charmbracelet/vhs-action@f6d7db07a432fcd3b06772628d36a57f96d95dcf
+        with:
+          version: v0.11.0
+          path: demo/demo.tape
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: sample-demo
+          path: |
+            docs/demo.gif
+            docs/demo.mp4
+          if-no-files-found: error
+          retention-days: 7

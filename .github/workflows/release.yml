@@ -30,6 +30,8 @@ jobs:
           cache: true
       - run: go vet ./...
       - run: go test ./... -race -shuffle=on
+      - name: Release artifact and isolated evidence contract tests
+        run: python3 -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
@@ -80,6 +82,15 @@ jobs:
             tar -czf "dist/${name}.tar.gz" -C stage "$bin" LICENSE README.md
             cp "stage/${bin}" "dist/${name}"
           fi
+          python3 scripts/release_artifacts.py pack --tag "$TAG" \
+            --goos "$GOOS" --goarch "$GOARCH" --binary "stage/${bin}" --dist dist
+      - name: Verify native release binary
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(stage/showagent --version)" = "showagent ${TAG}"
+          python3 scripts/verify-handoff.py --binary "$PWD/stage/showagent"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: showagent-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -100,11 +111,13 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Generate SHA256SUMS
+      - name: Verify payloads and generate registry manifest and checksums
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -eu
-          cd dist
-          sha256sum -- * > SHA256SUMS
+          python3 scripts/release_artifacts.py finalize --tag "$TAG" --dist dist
+          python3 scripts/release_artifacts.py verify --tag "$TAG" --dist dist
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:

@@ -216,6 +216,26 @@ func writeCodexConverted(source Row, turns []Turn) (Row, error) {
 			}); err != nil {
 				return err
 			}
+			// Codex stores model context as response_item messages, but its
+			// thread history and session preview read user_message/agent_message
+			// events. Keep both views of the same transferable text. Legacy
+			// message events support implicit turns without inventing task state.
+			// Verified against openai/codex rust-v0.153.3:
+			// app-server-protocol/src/protocol/thread_history.rs and rollout/src/list.rs.
+			eventType := "agent_message"
+			if turn.Role == "user" {
+				eventType = "user_message"
+			}
+			if err := encoder.Encode(map[string]any{
+				"timestamp": timestamp,
+				"type":      "event_msg",
+				"payload": map[string]string{
+					"type":    eventType,
+					"message": turn.Text,
+				},
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
