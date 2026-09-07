@@ -1,0 +1,54 @@
+name: publish-mcp
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable GitHub release tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-mcp-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          gh release view "$TAG" --json tagName,isDraft,isPrerelease |
+            jq -e --arg tag "$TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
+          gh release download "$TAG" --dir dist
+          python3 scripts/release_artifacts.py verify --tag "$TAG" --dist dist
+      - name: Install the pinned official publisher
+        run: |
+          set -eu
+          curl -fsSL --retry 3 \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz \
+            -o publisher.tar.gz
+          printf '%s\n' 'a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  publisher.tar.gz' | sha256sum -c -
+          mkdir publisher
+          tar -xzf publisher.tar.gz -C publisher mcp-publisher
+          publisher/mcp-publisher validate dist/server.json
+      - name: Publish using this repository's identity
+        run: |
+          publisher/mcp-publisher login github-oidc
+          publisher/mcp-publisher publish dist/server.json

@@ -79,8 +79,15 @@ an authenticated agent can continue the conversation; see
 committed root `server.json` intentionally remains a snapshot of already
 published bundles. Do not update it to future URLs or submit the new registry
 manifest until the GitHub release and every referenced bundle are publicly
-available and their hashes have been checked. The workflow does not publish to
-the MCP Registry or update the Homebrew tap.
+available and their hashes have been checked. The tag workflow does not publish
+to the MCP Registry or update the Homebrew tap.
+
+For the registry, dispatch `publish-mcp.yml` from `main` with the existing stable
+release tag. This separate workflow downloads and verifies the entire published
+artifact set, validates `server.json` with a pinned official publisher, then
+uses GitHub OIDC to publish under this repository's namespace. It needs no
+stored personal token and rejects draft or prerelease assets. A successful
+GitHub release alone does not mean this registry step has run.
 
 After the release exists, prepare the separate Homebrew formula change using
 the four published `.tar.gz` URLs and their actual SHA256SUMS entries. Review and
