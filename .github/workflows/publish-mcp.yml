@@ -33,7 +33,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -eu
-          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           gh release view "$TAG" --json tagName,isDraft,isPrerelease |
             jq -e --arg tag "$TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
           gh release download "$TAG" --dir dist

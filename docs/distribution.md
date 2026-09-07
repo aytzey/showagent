@@ -7,14 +7,14 @@ has not been released yet.
 
 ## Channel snapshot
 
-Checked on 2026-09-06; these are observations, not pinned upgrade targets.
+Checked on 2026-09-07; these are observations, not pinned upgrade targets.
 
 | Channel | Observed version | What to verify |
 |---|---|---|
-| GitHub latest / shell installer | v0.11.2 | The platform archive, its SHA256SUMS entry, and the commands in that release's README |
+| GitHub latest / shell installer | v0.11.3 | All 17 published files downloaded and verified; [release workflow](https://github.com/aytzey/showagent/actions/runs/34168549236) passed |
 | `go install ...@latest` | Resolved Go module tag | `showagent --version` and `showagent --help`; this installs a tagged module, not the current `main` checkout |
-| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.11.1 | Formula URL/hash and installed binary; the tap is a separate repository |
-| Published MCPB files and repository `server.json` | 0.11.0 | The MCP tools returned by that bundle, its native binary, and client compatibility |
+| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.11.3 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/34168872534) passed against the published archives |
+| Published MCPB files, MCP Registry and repository `server.json` | 0.11.3 | Five bundles use the same binaries as CLI downloads; [registry publication](https://github.com/aytzey/showagent/actions/runs/34168794428) passed and the live API reports this version as active/latest |
 
 The v0.11.0 CLI does not have the newer `transcript` CLI command. Its MCP server
 already exposes `get_transcript`; missing a CLI subcommand does **not** mean the
@@ -27,7 +27,7 @@ unrelated packages to have identical version numbers.
 
 The tag workflow builds Linux and macOS `amd64`/`arm64` and experimental Windows
 `amd64`. Each target has an archive, a standalone binary, and a `.mcpb` bundle.
-Python 3 is a release/test dependency only; the installed Go binary needs no
+Python 3.10+ is a release/test dependency only; the installed Go binary needs no
 Python runtime. The MCPB ZIP contains the same binary bytes as the CLI archive,
 a manifest, the license, and the README from the tagged source.
 

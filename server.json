@@ -8,49 +8,49 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/aytzey/showagent#install",
-  "version": "0.11.0",
+  "version": "0.11.3",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_amd64.mcpb",
-      "version": "0.11.0",
-      "fileSha256": "13f02ab865b08ac3f9460dcca909a212e5e8ccae8314d1100987253cf088ed62",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.3/showagent_v0.11.3_linux_amd64.mcpb",
+      "version": "0.11.3",
+      "fileSha256": "976df1cbe58d7ba432681b7ea42a9f52037e2bc22f0ae52c5459b025a310a51e",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_linux_arm64.mcpb",
-      "version": "0.11.0",
-      "fileSha256": "0d39c29fb7008b82b2ed2d4c78f51364251a5748c67cc911e0e0965dd556f153",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.3/showagent_v0.11.3_linux_arm64.mcpb",
+      "version": "0.11.3",
+      "fileSha256": "380fe9bc12970ea17a0e293c8d361a52151d5b823ad019613dfc66f70c3967f7",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_amd64.mcpb",
-      "version": "0.11.0",
-      "fileSha256": "1260859664d26b3038610f6011eadcf3d390de3eb55273dffa901c6fae602bcb",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.3/showagent_v0.11.3_darwin_amd64.mcpb",
+      "version": "0.11.3",
+      "fileSha256": "1bfd485dc12255330a36b03ccdd3144597a2870007ba6b6d2b22b273b69ac67f",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_darwin_arm64.mcpb",
-      "version": "0.11.0",
-      "fileSha256": "e21bc7d34c221faf85b53c721b922c74e099cd8a4420e18581a166c626bc552f",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.3/showagent_v0.11.3_darwin_arm64.mcpb",
+      "version": "0.11.3",
+      "fileSha256": "226322cb1a0d1054f4814ce55aaab115287cfd8245375c4e2a2d598c92c22eaa",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.0/showagent_v0.11.0_windows_amd64.mcpb",
-      "version": "0.11.0",
-      "fileSha256": "19e3096c650c5118d234e1f4485799c89417ef0d40052817b6cda6573d698546",
+      "identifier": "https://github.com/aytzey/showagent/releases/download/v0.11.3/showagent_v0.11.3_windows_amd64.mcpb",
+      "version": "0.11.3",
+      "fileSha256": "96545d16652e95b36c0563de7b1712dc4d30a3e3de77731224e1cabd9fea5c41",
       "transport": {
         "type": "stdio"
       }
