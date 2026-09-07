@@ -23,7 +23,11 @@ jobs:
       - name: Workflow lint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Shell lint
-        run: shellcheck scripts/*.sh demo/fixtures/*.sh demo/bin/*
+        run: |
+          shellcheck scripts/*.sh demo/run-isolated.sh demo/fixtures/*.sh demo/bin/*
+          shellcheck --shell=bash demo/shell.rc
+      - name: Release artifact and isolated evidence contract tests
+        run: python3 -B -m unittest discover -s scripts -p 'test_*.py'
       - uses: golangci/golangci-lint-action@v9.3.0
         with:
           version: v2.12.2
@@ -48,6 +52,10 @@ jobs:
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
       - run: go build ./cmd/showagent
+      - name: Isolated CLI handoff smoke
+        run: python3 scripts/verify-handoff.py --binary "$PWD/showagent"
+      - name: Demo isolation regression checks
+        run: SHOWAGENT_DEMO_BINARY="$PWD/showagent" python3 demo/test_demo.py -v
 
   cross-compile:
     runs-on: ubuntu-latest
