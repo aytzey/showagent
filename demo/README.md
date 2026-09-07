@@ -40,6 +40,11 @@ not a Windows native-resume test.
 vhs demo/demo.tape
 ```
 
+The tape produces `docs/demo.gif` and `docs/demo.mp4`. The `demo.yml` GitHub
+workflow records on Linux and uploads both for visual review; it never commits
+or publishes the recording automatically. Keep the GIF in the README and use
+the MP4 when a publishing channel needs video.
+
 Requires VHS, ttyd, and ffmpeg, plus GNU date for fixtures. On macOS install
 coreutils or set `DATE_BIN=gdate`; the generator detects `gdate` automatically.
 The tape uses the same isolated runner as the manual demo. It opens with the

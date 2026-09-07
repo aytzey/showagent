@@ -2,6 +2,7 @@
 /showagent-*
 /dist/
 /build/
+/docs/demo.mp4
 
 *.test
 *.out

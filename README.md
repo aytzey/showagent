@@ -13,8 +13,8 @@ Codex · Claude Code · Gemini CLI · OpenCode · jcode · Pi</p>
 
 ![showagent walkthrough using sample sessions and simulated agent output](docs/demo.gif)
 
-*Illustrated walkthrough: sample sessions and simulated CLI output. The final
-agent response is a demo stub, not a real model continuation. See
+*Sample sessions; simulated CLI output. The handoff uses the real showagent
+binary; the target CLI is a labeled demo stub. See
 [compatibility evidence](docs/compatibility.md) for what has been tested.*
 
 Started debugging in Codex and want Claude's take? Find the old session,
