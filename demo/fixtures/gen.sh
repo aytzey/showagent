@@ -9,9 +9,10 @@
 # personal data.
 #
 # Usage:
-#   demo/fixtures/gen.sh [FAKEHOME]
+#   demo/fixtures/gen.sh [NEW_DIRECTORY]
 #
-#   FAKEHOME defaults to demo/.home (next to this script's parent dir).
+#   Without an argument, creates a fresh root under demo/.runs. An explicit
+#   directory must not exist. The generated root is printed on stdout.
 #   NOW=2026-07-08T12:00:00Z pins "now" for reproducible timestamps;
 #   it defaults to the current UTC time so previews read "2h ago".
 #
@@ -30,9 +31,37 @@ if ! "$DATE_BIN" -u -d "@0" +%s >/dev/null 2>&1; then
 fi
 
 demo_dir="$(cd "$(dirname "$0")/.." && pwd)"
-FAKEHOME="${1:-$demo_dir/.home}"
+[ "$#" -le 1 ] || { echo "usage: gen.sh [NEW_DIRECTORY]" >&2; exit 2; }
+if [ "$#" -eq 1 ]; then
+	# Never remove an arbitrary caller-supplied directory to create samples.
+	mkdir -- "$1" || { echo "gen.sh: destination must be a new directory" >&2; exit 1; }
+	FAKEHOME="$(cd "$1" && pwd -P)"
+else
+	mkdir -p "$demo_dir/.runs"
+	FAKEHOME="$(mktemp -d "$demo_dir/.runs/showagent-demo.XXXXXX")"
+fi
+printf '%s\n' 'showagent-demo-v1' >"$FAKEHOME/.showagent-demo-owned"
+chmod 700 "$FAKEHOME"
 NOW="${NOW:-$("$DATE_BIN" -u +%Y-%m-%dT%H:%M:%SZ)}"
 NOW_EPOCH="$("$DATE_BIN" -u -d "$NOW" +%s)"
+
+json_escape() {
+	local value="$1" code octal character escaped
+	value="${value//\\/\\\\}"
+	value="${value//\"/\\\"}"
+	for ((code = 1; code < 32; code++)); do
+		printf -v octal '%03o' "$code"
+		printf -v character '%b' "\\$octal"
+		printf -v escaped '\\u%04x' "$code"
+		value="${value//"$character"/"$escaped"}"
+	done
+	printf '%s' "$value"
+}
+
+# Git Bash cwd values must be native paths for a Windows Go binary.
+native_path() {
+	if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
 
 # Timestamp helpers. The argument is "seconds before NOW".
 iso() { "$DATE_BIN" -u -d "@$((NOW_EPOCH - $1))" +%Y-%m-%dT%H:%M:%SZ; }
@@ -45,18 +74,21 @@ WS_API="$FAKEHOME/code/api-server"
 WS_WEB="$FAKEHOME/code/webapp"
 WS_DOT="$FAKEHOME/dotfiles"
 
-# Start clean, but only remove what we own.
-rm -rf "$FAKEHOME/.codex" "$FAKEHOME/.claude" "$FAKEHOME/.jcode" "$FAKEHOME/.gemini"
 mkdir -p "$WS_API" "$WS_WEB" "$WS_DOT" \
 	"$FAKEHOME/.codex/sessions" "$FAKEHOME/.claude/projects" "$FAKEHOME/.jcode" \
-	"$FAKEHOME/.gemini/tmp"
+	"$FAKEHOME/.gemini/tmp" "$FAKEHOME/.pi/agent/sessions" \
+	"$FAKEHOME/.local/share/opencode" "$FAKEHOME/.config" "$FAKEHOME/.cache" \
+	"$FAKEHOME/.local/state" "$FAKEHOME/.tmp" \
+	"$FAKEHOME/AppData/Roaming" "$FAKEHOME/AppData/Local"
+WS_API="$(native_path "$WS_API")"
+WS_WEB="$(native_path "$WS_WEB")"
+WS_DOT="$(native_path "$WS_DOT")"
 
 # codex_session AGE UUID CWD role:text...
 #
 # AGE is seconds-before-NOW of the LAST message; earlier records are spaced
 # 90s apart before it, and the session_meta record (plus the filename stamp)
-# marks the start. Message texts must be JSON-safe: no double quotes or
-# backslashes (use apostrophes).
+# marks the start. Every variable inserted into JSON is escaped.
 codex_session() {
 	local age="$1" uuid="$2" cwd="$3"
 	shift 3
@@ -68,14 +100,14 @@ codex_session() {
 	mkdir -p "$dir"
 
 	printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s"}}\n' \
-		"$(iso "$start")" "$uuid" "$cwd" >"$file"
+		"$(iso "$start")" "$uuid" "$(json_escape "$cwd")" >"$file"
 
 	local index=0 role text t
 	for entry in "$@"; do
 		index=$((index + 1))
 		t=$((age + (count - index) * 90))
 		role="${entry%%:*}"
-		text="${entry#*:}"
+		text="$(json_escape "${entry#*:}")"
 		if [ "$role" = "u" ]; then
 			printf '{"timestamp":"%s","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"%s"}]}}\n' \
 				"$(iso "$t")" "$text" >>"$file"
@@ -88,13 +120,13 @@ codex_session() {
 }
 
 # claude_session AGE UUID CWD role:text...
-# Same conventions as codex_session; the project directory slug mirrors
-# claudeProjectDir in internal/session/handoff.go ('/' -> '-').
+# Short fixture project keys avoid path-length problems; cwd lives in JSON.
+# This picker illustration is not a native Claude loader proof.
 claude_session() {
 	local age="$1" uuid="$2" cwd="$3"
 	shift 3
 	local count=$#
-	local slug="${cwd//\//-}"
+	local slug="demo-${cwd##*/}"
 	local dir="$FAKEHOME/.claude/projects/$slug"
 	local file="$dir/$uuid.jsonl"
 	mkdir -p "$dir"
@@ -105,13 +137,13 @@ claude_session() {
 		index=$((index + 1))
 		t=$((age + (count - index) * 90))
 		role="${entry%%:*}"
-		text="${entry#*:}"
+		text="$(json_escape "${entry#*:}")"
 		if [ "$role" = "u" ]; then
 			printf '{"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%d","timestamp":"%s","cwd":"%s","sessionId":"%s"}\n' \
-				"$text" "$uuid" "$index" "$(iso "$t")" "$cwd" "$uuid" >>"$file"
+				"$text" "$uuid" "$index" "$(iso "$t")" "$(json_escape "$cwd")" "$uuid" >>"$file"
 		else
 			printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]},"uuid":"%s-%d","timestamp":"%s","cwd":"%s","sessionId":"%s"}\n' \
-				"$text" "$uuid" "$index" "$(iso "$t")" "$cwd" "$uuid" >>"$file"
+				"$text" "$uuid" "$index" "$(iso "$t")" "$(json_escape "$cwd")" "$uuid" >>"$file"
 		fi
 	done
 	echo "claude  $(iso "$age")  $cwd" >&2
@@ -127,7 +159,7 @@ gemini_session() {
 	shift 3
 	local count=$#
 	local start=$((age + count * 90))
-	local slug="${cwd//\//-}"
+	local slug="demo-${cwd##*/}"
 	local dir="$FAKEHOME/.gemini/tmp/$slug"
 	local file
 	file="$dir/chats/session-$(filestamp "$start")-${uuid%%-*}.json"
@@ -142,7 +174,7 @@ gemini_session() {
 		index=$((index + 1))
 		t=$((age + (count - index) * 90))
 		role="${entry%%:*}"
-		text="${entry#*:}"
+		text="$(json_escape "${entry#*:}")"
 		type=user
 		[ "$role" = "a" ] && type=gemini
 		[ "$index" -gt 1 ] && printf ',' >>"$file"
@@ -162,7 +194,7 @@ D=86400
 codex_session $((2 * H)) "1f7c9a2e-4b31-4c8e-9d02-8a5e3f6b1c44" "$WS_API" \
 	"u:Add rate limiting to POST /v1/charges - token bucket per API key, backed by Redis" \
 	"a:Added internal/ratelimit with a token bucket keyed by API key and wired it into the charges handler as middleware." \
-	"u:429 responses should include a Retry-After header and a JSON error body" \
+	'u:429 responses should include "Retry-After" and a JSON error body' \
 	"a:Done - the middleware now writes Retry-After and a rate_limited error object. Added handler tests for both paths." \
 	"u:the redis TTL test is flaky - mock the clock instead of sleeping"
 
@@ -228,3 +260,4 @@ gemini_session $((26 * H)) "8c5f2d90-b3a7-4e14-a1c8-6f9e0b4d7a52" "$WS_DOT" \
 	"u:skip the snapshot when the machine is on a metered connection"
 
 echo "fake home ready: $FAKEHOME (NOW=$NOW)" >&2
+native_path "$FAKEHOME"

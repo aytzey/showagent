@@ -1,0 +1,4 @@
+*.sh text eol=lf
+/bin/* text eol=lf
+shell.rc text eol=lf
+*.tape text eol=lf

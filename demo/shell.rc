@@ -1,0 +1,3 @@
+# Sourced only by run-isolated.sh --shell after env -i clears startup state.
+showagent() { "$SHOWAGENT_DEMO_BINARY" "$@"; }
+PS1='sample demo > '

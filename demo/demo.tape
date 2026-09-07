@@ -1,19 +1,5 @@
-# demo.tape — the showagent README GIF.
-#
-# Run from the repo root (see demo/README.md for the full recipe):
-#   go build -o demo/.build/showagent ./cmd/showagent
-#   vhs demo/demo.tape
-#
-# The recording is fully sandboxed: HOME points at the fabricated
-# demo/.home (regenerated below so timestamps read "2h ago"), every
-# provider's home override points inside it, and PATH is prefixed with
-# demo/bin so `codex` / `claude` are stubs. The recorder's real sessions
-# are never read or shown.
-#
-# Keys used (verify against internal/tui/keys.go before re-recording):
-#   p cycles the preview column, / searches, x previews and x again confirms
-#   conversion to the target agent, enter resumes. Provider filters live on 1..9.
-
+# Sample-data illustration. No real agent or model is invoked.
+# Build demo/.build/showagent first; see demo/README.md.
 Output docs/demo.gif
 
 Set Shell bash
@@ -22,67 +8,31 @@ Set Width 1200
 Set Height 700
 Set Padding 12
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 60ms
+Set TypingSpeed 35ms
 
-# --- hidden setup: fake home, stub PATH, fresh timestamps --------------------
 Hide
-Type `demo/fixtures/gen.sh >/dev/null 2>&1`
+Type "exec bash demo/run-isolated.sh --shell"
 Enter
-Type `export HOME="$PWD/demo/.home" CODEX_HOME="$PWD/demo/.home/.codex" CLAUDE_HOME="$PWD/demo/.home/.claude" JCODE_HOME="$PWD/demo/.home/.jcode"`
+Sleep 1s
+Type `printf '\033[2J\033[H\n  Codex → Claude. Bring the conversation.\n\n  Sample sessions; simulated CLI output.\n\n'`
 Enter
-Type `export GEMINI_CLI_HOME="$PWD/demo/.home" OPENCODE_DATA_HOME="$PWD/demo/.home/.local/share/opencode"`
-Enter
-Type `export PATH="$PWD/demo/bin:$PWD/demo/.build:$PATH" PS1='❯ '`
-Enter
-Type `clear`
-Enter
-Sleep 500ms
 Show
-
-# --- 1. launch: grouped sessions from three agents, newest first --------------
+Sleep 2s
 Type "showagent"
-Sleep 500ms
 Enter
+Sleep 1.5s
+
+# The newest fixture is the Codex rate-limit session. Show the handoff early.
+Type "x"
+Sleep 2.5s
+Type "x"
 Sleep 3s
 
-# --- 2. browse: detail panel follows the cursor -------------------------------
-Down
-Sleep 800ms
-Down
-Sleep 800ms
-Up
-Sleep 1.2s
-
-# --- 3. preview cycle: first message -> latest -> both -------------------------
-Type "p"
-Sleep 1.2s
-Type "p"
-Sleep 1.5s
-
-# --- 4. search: fuzzy-find the Codex rate-limiting session --------------------
-Type "/"
-Sleep 500ms
-Type "rate limit"
-Sleep 1.5s
+# A new native-format row; resume reaches a labeled illustration stub.
 Enter
-Sleep 1.5s
-
-# --- 5. money shot: preview, then convert the Codex session to Claude Code ----
-Type "x"
-Sleep 2s
-Type "x"
-Sleep 3.5s
-
-# --- 6. resume the converted session in its new agent -------------------------
-Enter
-Sleep 4s
-
-# --- 7. end card ---------------------------------------------------------------
+Sleep 2.5s
 Hide
-Ctrl+C
-Sleep 300ms
-Type `clear && printf '\n\n\n   \033[1mshowagent\033[0m — every AI coding session on your machine, in one TUI\n\n   go install github.com/aytzey/showagent/cmd/showagent@latest\n\n'`
+Type `printf '\n  Switch coding agents. Bring the conversation.\n\n  brew install aytzey/tap/showagent\n\n  Sample sessions; simulated CLI output.\n'`
 Enter
-Sleep 300ms
 Show
 Sleep 3s
