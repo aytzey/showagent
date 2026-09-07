@@ -17,6 +17,26 @@ test. This page distinguishes the checks we can report.
 
 ## Recorded checks
 
+### Published v0.11.3, 2026-09-07
+
+The [release workflow](https://github.com/aytzey/showagent/actions/runs/34168549236)
+passed Linux race/shuffled tests, built all five targets, and passed the Linux
+amd64 binary's isolated handoff smoke. All 17 published files were downloaded
+after publication and passed inventory, checksum, and archive/MCPB byte checks.
+
+The published Windows amd64 executable's GitHub build attestation was verified.
+That exact `showagent v0.11.3` binary passed all six isolated fixture checks on
+Windows 11, and the actual Codex **0.153.4** reader returned three visible turns
+from the converted Claude-format fixture. Its SHA256 is
+`809d550a497da22712c63abd4229d9dd67bb85fa4a4e907613c6002a567777d5`.
+No model call, real Claude CLI resume, or MCP desktop-host installation was
+performed. These checks preserve the distinctions in the table above.
+
+[Homebrew CI](https://github.com/aytzey/homebrew-tap/actions/runs/34168872534)
+also installed the published formula on Linux and macOS, passed its test, and
+reported `showagent v0.11.3` from both hosts. This is native CLI installation
+evidence, not an agent-resume check.
+
 ### Local growth-readiness build, 2026-09-07
 
 These checks used the unreleased Windows amd64 build
@@ -84,7 +104,7 @@ that a real model loaded or continued an imported conversation. See the
 
 ## Recording a native check
 
-The reusable smoke harness creates its own temporary stores and strips inherited
+The reusable smoke harness requires Python 3.10+, creates its own temporary stores and strips inherited
 credentials, executable paths, and provider overrides. It never calls a model:
 
 ```sh
