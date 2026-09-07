@@ -34,6 +34,8 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: sample-demo
-          path: docs/demo.gif
+          path: |
+            docs/demo.gif
+            docs/demo.mp4
           if-no-files-found: error
           retention-days: 7
