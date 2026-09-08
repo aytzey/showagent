@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise a built binary with disposable conversations, never the user's stores.
 
-Optional --codex checks the native local thread reader, without a model call.
+Optional --codex checks the native local thread reader. The harness does not
+instrument the real app-server method exchange, so model-call absence remains
+unverified by this real-binary check.
 File conversion, native loading, and model continuation are separate evidence.
 """
 
@@ -269,8 +271,10 @@ def verify(binary, report, codex=None):
                     "Imported context was not persisted in the native transcript")
             report["native_context_import"] = {
                 "status": "passed", "version": command(codex, ["--version"], env, workspace).strip(),
-                "method": "thread/inject_items", "same_session_id": True,
-                "original_prefix_preserved": True, "model_call": False,
+                "same_session_id": True,
+                "original_prefix_preserved": True,
+                "app_server_exchange_observation": "not_instrumented",
+                "model_call_observation": "not_instrumented",
                 "native_history_visible": False,
             }
             passed("actual Codex app-server context import preserves ID and native prefix")
@@ -282,7 +286,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--codex", type=Path, help="Optional real Codex executable; local reader only, no model calls")
+    parser.add_argument("--codex", type=Path, help="Optional real Codex executable; model-call traffic is not instrumented")
     args = parser.parse_args()
     report = {"date_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "platform": platform.platform(),
               "checks": [], "synthetic_conversion": "not_run", "native_loader": {"status": "not_run"},

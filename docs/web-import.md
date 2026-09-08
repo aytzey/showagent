@@ -22,6 +22,10 @@ Preview before writing:
 showagent import --file conversation.txt --to codex --cwd ./my-project --dry-run
 ```
 
+The preview shows the message count plus bounded, secret-redacted first and
+last message boundaries so you can catch the wrong source before anything is
+written.
+
 Remove `--dry-run` to create the session. `--cwd` selects where the agent will work; the session itself remains in that agent's normal session store.
 
 For a readable public share link:

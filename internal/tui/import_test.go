@@ -249,6 +249,14 @@ func TestBusyImportCannotBeDismissedBeforeItsResult(t *testing.T) {
 	if m.importFlow == nil || m.importFlow.busy == "" {
 		t.Fatal("Escape hid an import while its native write was still running")
 	}
+
+	_, quitCmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	if quitCmd == nil {
+		t.Fatal("Ctrl+C did not quit a busy import wizard")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("Ctrl+C produced %#v, want tea.QuitMsg", quitCmd())
+	}
 }
 
 func ctrlEnter() tea.KeyPressMsg {

@@ -531,7 +531,11 @@ func TestImportTextDryRunDoesNotWriteSession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
-	for _, want := range []string{"import preview", "transcript file", "codex", workspace, "2 messages", "text only"} {
+	for _, want := range []string{
+		"import preview", "transcript file", "codex", workspace, "2 messages", "text only",
+		"first:     user: Keep the index local.",
+		"last:      assistant: Use an embedded database.",
+	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("preview missing %q:\n%s", want, stdout.String())
 		}
@@ -561,6 +565,9 @@ func TestImportTextCreatesNativeSession(t *testing.T) {
 	}
 	if result["operation"] != "create" || result["source"] != "transcript file" || result["provider"] != "codex" || result["workspace"] != workspace || result["message_count"] != float64(2) {
 		t.Fatalf("unexpected import result: %#v", result)
+	}
+	if _, exists := result["first_message"]; exists {
+		t.Fatalf("completed import leaked dry-run boundary fields: %#v", result)
 	}
 	id, _ := result["session_id"].(string)
 	row, err := resolveSession(session.Discover(), id)
@@ -615,11 +622,40 @@ func TestImportVersionedJSONDryRunPreservesRolesWithoutWriting(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output is not JSON: %v", err)
 	}
-	if result["source"] != "transcript file" || result["message_count"] != float64(2) || result["dry_run"] != true {
+	if result["source"] != "transcript file" || result["message_count"] != float64(2) || result["dry_run"] != true ||
+		result["first_message"] != "user: JSON question" || result["last_message"] != "assistant: JSON answer" {
 		t.Fatalf("unexpected JSON preview = %#v", result)
 	}
 	if after := len(session.Discover()); after != before {
 		t.Fatalf("JSON dry-run changed discovered session count: before=%d after=%d", before, after)
+	}
+}
+
+func TestImportDryRunBoundariesAreSafeRedactedAndBounded(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	longAnswer := strings.Repeat("çok uzun yanıt ", 30)
+	input := "User:\npassword=hunter2\x1b]8;;https://example.com\x07click\x1b]8;;\x07\n\nAssistant:\n" + longAnswer
+
+	var stdout, stderr bytes.Buffer
+	code := runWithInput(
+		[]string{"import", "--stdin", "--to", "codex", "--cwd", workspace, "--dry-run", "--json"},
+		strings.NewReader(input), &stdout, &stderr,
+	)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	var result importCLIResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.FirstMessage, "hunter2") || strings.Contains(result.FirstMessage, "\x1b") ||
+		!strings.Contains(result.FirstMessage, "password=[redacted]") {
+		t.Fatalf("unsafe first boundary = %q", result.FirstMessage)
+	}
+	if len([]rune(result.FirstMessage)) > maxImportPreviewRunes || len([]rune(result.LastMessage)) > maxImportPreviewRunes ||
+		!strings.HasSuffix(result.LastMessage, "...") {
+		t.Fatalf("unbounded preview: first=%q last=%q", result.FirstMessage, result.LastMessage)
 	}
 }
 

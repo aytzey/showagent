@@ -370,6 +370,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Keep the terminal's unconditional interrupt available inside every
+	// import step, including while a native write is in progress.
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
 	if m.loading {
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit

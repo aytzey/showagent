@@ -86,6 +86,39 @@ func TestParseClaudeHTMLPreservesTextBlockBoundaries(t *testing.T) {
 	}
 }
 
+func TestParseClaudeHTMLSkipsEntirelyNonTextTurns(t *testing.T) {
+	html := []byte(`<script type="application/json">{
+  "chat_messages":[
+    {"uuid":"u1","sender":"human","content":[{"type":"tool_use","name":"search"}]},
+    {"uuid":"a1","sender":"assistant","content":[{"type":"text","text":"Visible answer"}]}
+  ]
+}</script>`)
+
+	conversation, err := ParseClaudeHTML(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversation.Messages) != 1 || conversation.Messages[0].Role != RoleAssistant || conversation.Messages[0].Text != "Visible answer" {
+		t.Fatalf("messages = %#v", conversation.Messages)
+	}
+	if len(conversation.Warnings) != 1 || conversation.Warnings[0].Code != "omitted_non_text_content" || conversation.Warnings[0].Count != 1 {
+		t.Fatalf("warnings = %#v", conversation.Warnings)
+	}
+}
+
+func TestParseClaudeHTMLFailsClosedWhenOnlyNonTextTurnsRemain(t *testing.T) {
+	html := []byte(`<script type="application/json">{
+  "chat_messages":[
+    {"uuid":"u1","sender":"human","content":[{"type":"tool_use","name":"search"}]},
+    {"uuid":"a1","sender":"assistant","content":[{"type":"image","source":"omitted"}]}
+  ]
+}</script>`)
+
+	if _, err := ParseClaudeHTML(html); !errors.Is(err, ErrConversationUnidentifiable) {
+		t.Fatalf("error = %v, want ErrConversationUnidentifiable", err)
+	}
+}
+
 func TestParseShareHTMLFailsClosed(t *testing.T) {
 	tests := []struct {
 		name string

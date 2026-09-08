@@ -265,6 +265,32 @@ func TestApplyImportReturnsBoundedCodexProtocolErrorAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestCodexImportRPCReaderStopsWhenClientFinishes(t *testing.T) {
+	client := &codexImportRPCClient{
+		responses: make(chan codexImportRPCRead, 1),
+		finished:  make(chan struct{}),
+	}
+	readerDone := make(chan struct{})
+	go func() {
+		client.read(strings.NewReader(strings.Repeat("{\"id\":1,\"result\":{}}\n", 128)))
+		close(readerDone)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for len(client.responses) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(client.responses) == 0 {
+		t.Fatal("reader did not fill its response buffer")
+	}
+	close(client.finished)
+	select {
+	case <-readerDone:
+	case <-time.After(time.Second):
+		t.Fatal("reader stayed blocked on a full response buffer after client shutdown")
+	}
+}
+
 func TestCodexAppServerHelperProcess(t *testing.T) {
 	if os.Getenv("SHOWAGENT_FAKE_CODEX_APP_SERVER") != "1" {
 		return

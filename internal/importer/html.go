@@ -508,6 +508,14 @@ func claudeMessageCandidate(container map[string]any, rawMessages []any) (conver
 		}
 		message, supported, explicit, losses, err := messageFromObject(messageObject)
 		if err != nil {
+			// Claude snapshots may contain a supported human/assistant turn whose
+			// content is entirely attachments, tool use, or another non-text block.
+			// Omit that turn while retaining later visible text. An empty or
+			// otherwise malformed text turn still fails closed.
+			if losses > 0 {
+				candidate.warnings["omitted_non_text_content"] += losses
+				continue
+			}
 			return conversationCandidate{}, false, err
 		}
 		if !explicit {

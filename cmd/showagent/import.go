@@ -14,7 +14,10 @@ import (
 	"github.com/aytzey/showagent/internal/session"
 )
 
-const maxImportInputBytes = 10 * 1024 * 1024
+const (
+	maxImportInputBytes   = 10 * 1024 * 1024
+	maxImportPreviewRunes = 120
+)
 
 type importCLIOptions struct {
 	url       string
@@ -37,6 +40,8 @@ type importCLIResult struct {
 	SessionID            string `json:"session_id,omitempty"`
 	Workspace            string `json:"workspace"`
 	MessageCount         int    `json:"message_count"`
+	FirstMessage         string `json:"first_message,omitempty"`
+	LastMessage          string `json:"last_message,omitempty"`
 	NativeHistoryVisible bool   `json:"native_history_visible"`
 	NoOp                 bool   `json:"no_op,omitempty"`
 	DryRun               bool   `json:"dry_run"`
@@ -110,6 +115,8 @@ func runImport(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		result.SessionID = plan.Target.ID
 	}
 	if options.dryRun {
+		result.FirstMessage = importPreviewBoundary(conversation.Messages[0])
+		result.LastMessage = importPreviewBoundary(conversation.Messages[len(conversation.Messages)-1])
 		return printImportResult(stdout, stderr, result, options.asJSON)
 	}
 
@@ -272,6 +279,15 @@ func importWarning(mode session.ImportMode, provider session.Provider) string {
 	return "Text only. Attachments, tool state, permissions, and files are not imported."
 }
 
+func importPreviewBoundary(message importer.Message) string {
+	value := fmt.Sprintf("%s: %s", message.Role, session.RedactSecrets(session.SafeDisplayText(message.Text)))
+	runes := []rune(value)
+	if len(runes) <= maxImportPreviewRunes {
+		return value
+	}
+	return string(runes[:maxImportPreviewRunes-3]) + "..."
+}
+
 func printImportResult(stdout, stderr io.Writer, result importCLIResult, asJSON bool) int {
 	if asJSON {
 		encoder := json.NewEncoder(stdout)
@@ -297,6 +313,12 @@ func printImportResult(stdout, stderr io.Writer, result importCLIResult, asJSON 
 	}
 	_, _ = fmt.Fprintf(stdout, "  workspace: %s\n", session.SafeDisplayText(result.Workspace))
 	_, _ = fmt.Fprintf(stdout, "  content:   %d messages · text only\n", result.MessageCount)
+	if result.FirstMessage != "" {
+		_, _ = fmt.Fprintf(stdout, "  first:     %s\n", result.FirstMessage)
+	}
+	if result.LastMessage != "" {
+		_, _ = fmt.Fprintf(stdout, "  last:      %s\n", result.LastMessage)
+	}
 	if result.Warning != "" {
 		_, _ = fmt.Fprintf(stdout, "  warning:   %s\n", result.Warning)
 	}

@@ -323,6 +323,7 @@ type codexImportRPCClient struct {
 	stdin     io.WriteCloser
 	responses chan codexImportRPCRead
 	done      chan struct{}
+	finished  chan struct{}
 	stderr    *boundedImportBuffer
 
 	mu        sync.Mutex
@@ -368,7 +369,7 @@ func startCodexImportClient(ctx context.Context, cwd string) (*codexImportRPCCli
 
 	client := &codexImportRPCClient{
 		command: command, stdin: stdin, responses: make(chan codexImportRPCRead, 64),
-		done: make(chan struct{}), stderr: stderr,
+		done: make(chan struct{}), finished: make(chan struct{}), stderr: stderr,
 	}
 	go client.read(stdout)
 	go func() {
@@ -387,13 +388,24 @@ func (client *codexImportRPCClient) read(stdout io.Reader) {
 	for scanner.Scan() {
 		var response codexImportRPCResponse
 		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
-			client.responses <- codexImportRPCRead{err: fmt.Errorf("decode Codex app-server response: %w", err)}
+			client.publish(codexImportRPCRead{err: fmt.Errorf("decode Codex app-server response: %w", err)})
 			return
 		}
-		client.responses <- codexImportRPCRead{response: response}
+		if !client.publish(codexImportRPCRead{response: response}) {
+			return
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		client.responses <- codexImportRPCRead{err: fmt.Errorf("read Codex app-server response: %w", err)}
+		client.publish(codexImportRPCRead{err: fmt.Errorf("read Codex app-server response: %w", err)})
+	}
+}
+
+func (client *codexImportRPCClient) publish(read codexImportRPCRead) bool {
+	select {
+	case client.responses <- read:
+		return true
+	case <-client.finished:
+		return false
 	}
 }
 
@@ -458,6 +470,7 @@ func (client *codexImportRPCClient) notify(method string) error {
 
 func (client *codexImportRPCClient) closeClient() {
 	client.closeOnce.Do(func() {
+		close(client.finished)
 		_ = client.stdin.Close()
 		select {
 		case <-client.done:

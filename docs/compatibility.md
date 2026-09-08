@@ -27,7 +27,7 @@ Windows 11. They describe the tested local build, not a published release.
 | Labelled text file → Codex | Isolated native-session creation | Passed | Dry-run wrote nothing; two roles, Unicode and code indentation survived native rediscovery; identical retry was a verified no-op |
 | Public ChatGPT share | Live parse and dry-run | Passed | Current React Router snapshot format; two visible user/assistant messages; no session write |
 | Public Claude share | Live parse and dry-run | Passed | Current public snapshot JSON; 20 visible human/assistant messages; no session write |
-| Text → existing Codex **0.153.4** session | Actual native context injection | Passed | `thread/inject_items` kept the exact session ID and original file prefix; identical retry wrote no records; no `turn/start` or model call |
+| Text → existing Codex **0.153.4** session | Actual native context injection | Passed | Kept the exact session ID and original file prefix; identical retry wrote no records; the real app-server exchange was not instrumented for model-call observation |
 | Updated Codex session → Codex **0.153.4** | Actual native reader | Passed | `thread/read(includeTurns: true)` still loaded the session; injected context was persisted but is not claimed as visible chat bubbles |
 | Claude Code, Gemini CLI, OpenCode, jcode, Pi existing session | Context injection | Disabled | No verified same-ID, no-model native append contract is available in this build |
 
@@ -36,6 +36,11 @@ counts in the recorded command output. Public page and snapshot schemas are not
 documented as stable provider APIs, so fixture tests and fail-closed parsing do
 not guarantee future page compatibility. No private URL, browser cookie,
 credential, attachment, tool state, or model response was used.
+
+The fake app-server contract test records every requested method and verifies
+that import uses `thread/inject_items` without `turn/start`. The real Codex
+harness verifies identity, file-prefix preservation, persistence, retry
+idempotence, and native readability; it does not observe that method exchange.
 
 ### Published v0.11.3, 2026-09-07
 

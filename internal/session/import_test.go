@@ -65,7 +65,11 @@ func TestApplyImportCreatesNativeSessionInSelectedAbsoluteFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Row.Provider != ProviderCodex || receipt.Row.ID == "" || receipt.Row.CWD != workspace {
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Row.Provider != ProviderCodex || receipt.Row.ID == "" || receipt.Row.CWD != resolvedWorkspace {
 		t.Fatalf("created row = %#v", receipt.Row)
 	}
 
