@@ -230,7 +230,10 @@ func importJCodeReceiptTarget(cwd, id string) (Row, error) {
 		return Row{}, fmt.Errorf("%w: committed JCode target id is empty", ErrImportVerification)
 	}
 	for _, character := range id {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-') {
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z', character >= '0' && character <= '9', character == '_', character == '-':
+			continue
+		default:
 			return Row{}, fmt.Errorf("%w: committed JCode target id is invalid", ErrImportVerification)
 		}
 	}
