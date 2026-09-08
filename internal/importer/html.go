@@ -15,6 +15,8 @@ import (
 
 const maxEmbeddedJSONDocuments = 256
 
+var errNoTransferableText = errors.New("message contains only non-text content")
+
 type conversationCandidate struct {
 	title          string
 	sourceRevision string
@@ -475,6 +477,10 @@ func mappingCandidate(container map[string]any) (conversationCandidate, bool, er
 		}
 		message, supported, explicit, losses, err := messageFromObject(messageObject)
 		if err != nil {
+			if errors.Is(err, errNoTransferableText) {
+				candidate.warnings["omitted_non_text_content"] += losses
+				continue
+			}
 			return conversationCandidate{}, false, err
 		}
 		if !explicit || !supported {
@@ -512,7 +518,7 @@ func claudeMessageCandidate(container map[string]any, rawMessages []any) (conver
 			// content is entirely attachments, tool use, or another non-text block.
 			// Omit that turn while retaining later visible text. An empty or
 			// otherwise malformed text turn still fails closed.
-			if losses > 0 {
+			if errors.Is(err, errNoTransferableText) {
 				candidate.warnings["omitted_non_text_content"] += losses
 				continue
 			}
@@ -582,20 +588,34 @@ func textFromMessage(object map[string]any) (string, int, error) {
 		}
 		return text, 0, nil
 	}
-	text, losses, ok := textFromContent(object["content"])
+	text, losses, ok, err := textFromContent(object["content"])
+	if err != nil {
+		return "", losses, err
+	}
+	if !ok && losses > 0 {
+		return "", losses, errNoTransferableText
+	}
 	if !ok || strings.TrimSpace(text) == "" {
 		return "", losses, errors.New("user or assistant message has no identifiable text")
 	}
 	return text, losses, nil
 }
 
-func textFromContent(content any) (string, int, bool) {
+func textFromContent(content any) (string, int, bool, error) {
 	switch typed := content.(type) {
 	case string:
-		return typed, 0, true
+		return typed, 0, true, nil
 	case map[string]any:
-		if text, ok := typed["text"].(string); ok {
-			return text, 0, true
+		contentType := strings.ToLower(firstString(typed, "type", "content_type"))
+		if contentType != "" && contentType != "text" && contentType != "input_text" && contentType != "output_text" && contentType != "multimodal_text" {
+			return "", 1, false, nil
+		}
+		if rawText, exists := typed["text"]; exists {
+			text, ok := rawText.(string)
+			if !ok {
+				return "", 0, false, errors.New("message text block is malformed")
+			}
+			return text, 0, true, nil
 		}
 		if parts, ok := typed["parts"].([]any); ok {
 			return textFromContent(parts)
@@ -612,6 +632,8 @@ func textFromContent(content any) (string, int, bool) {
 				text, hasText := part["text"].(string)
 				if hasText && (partType == "" || partType == "text" || partType == "input_text" || partType == "output_text") {
 					parts = append(parts, text)
+				} else if partType == "text" || partType == "input_text" || partType == "output_text" {
+					return "", losses, false, errors.New("message text block is malformed")
 				} else {
 					losses++
 				}
@@ -620,11 +642,11 @@ func textFromContent(content any) (string, int, bool) {
 			}
 		}
 		if len(parts) > 0 {
-			return strings.Join(parts, "\n"), losses, true
+			return strings.Join(parts, "\n"), losses, true, nil
 		}
-		return "", losses, false
+		return "", losses, false, nil
 	}
-	return "", 0, false
+	return "", 0, false, nil
 }
 
 func sourceTimestamp(object map[string]any) *time.Time {

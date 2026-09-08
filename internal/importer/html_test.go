@@ -119,6 +119,78 @@ func TestParseClaudeHTMLFailsClosedWhenOnlyNonTextTurnsRemain(t *testing.T) {
 	}
 }
 
+func TestParseChatGPTHTMLSkipsAttachmentOnlyTurns(t *testing.T) {
+	html := []byte(`<script type="application/json">{
+	  "current_node":"a1",
+	  "mapping":{
+	    "u1":{"parent":null,"message":{"author":{"role":"user"},"content":{"content_type":"multimodal_text","parts":[{"content_type":"image_asset_pointer","asset_pointer":"not-downloaded"}]}}},
+	    "a1":{"parent":"u1","message":{"author":{"role":"assistant"},"content":{"content_type":"text","parts":["Visible answer"]}}}
+	  }
+	}</script>`)
+	conversation, err := ParseChatGPTHTML(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversation.Messages) != 1 || conversation.Messages[0].Role != RoleAssistant || conversation.Messages[0].Text != "Visible answer" {
+		t.Fatalf("messages = %#v", conversation.Messages)
+	}
+	if len(conversation.Warnings) != 1 || conversation.Warnings[0].Code != "omitted_non_text_content" || conversation.Warnings[0].Count != 1 {
+		t.Fatalf("warnings = %#v", conversation.Warnings)
+	}
+	withoutVisibleText := []byte(`<script type="application/json">{"current_node":"u1","mapping":{"u1":{"parent":null,"message":{"author":{"role":"user"},"content":{"content_type":"multimodal_text","parts":[{"content_type":"image_asset_pointer"}]}}}}}</script>`)
+	if _, err := ParseChatGPTHTML(withoutVisibleText); !errors.Is(err, ErrConversationUnidentifiable) {
+		t.Fatalf("all non-text error = %v, want ErrConversationUnidentifiable", err)
+	}
+}
+
+func TestShareParsersRespectObjectContentTypes(t *testing.T) {
+	for _, contentType := range []string{"thinking", "tool_use", "code", "image"} {
+		t.Run(contentType, func(t *testing.T) {
+			content := map[string]any{"content_type": contentType, "text": "must not become visible conversation"}
+			chatGPT, _ := json.Marshal(map[string]any{
+				"current_node": "a1", "mapping": map[string]any{
+					"hidden": map[string]any{"parent": nil, "message": map[string]any{"author": map[string]any{"role": "assistant"}, "content": content}},
+					"a1":     map[string]any{"parent": "hidden", "message": map[string]any{"author": map[string]any{"role": "assistant"}, "content": map[string]any{"content_type": "text", "parts": []string{"Visible answer"}}}},
+				},
+			})
+			claude, _ := json.Marshal(map[string]any{"chat_messages": []any{
+				map[string]any{"sender": "assistant", "content": map[string]any{"type": contentType, "text": "must not become visible conversation"}},
+				map[string]any{"sender": "assistant", "content": map[string]any{"type": "text", "text": "Visible answer"}},
+			}})
+			for source, data := range map[SourceKind][]byte{SourceChatGPTShare: chatGPT, SourceClaudeShare: claude} {
+				conversation, err := parseShareJSON(data, source)
+				if err != nil {
+					t.Fatalf("%s: %v", source, err)
+				}
+				if len(conversation.Messages) != 1 || conversation.Messages[0].Text != "Visible answer" {
+					t.Fatalf("%s messages = %#v", source, conversation.Messages)
+				}
+				if len(conversation.Warnings) != 1 || conversation.Warnings[0].Code != "omitted_non_text_content" || conversation.Warnings[0].Count != 1 {
+					t.Fatalf("%s warnings = %#v", source, conversation.Warnings)
+				}
+			}
+		})
+	}
+}
+
+func TestShareParsersRejectMalformedTextEvenWithNonTextLosses(t *testing.T) {
+	contents := []string{
+		`[{"type":"image"},{"type":"text","text":"  "}]`,
+		`[{"type":"image"},{"type":"text","text":42}]`,
+		`[{"type":"image"},{"type":"text"}]`,
+		`{"type":"text","text":42}`,
+	}
+	for _, content := range contents {
+		claude := []byte(`{"chat_messages":[{"sender":"human","content":` + content + `},{"sender":"assistant","text":"Visible answer"}]}`)
+		chatGPT := []byte(`{"current_node":"a1","mapping":{"u1":{"parent":null,"message":{"author":{"role":"user"},"content":` + content + `}},"a1":{"parent":"u1","message":{"author":{"role":"assistant"},"content":{"parts":["Visible answer"]}}}}}`)
+		for source, data := range map[SourceKind][]byte{SourceChatGPTShare: chatGPT, SourceClaudeShare: claude} {
+			if _, err := parseShareJSON(data, source); !errors.Is(err, ErrConversationUnidentifiable) {
+				t.Errorf("%s content %s: error = %v, want ErrConversationUnidentifiable", source, content, err)
+			}
+		}
+	}
+}
+
 func TestParseShareHTMLFailsClosed(t *testing.T) {
 	tests := []struct {
 		name string

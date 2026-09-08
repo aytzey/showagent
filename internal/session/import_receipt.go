@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -162,22 +163,28 @@ func verifiedCommittedImport(plan ImportPlan, stored storedImportReceipt) (Impor
 		if !ok {
 			return ImportReceipt{}, fmt.Errorf("%w: provider is unavailable", ErrImportVerification)
 		}
-		row = Row{}
-		for _, candidate := range impl.Discover() {
-			if candidate.ID == stored.TargetID {
-				row = candidate
-				break
-			}
+		var err error
+		row, err = importCreateReceiptTarget(impl, plan, stored.TargetID)
+		if err != nil {
+			return ImportReceipt{}, err
 		}
-		if row.ID == "" {
-			return ImportReceipt{}, fmt.Errorf("%w: committed target session %q is missing", ErrImportVerification, stored.TargetID)
+		if !sameImportPath(row.CWD, plan.CWD) {
+			return ImportReceipt{}, fmt.Errorf("%w: committed target session is in a different workspace", ErrImportVerification)
 		}
-		turns, err := impl.Transcript(row)
+		prefixIntact, err := committedImportPrefixIntact(row.File, stored.AfterRevision)
 		if err != nil {
 			return ImportReceipt{}, fmt.Errorf("%w: read committed target: %v", ErrImportVerification, err)
 		}
-		if !importMessagesAtStart(turns, plan.messages) {
-			return ImportReceipt{}, fmt.Errorf("%w: committed target no longer contains the imported messages", ErrImportVerification)
+		if !prefixIntact {
+			// Some providers rewrite whole-session JSON files on continuation;
+			// OpenCode has no native file. Retain transcript verification there.
+			turns, err := impl.Transcript(row)
+			if err != nil {
+				return ImportReceipt{}, fmt.Errorf("%w: read committed target: %v", ErrImportVerification, err)
+			}
+			if !importMessagesAtStart(turns, plan.messages) {
+				return ImportReceipt{}, fmt.Errorf("%w: committed target no longer contains the imported messages", ErrImportVerification)
+			}
 		}
 	} else {
 		if row.ID != stored.TargetID {
@@ -200,6 +207,87 @@ func verifiedCommittedImport(plan ImportPlan, stored storedImportReceipt) (Impor
 		NativeHistoryVisible: stored.NativeHistoryVisible,
 		NoOp:                 true,
 	}, nil
+}
+
+func importCreateReceiptTarget(impl ProviderImpl, plan ImportPlan, id string) (Row, error) {
+	if plan.Provider == ProviderJCode {
+		// JCode's picker intentionally requires its CLI and a useful user
+		// preview. Neither is needed to verify our own local imported session.
+		return importJCodeReceiptTarget(plan.CWD, id)
+	}
+	for _, candidate := range impl.Discover() {
+		if candidate.ID == id {
+			return candidate, nil
+		}
+	}
+	return Row{}, fmt.Errorf("%w: committed target session %q is missing", ErrImportVerification, id)
+}
+
+func importJCodeReceiptTarget(cwd, id string) (Row, error) {
+	// IDs are receipt data, not paths. Exclude separators, traversal and
+	// Windows alternate stream syntax before constructing the native path.
+	if id == "" {
+		return Row{}, fmt.Errorf("%w: committed JCode target id is empty", ErrImportVerification)
+	}
+	for _, character := range id {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-') {
+			return Row{}, fmt.Errorf("%w: committed JCode target id is invalid", ErrImportVerification)
+		}
+	}
+	store, err := filepath.EvalSymlinks(filepath.Join(defaultJCodeHome(), "sessions"))
+	if err != nil {
+		return Row{}, fmt.Errorf("%w: committed JCode store is unavailable: %v", ErrImportVerification, err)
+	}
+	path, err := filepath.EvalSymlinks(filepath.Join(store, id+".json"))
+	if err != nil {
+		return Row{}, fmt.Errorf("%w: committed JCode target is unavailable: %v", ErrImportVerification, err)
+	}
+	if !pathWithin(store, path) {
+		return Row{}, fmt.Errorf("%w: committed JCode target is outside its native store", ErrImportVerification)
+	}
+	native, ok := readJCodeSession(path)
+	if !ok || native.ID != id {
+		return Row{}, fmt.Errorf("%w: committed JCode target identity changed", ErrImportVerification)
+	}
+	if native.WorkingDir == "" || !sameImportPath(native.WorkingDir, cwd) {
+		return Row{}, fmt.Errorf("%w: committed target session is in a different workspace", ErrImportVerification)
+	}
+	firstUser, lastUser := jcodeUserPreviews(native.Messages)
+	lastAt, ok := parseTimestamp(native.UpdatedAt)
+	if !ok {
+		lastAt, _ = parseTimestamp(native.CreatedAt)
+	}
+	return Row{
+		Provider: ProviderJCode, ID: native.ID, CWD: native.WorkingDir,
+		LaunchCWD: native.WorkingDir, File: path, LastAt: lastAt,
+		FirstUser: firstUser, LastUser: lastUser,
+	}, nil
+}
+
+// An intact native prefix proves the original import still exists, including
+// arbitrary user text that the ordinary transcript reader filters as provider
+// boilerplate. It also accepts a safely continued, append-only native session.
+func committedImportPrefixIntact(path string, revision ImportRevision) (bool, error) {
+	if path == "" || revision.Size <= 0 || revision.SHA256 == "" {
+		return false, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() < revision.Size {
+		return false, nil
+	}
+	hash := sha256.New()
+	if _, err := io.CopyN(hash, file, revision.Size); err != nil {
+		return false, err
+	}
+	return hex.EncodeToString(hash.Sum(nil)) == revision.SHA256, nil
 }
 
 func importMessagesAtStart(turns []Turn, messages []ImportMessage) bool {

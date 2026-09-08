@@ -34,18 +34,20 @@ type importCLIOptions struct {
 }
 
 type importCLIResult struct {
-	Operation            string `json:"operation"`
-	Source               string `json:"source"`
-	Provider             string `json:"provider"`
-	SessionID            string `json:"session_id,omitempty"`
-	Workspace            string `json:"workspace"`
-	MessageCount         int    `json:"message_count"`
-	FirstMessage         string `json:"first_message,omitempty"`
-	LastMessage          string `json:"last_message,omitempty"`
-	NativeHistoryVisible bool   `json:"native_history_visible"`
-	NoOp                 bool   `json:"no_op,omitempty"`
-	DryRun               bool   `json:"dry_run"`
-	Warning              string `json:"warning,omitempty"`
+	Operation            string                `json:"operation"`
+	Source               string                `json:"source"`
+	Provider             string                `json:"provider"`
+	SessionID            string                `json:"session_id,omitempty"`
+	Workspace            string                `json:"workspace"`
+	MessageCount         int                   `json:"message_count"`
+	FirstMessage         string                `json:"first_message,omitempty"`
+	LastMessage          string                `json:"last_message,omitempty"`
+	NativeHistoryVisible bool                  `json:"native_history_visible"`
+	NoOp                 bool                  `json:"no_op,omitempty"`
+	DryRun               bool                  `json:"dry_run"`
+	Warning              string                `json:"warning,omitempty"`
+	SourceWarnings       []importer.Warning    `json:"source_warnings,omitempty"`
+	Completeness         importer.Completeness `json:"completeness"`
 }
 
 func runImport(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -103,13 +105,15 @@ func runImport(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return usageError(stderr, err.Error())
 	}
 	result := importCLIResult{
-		Operation:    string(plan.Mode),
-		Source:       options.inputKind,
-		Provider:     string(plan.Provider),
-		Workspace:    plan.CWD,
-		MessageCount: plan.MessageCount,
-		DryRun:       options.dryRun,
-		Warning:      importWarning(plan.Mode, plan.Provider),
+		Operation:      string(plan.Mode),
+		Source:         options.inputKind,
+		Provider:       string(plan.Provider),
+		Workspace:      plan.CWD,
+		MessageCount:   plan.MessageCount,
+		DryRun:         options.dryRun,
+		Warning:        importWarning(plan.Mode, plan.Provider),
+		SourceWarnings: conversation.Warnings,
+		Completeness:   conversation.Completeness,
 	}
 	if plan.Mode == session.ImportAppendContext {
 		result.SessionID = plan.Target.ID
@@ -280,7 +284,7 @@ func importWarning(mode session.ImportMode, provider session.Provider) string {
 }
 
 func importPreviewBoundary(message importer.Message) string {
-	value := fmt.Sprintf("%s: %s", message.Role, session.RedactSecrets(session.SafeDisplayText(message.Text)))
+	value := fmt.Sprintf("%s: %s", message.Role, session.SafeDisplayText(session.RedactTranscriptText(message.Text)))
 	runes := []rune(value)
 	if len(runes) <= maxImportPreviewRunes {
 		return value
@@ -313,6 +317,10 @@ func printImportResult(stdout, stderr io.Writer, result importCLIResult, asJSON 
 	}
 	_, _ = fmt.Fprintf(stdout, "  workspace: %s\n", session.SafeDisplayText(result.Workspace))
 	_, _ = fmt.Fprintf(stdout, "  content:   %d messages · text only\n", result.MessageCount)
+	_, _ = fmt.Fprintf(stdout, "  scope:     %s\n", result.Completeness)
+	for _, warning := range result.SourceWarnings {
+		_, _ = fmt.Fprintf(stdout, "  omitted:   %s\n", warning.Summary())
+	}
 	if result.FirstMessage != "" {
 		_, _ = fmt.Fprintf(stdout, "  first:     %s\n", result.FirstMessage)
 	}

@@ -119,6 +119,111 @@ func TestPastedTextTabFocusesVisibleReviewAction(t *testing.T) {
 	}
 }
 
+func TestImportPasteEventsPreserveSource(t *testing.T) {
+	previous := parseImportText
+	t.Cleanup(func() { parseImportText = previous })
+	for _, test := range []struct {
+		name      string
+		input     string
+		want      string
+		protected bool
+	}{
+		{"tabs in code", "User:\n```go\n\treturn 1\n```", "User:\n```go\n\treturn 1\n```", true},
+		{"windows lines", "User:\r\nquestion\r\nAssistant:\r\nanswer", "User:\nquestion\nAssistant:\nanswer", false},
+		{"many lines", "User:\n" + strings.Repeat("line\n", 10001), "User:\n" + strings.Repeat("line\n", 10001), true},
+		{"unicode replacement character", "User:\nvalid \uFFFD", "User:\nvalid \uFFFD", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var parsed string
+			parseImportText = func(value string, _ importer.TextOptions) (importer.Conversation, error) {
+				parsed = value
+				return importer.Conversation{}, nil
+			}
+			m := openPasteImport(t, sizedModel(nil))
+			next, _ := m.Update(tea.PasteMsg{Content: test.input})
+			m = asModel(t, next)
+			if (m.importFlow.pasteOriginal != nil) != test.protected {
+				t.Fatalf("protected=%v want %v", m.importFlow.pasteOriginal != nil, test.protected)
+			}
+			if test.protected {
+				before := m.importFlow.pasteInput.Value()
+				next, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'x', Text: "x"}))
+				m = asModel(t, next)
+				if m.importFlow.pasteInput.Value() != before || !strings.Contains(m.importFlow.notice, "paste") {
+					t.Fatal("editing a protected paste silently changed the source")
+				}
+			}
+			_, cmd := m.Update(ctrlEnter())
+			if cmd == nil {
+				t.Fatal("review did not start")
+			}
+			cmd()
+			if parsed != test.want {
+				t.Fatalf("paste changed: got %d bytes, want %d", len(parsed), len(test.want))
+			}
+		})
+	}
+}
+
+func TestImportPasteReplacementAndRejectedInput(t *testing.T) {
+	m := openPasteImport(t, sizedModel(nil))
+	for _, text := range []string{"User:\n\told", "User:\nreplacement"} {
+		next, _ := m.Update(tea.PasteMsg{Content: text})
+		m = asModel(t, next)
+	}
+	if m.importFlow.pasteOriginal != nil || m.importFlow.pasteInput.Value() != "User:\nreplacement" {
+		t.Fatal("second paste did not replace original snapshot")
+	}
+	for _, text := range []string{string([]byte{0xff}), strings.Repeat("a", importer.MaxTextBytes+1)} {
+		next, _ := m.Update(tea.PasteMsg{Content: text})
+		m = asModel(t, next)
+		if m.importFlow.pasteInput.Value() != "User:\nreplacement" || !strings.Contains(m.importFlow.notice, "unchanged") {
+			t.Fatal("invalid paste overwrote accepted source")
+		}
+	}
+	for _, state := range []string{"busy", "review"} {
+		m.importFlow.busy = ""
+		m.importFlow.reviewFocused = false
+		if state == "busy" {
+			m.importFlow.busy = "Reviewing"
+		} else {
+			m.importFlow.reviewFocused = true
+		}
+		next, _ := m.Update(tea.PasteMsg{Content: "User:\nlate paste"})
+		m = asModel(t, next)
+		if m.importFlow.pasteInput.Value() != "User:\nreplacement" {
+			t.Fatal("late paste changed reviewed source")
+		}
+	}
+}
+
+func TestImportClipboardPreservesTabsAndHandlesFailure(t *testing.T) {
+	previous := readImportClipboard
+	t.Cleanup(func() { readImportClipboard = previous })
+	readImportClipboard = func() (string, error) { return "User:\n\tclipboard", nil }
+	m := openPasteImport(t, sizedModel(nil))
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'v', Mod: tea.ModCtrl}))
+	m = asModel(t, next)
+	if cmd == nil {
+		t.Fatal("clipboard read did not start")
+	}
+	next, _ = m.Update(cmd())
+	m = asModel(t, next)
+	if m.importFlow.pasteOriginal == nil || *m.importFlow.pasteOriginal != "User:\n\tclipboard" {
+		t.Fatal("clipboard formatting changed")
+	}
+	readImportClipboard = func() (string, error) { return "", errors.New("unavailable") }
+	_, cmd = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyInsert, Mod: tea.ModShift}))
+	if cmd == nil {
+		t.Fatal("shift+insert did not read clipboard")
+	}
+	next, _ = m.Update(cmd())
+	m = asModel(t, next)
+	if !strings.Contains(m.importFlow.notice, "Clipboard could not be read") {
+		t.Fatal("clipboard failure hidden")
+	}
+}
+
 func TestAmbiguousPasteRequiresLabelsOrVisibleOneNoteToggle(t *testing.T) {
 	previous := parseImportText
 	t.Cleanup(func() { parseImportText = previous })
@@ -261,6 +366,64 @@ func TestBusyImportCannotBeDismissedBeforeItsResult(t *testing.T) {
 
 func ctrlEnter() tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+}
+
+func TestImportProjectFolderOwnsLetterKeys(t *testing.T) {
+	m := sizedModel(nil)
+	m.importFlow = newImportWizard()
+	m.importFlow.step = importCreateDestination
+	m.importFlow.cwdInput.SetValue("/tmp/we")
+	m.importFlow.cwdInput.Focus()
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'b', Text: "b"}))
+	m = asModel(t, updated)
+	if m.importFlow.step != importCreateDestination || m.importFlow.cwdInput.Value() != "/tmp/web" {
+		t.Fatalf("typing a folder navigated away: step=%v folder=%q", m.importFlow.step, m.importFlow.cwdInput.Value())
+	}
+}
+
+func TestImportFinalReviewHasPortableApplyAction(t *testing.T) {
+	previous := applySessionImport
+	t.Cleanup(func() { applySessionImport = previous })
+	applications := 0
+	applySessionImport = func(_ context.Context, _ session.ImportPlan) (session.ImportReceipt, error) {
+		applications++
+		return session.ImportReceipt{}, nil
+	}
+	m := sizedModel(nil)
+	m.importFlow = reviewWizard(session.ImportCreate)
+	unchanged, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	m = asModel(t, unchanged)
+	if cmd != nil || applications != 0 {
+		t.Fatal("enter wrote before focusing the final Apply action")
+	}
+	focused, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
+	m = asModel(t, focused)
+	if !m.importFlow.applyFocused || !strings.Contains(m.importView(), "Apply import") {
+		t.Fatal("final review has no focusable Apply action")
+	}
+	_, cmd = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if cmd == nil {
+		t.Fatal("enter on Apply did not start import")
+	}
+	cmd()
+	if applications != 1 {
+		t.Fatalf("applications = %d", applications)
+	}
+}
+
+func TestImportPreviewRedactsBoundariesAndShowsSourceLosses(t *testing.T) {
+	m := sizedModel(nil)
+	m.importFlow = previewWizard()
+	m.importFlow.conversation.Messages = []importer.Message{{Role: importer.RoleUser, Text: "password=example-secret"}}
+	m.importFlow.conversation.Completeness = importer.CompletenessVisiblePath
+	m.importFlow.conversation.Warnings = []importer.Warning{{Code: "omitted_non_text_content", Count: 2}}
+	view := m.importView()
+	if strings.Contains(view, "example-secret") || !strings.Contains(view, "[redacted]") {
+		t.Fatalf("unsafe preview: %s", view)
+	}
+	if !strings.Contains(view, "2 non-text content blocks omitted") || !strings.Contains(view, "visible_path") {
+		t.Fatalf("source losses were hidden: %s", view)
+	}
 }
 
 func openPasteImport(t *testing.T, m model) model {

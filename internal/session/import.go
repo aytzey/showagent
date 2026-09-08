@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -190,7 +191,43 @@ func PlanImport(request ImportRequest) (ImportPlan, error) {
 		return ImportPlan{}, fmt.Errorf("unsupported import mode %q", request.Mode)
 	}
 
+	if err := validateImportNativeRecordSizes(plan.Provider, plan.CWD, plan.messages); err != nil {
+		return ImportPlan{}, err
+	}
 	return plan, nil
+}
+
+// Native JSONL readers bound a whole serialized record, rather than its raw
+// text. Quotes, backslashes and controls can substantially expand during JSON
+// encoding. Reserve space for provider metadata as well as Claude's workspace
+// field so an accepted message remains readable after it has been written.
+func validateImportNativeRecordSizes(provider Provider, cwd string, messages []ImportMessage) error {
+	switch provider {
+	case ProviderCodex, ProviderClaude, ProviderPi, ProviderGemini:
+	default:
+		return nil
+	}
+	const metadataReserve = 4096
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(cwd)
+	reserved := metadataReserve + encoded.Len()
+	conversationSize := reserved
+	for index, message := range messages {
+		encoded.Reset()
+		_ = encoder.Encode(message.Text)
+		if encoded.Len()+reserved >= scanBufferMax {
+			return fmt.Errorf("import message %d exceeds %s's %d MiB native record limit after JSON escaping; split the message before importing", index+1, DisplayName(provider), scanBufferMax/(1024*1024))
+		}
+		// Gemini's legacy writer puts the entire conversation on one line.
+		// Account for each message's UUID, timestamp and field names too.
+		conversationSize += encoded.Len() + 512
+		if provider == ProviderGemini && conversationSize >= scanBufferMax {
+			return fmt.Errorf("import conversation exceeds %s's %d MiB native record limit after JSON escaping; import fewer messages", DisplayName(provider), scanBufferMax/(1024*1024))
+		}
+	}
+	return nil
 }
 
 // ApplyImport applies only a plan produced by PlanImport. New sessions use the
@@ -241,6 +278,12 @@ func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, err
 		turns := importTurns(plan.messages)
 		row, err := impl.WriteConverted(Row{CWD: plan.CWD, LaunchCWD: plan.CWD}, turns)
 		if err != nil {
+			// The local file writers only report failure before their atomic
+			// rename commits a native session. OpenCode delegates to an external
+			// CLI, whose failure may follow a successful database write.
+			if plan.Provider != ProviderOpenCode {
+				err = fmt.Errorf("%w: %w", errImportNotStarted, err)
+			}
 			return ImportReceipt{}, fmt.Errorf("create %s session from import: %w", DisplayName(plan.Provider), err)
 		}
 		receipt := importReceiptForPlan(plan, row)
@@ -362,7 +405,11 @@ func validateAppendTarget(row Row) (Row, ImportRevision, error) {
 	if err != nil {
 		return Row{}, ImportRevision{}, fmt.Errorf("append target session file unavailable: %w", err)
 	}
-	if !pathWithin(filepath.Join(defaultCodexHome(), "sessions"), file) {
+	store, err := filepath.EvalSymlinks(filepath.Join(defaultCodexHome(), "sessions"))
+	if err != nil {
+		return Row{}, ImportRevision{}, fmt.Errorf("native Codex sessions store unavailable: %w", err)
+	}
+	if !pathWithin(store, file) {
 		return Row{}, ImportRevision{}, errors.New("append target is not in the native Codex sessions store")
 	}
 	if err := validateCodexSessionID(file, row.ID); err != nil {

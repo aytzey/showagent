@@ -659,6 +659,31 @@ func TestImportDryRunBoundariesAreSafeRedactedAndBounded(t *testing.T) {
 	}
 }
 
+func TestImportPreviewRedactsMultilinePrivateKeyBeforeFolding(t *testing.T) {
+	key := "-----BEGIN PRIVATE KEY-----\nsensitive-example-body\n-----END PRIVATE KEY-----"
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--stdin", "--as-note", "--to", "codex", "--cwd", t.TempDir(), "--dry-run", "--json"},
+		strings.NewReader(key), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d error=%s", code, &stderr)
+	}
+	if strings.Contains(stdout.String(), "sensitive-example-body") || !strings.Contains(stdout.String(), "redacted-private-key") {
+		t.Fatalf("unsafe preview = %s", &stdout)
+	}
+}
+
+func TestImportPrintsSourceLosses(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	data := `{"schema_version":1,"source_kind":"transcript_file","acquired_at":"2026-09-08T12:00:00Z","messages":[{"role":"assistant","text":"Retained answer"}],"warnings":[{"code":"omitted_non_text_content","count":3}],"completeness":"visible_path"}`
+	args := []string{"import", "--stdin", "--format", "json", "--to", "codex", "--cwd", t.TempDir(), "--dry-run"}
+	if code := runWithInput(args, strings.NewReader(data), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d error=%s", code, &stderr)
+	}
+	if !strings.Contains(stdout.String(), "3 non-text content blocks omitted") || !strings.Contains(stdout.String(), "visible_path") {
+		t.Fatalf("hidden losses: %s", &stdout)
+	}
+}
+
 func TestImportResolvesRelativeWorkspace(t *testing.T) {
 	setFixtureHomes(t)
 	root := t.TempDir()

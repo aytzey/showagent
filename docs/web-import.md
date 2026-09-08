@@ -24,7 +24,8 @@ showagent import --file conversation.txt --to codex --cwd ./my-project --dry-run
 
 The preview shows the message count plus bounded, secret-redacted first and
 last message boundaries so you can catch the wrong source before anything is
-written.
+written. It also shows the source's completeness and counts of omitted non-text
+blocks or unsupported messages when available.
 
 Remove `--dry-run` to create the session. `--cwd` selects where the agent will work; the session itself remains in that agent's normal session store.
 
@@ -84,14 +85,25 @@ Do not import into a session that another Codex client is actively changing. sho
 
 Run `showagent` and press `i`, including from the empty state. Choose link or pasted text, review the parsed speakers and content boundary, then choose a new session or a supported existing-session target. For pasted text, `Ctrl+Enter` opens the preview directly. If your terminal cannot distinguish that shortcut, press `Tab` to focus **Review conversation**, then press `Enter`. Import completes before any optional resume action; imported instructions are history and are never executed during import.
 
+Pasting replaces the source conversation. Windows line endings are normalized
+once; tabs and message text are preserved. If the editor cannot represent the
+original formatting, or a paste exceeds its 8 KiB display preview, showagent
+keeps the full original for import and shows a read-only preview. To edit that
+source, paste the revised conversation. The 10 MiB input limit still applies;
+the display preview does not truncate the imported conversation.
+
+On final review, press `Tab` to focus **Apply import**, then `Enter` to save.
+`Ctrl+Enter` also applies the import. In the project-folder field, `Alt+Left`
+goes back without capturing letters from the path.
+
 ## Privacy and limits
 
 - Pasted/file input is processed locally. Link input connects directly to the supported share host; there is no scraping proxy or showagent account.
 - Share URLs can carry access tokens. showagent does not put the URL into the imported transcript or normal success output.
 - Import receipts live in the user state directory (override with `SHOWAGENT_STATE_DIR`) and contain hashes, counts, target identity, and native revisions, but no transcript text, source URL, or project path.
 - HTML, inert React Router payloads, and same-origin public snapshot JSON are parsed as data. Page scripts are not executed, redirects are revalidated, and local/private network destinations are rejected.
-- Oversized pages, text, or message lists fail instead of being silently truncated.
-- Use `--json` for a machine-readable preview or receipt. The output contains target metadata and counts, not the imported transcript or share URL.
+- Oversized pages, text, or message lists fail instead of being silently truncated. Native record-size limits are checked after JSON escaping, so some content may need smaller messages even within the text limit.
+- Use `--json` for a machine-readable preview or receipt. A dry-run includes bounded, secret-redacted first/last message previews, source completeness, omission warnings, target metadata, and counts. Success receipts exclude conversation text and share URLs.
 - `native_history_visible` describes existing-session append behavior. It is `false` for new-session imports because that capability flag does not apply to a newly created transcript.
 
 See [compatibility evidence](compatibility.md) for the distinction between format conversion, native loading, and model continuation.

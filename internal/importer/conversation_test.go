@@ -145,6 +145,14 @@ func TestParseJSONRejectsWrongVersionUnknownFieldsAndUnassignedRoles(t *testing.
 	}
 }
 
+func TestParseJSONRejectsInvalidUTF8BeforeDecoding(t *testing.T) {
+	data := append([]byte(`{"schema_version":1,"source_kind":"transcript_file","acquired_at":"2026-09-08T12:00:00Z","messages":[{"role":"user","text":"`), 0xff)
+	data = append(data, []byte(`"}],"completeness":"unknown"}`)...)
+	if _, err := ParseJSON(data); !errors.Is(err, ErrInvalidUTF8) {
+		t.Fatalf("error = %v, want ErrInvalidUTF8 rather than replacement characters", err)
+	}
+}
+
 func TestConversationValidateCoversThePublicSchemaContract(t *testing.T) {
 	valid := func() Conversation {
 		return Conversation{

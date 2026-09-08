@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unicode/utf8"
 )
 
 func ParseJSON(data []byte) (Conversation, error) {
 	if len(data) > MaxHTMLBytes {
 		return Conversation{}, fmt.Errorf("%w: JSON exceeds %d bytes", ErrLimitExceeded, MaxHTMLBytes)
+	}
+	if !utf8.Valid(data) {
+		return Conversation{}, ErrInvalidUTF8
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

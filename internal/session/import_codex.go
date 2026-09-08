@@ -122,8 +122,9 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 
 	var resumed codexImportThreadResult
 	if err := client.call(ctx, "thread/resume", map[string]any{
-		"threadId": plan.Target.ID,
-		"cwd":      plan.Target.CWD,
+		"threadId":     plan.Target.ID,
+		"cwd":          plan.Target.CWD,
+		"excludeTurns": true,
 	}, &resumed); err != nil {
 		return ImportReceipt{}, codexImportPreWriteError(err)
 	}

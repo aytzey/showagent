@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 
 	"github.com/aytzey/showagent/internal/importer"
 	"github.com/aytzey/showagent/internal/session"
@@ -23,9 +25,10 @@ var (
 	fetchImportLink = func(ctx context.Context, value string) (importer.Conversation, error) {
 		return importer.ImportURL(ctx, value, importer.FetchOptions{})
 	}
-	planSessionImport  = session.PlanImport
-	applySessionImport = session.ApplyImport
-	importWorkingDir   = os.Getwd
+	planSessionImport   = session.PlanImport
+	applySessionImport  = session.ApplyImport
+	importWorkingDir    = os.Getwd
+	readImportClipboard = clipboard.ReadAll
 )
 
 type importStep int
@@ -70,14 +73,22 @@ type importAppliedMsg struct {
 	err     error
 }
 
+type importClipboardMsg struct {
+	text string
+	err  error
+}
+
 type importWizard struct {
 	step          importStep
 	source        importSource
 	destination   importDestinationKind
 	linkInput     textinput.Model
 	pasteInput    textarea.Model
+	pasteOriginal *string
+	pasteHint     string
 	cwdInput      textinput.Model
 	reviewFocused bool
+	applyFocused  bool
 	asNote        bool
 	conversation  importer.Conversation
 	providerIndex int
@@ -98,6 +109,7 @@ func newImportWizard() *importWizard {
 	paste := textarea.New()
 	paste.Placeholder = "User:\nPaste the question here.\n\nAssistant:\nPaste the answer here."
 	paste.ShowLineNumbers = false
+	paste.MaxHeight = 0
 	paste.Prompt = "│ "
 	paste.SetWidth(64)
 	paste.SetHeight(9)
@@ -186,6 +198,12 @@ func (m model) updateImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if isImportReviewKey(msg) {
 			return m.startImportParse()
 		}
+		if w.source == importPastedText && (msg.String() == "ctrl+v" || msg.String() == "shift+insert") {
+			return m, func() tea.Msg {
+				text, err := readImportClipboard()
+				return importClipboardMsg{text: text, err: err}
+			}
+		}
 		return m.updateImportInput(msg)
 	case importPreview:
 		switch msg.String() {
@@ -228,7 +246,7 @@ func (m model) updateImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				CWD:      w.cwdInput.Value(),
 				Messages: importMessages(w.conversation),
 			})
-		case "b":
+		case "alt+left":
 			w.cwdInput.Blur()
 			w.step = importDestination
 			return m, nil
@@ -266,18 +284,18 @@ func (m model) updateImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case importReview:
 		switch msg.String() {
+		case "tab", "shift+tab":
+			w.applyFocused = !w.applyFocused
+		case "enter":
+			if w.applyFocused {
+				return m.startImportApply()
+			}
 		case "b":
 			w.plan = session.ImportPlan{}
 			w.step = importDestination
 			w.notice = ""
 		case "ctrl+enter":
-			w.busy = "Applying import"
-			w.notice = ""
-			plan := w.plan
-			return m, func() tea.Msg {
-				receipt, err := applySessionImport(context.Background(), plan)
-				return importAppliedMsg{receipt: receipt, err: err}
-			}
+			return m.startImportApply()
 		}
 	case importSuccess:
 		if msg.String() == "enter" {
@@ -286,6 +304,17 @@ func (m model) updateImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) startImportApply() (tea.Model, tea.Cmd) {
+	w := m.importFlow
+	w.busy = "Applying import"
+	w.notice = ""
+	plan := w.plan
+	return m, func() tea.Msg {
+		receipt, err := applySessionImport(context.Background(), plan)
+		return importAppliedMsg{receipt: receipt, err: err}
+	}
 }
 
 func (w *importWizard) focusSourceInput() tea.Cmd {
@@ -297,7 +326,7 @@ func (w *importWizard) focusSourceInput() tea.Cmd {
 
 func (m model) updateImportInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	w := m.importFlow
-	if w == nil {
+	if w == nil || w.busy != "" || w.reviewFocused {
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -306,12 +335,67 @@ func (m model) updateImportInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if w.source == importShareLink {
 			w.linkInput, cmd = w.linkInput.Update(msg)
 		} else {
+			switch pasted := msg.(type) {
+			case tea.PasteMsg:
+				w.setPastedConversation(pasted.Content)
+				return m, nil
+			case importClipboardMsg:
+				if pasted.err != nil {
+					w.notice = "Clipboard could not be read. Use your terminal's paste action instead."
+				} else {
+					w.setPastedConversation(pasted.text)
+				}
+				return m, nil
+			case tea.KeyPressMsg:
+				if w.pasteOriginal != nil {
+					switch pasted.String() {
+					case "up", "down", "left", "right", "home", "end", "pgup", "pgdown":
+					default:
+						w.notice = "Original formatting is preserved. Edit the source and paste the complete conversation again."
+						return m, nil
+					}
+				}
+			}
 			w.pasteInput, cmd = w.pasteInput.Update(msg)
 		}
 	case importCreateDestination:
 		w.cwdInput, cmd = w.cwdInput.Update(msg)
 	}
 	return m, cmd
+}
+
+// Keep the original whenever the editor would expand tabs, remove characters,
+// or truncate a large paste. A new paste explicitly replaces the source.
+func (w *importWizard) setPastedConversation(text string) {
+	if !utf8.ValidString(text) {
+		w.notice = "Pasted text is not valid UTF-8. The previous source is unchanged."
+		return
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	if len(text) > importer.MaxTextBytes {
+		w.notice = "Pasted text exceeds the 10 MiB limit. The previous source is unchanged."
+		return
+	}
+	const previewBytes = 8192
+	display := text
+	if len(display) > previewBytes {
+		end := previewBytes
+		for !utf8.RuneStart(display[end]) {
+			end--
+		}
+		display = display[:end]
+	}
+	w.pasteInput.SetValue(display)
+	w.pasteOriginal = nil
+	w.pasteHint = ""
+	w.notice = ""
+	if w.pasteInput.Value() != text {
+		w.pasteOriginal = &text
+		w.pasteHint = "Original formatting preserved. To edit, paste the revised conversation."
+		if len(display) < len(text) {
+			w.pasteHint = fmt.Sprintf("Showing the first 8 KiB; all %d bytes are kept. Paste again to replace.", len(text))
+		}
+	}
 }
 
 func (m model) startImportParse() (tea.Model, tea.Cmd) {
@@ -324,6 +408,9 @@ func (m model) startImportParse() (tea.Model, tea.Cmd) {
 	source := w.source
 	link := strings.TrimSpace(w.linkInput.Value())
 	paste := w.pasteInput.Value()
+	if w.pasteOriginal != nil {
+		paste = *w.pasteOriginal
+	}
 	asNote := w.asNote
 	return m, func() tea.Msg {
 		var conversation importer.Conversation
@@ -379,6 +466,7 @@ func (m model) applyImportPlanned(msg importPlannedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	w.plan = msg.plan
+	w.applyFocused = false
 	w.notice = ""
 	w.cwdInput.Blur()
 	w.step = importReview
@@ -546,10 +634,15 @@ func (m model) importInputView() []string {
 	if w.asNote {
 		note = "on · imported as one user context message"
 	}
+	editing := "Use explicit User:/Assistant: labels. Plain Enter adds a newline."
+	if w.pasteOriginal != nil {
+		editing = "Use explicit User:/Assistant: labels in the source, or import as one context note."
+	}
 	return append(lines,
 		m.render.theme.workspace.Render("Pasted conversation"),
 		w.pasteInput.View(),
-		m.render.theme.muted.Render("Use explicit User:/Assistant: labels. Plain Enter adds a newline."),
+		m.render.theme.muted.Render(editing),
+		m.render.theme.muted.Render("Pasting replaces the conversation. "+w.pasteHint),
 		m.render.theme.muted.Render("Import as one context note: "+note),
 		"",
 		review,
@@ -568,8 +661,9 @@ func (m model) importPreviewView() []string {
 		m.importField("messages", fmt.Sprintf("%d · text only", len(w.conversation.Messages))),
 	}
 	if w.conversation.Title != "" {
-		lines = append(lines, m.importField("title", session.SafeDisplayText(w.conversation.Title)))
+		lines = append(lines, m.importField("title", session.SafeDisplayText(session.RedactTranscriptText(w.conversation.Title))))
 	}
+	lines = append(lines, m.importSourceWarnings()...)
 	lines = append(lines,
 		m.importField("first", first),
 		m.importField("last", last),
@@ -593,10 +687,18 @@ func (m model) importDestinationView() []string {
 	}
 }
 
+func (m model) importSourceWarnings() []string {
+	conversation := m.importFlow.conversation
+	lines := []string{m.importField("scope", string(conversation.Completeness))}
+	for _, warning := range conversation.Warnings {
+		lines = append(lines, m.importField("omitted", warning.Summary()))
+	}
+	return lines
+}
+
 func (m model) importCreateView() []string {
 	w := m.importFlow
 	provider := w.selectedProvider()
-	capability := session.ImportCapabilities(provider)
 	lines := []string{
 		m.render.theme.title.Render("Import conversation · New session"),
 		"",
@@ -607,10 +709,10 @@ func (m model) importCreateView() []string {
 		w.cwdInput.View(),
 		m.render.theme.muted.Render("The agent works here; conversation data stays in its native session storage."),
 	}
-	if capability.RequiresCLI && !session.ProviderCommandAvailable(provider) {
+	if provider == session.ProviderOpenCode && !session.ProviderCommandAvailable(provider) {
 		lines = append(lines, m.render.theme.muted.Render("Creating this provider's session requires its CLI in PATH."))
 	}
-	return append(lines, "", m.render.theme.hint.Render("enter review destination · tab agent · b back · esc cancel"))
+	return append(lines, "", m.render.theme.hint.Render("enter review destination · tab agent · alt+← back · esc cancel"))
 }
 
 func (m model) importExistingView() []string {
@@ -660,12 +762,18 @@ func (m model) importReviewView() []string {
 		m.importField("session", id),
 		m.importField("content", fmt.Sprintf("%d messages · text only", plan.MessageCount)),
 		"",
-		m.render.theme.muted.Render("This writes history only. It does not resume the agent or start a model response."),
+		m.render.theme.muted.Render("This saves history without launching an interactive agent or starting a model response."),
+	}
+	if plan.Mode == session.ImportAppendContext {
+		lines = append(lines, m.render.theme.muted.Render("Close other clients using this session before importing."))
 	}
 	if plan.Mode == session.ImportAppendContext && !plan.Capability.NativeHistoryVisible {
 		lines = append(lines, m.render.theme.muted.Render("Imported context may not appear as chat bubbles in the target agent."))
 	}
-	return append(lines, "", m.render.theme.hint.Render("ctrl+enter apply import · b back · esc cancel"))
+	lines = append(lines, m.importSourceWarnings()...)
+	return append(lines, "",
+		m.importOption(w.applyFocused, "Apply import", "Save the reviewed conversation to this destination."),
+		"", m.render.theme.hint.Render("tab focus Apply · enter activate · ctrl+enter apply · b back · esc cancel"))
 }
 
 func (m model) importSuccessView() []string {
@@ -697,7 +805,7 @@ func (m model) importSuccessView() []string {
 	}
 	return append(lines,
 		"",
-		m.render.theme.muted.Render("No agent was resumed and no model response was started."),
+		m.render.theme.muted.Render("Saved locally. Resume from the session list when ready."),
 		m.render.theme.hint.Render("enter close · esc close"),
 	)
 }
@@ -734,7 +842,7 @@ func importBoundaries(conversation importer.Conversation) (string, string) {
 		return "(none)", "(none)"
 	}
 	boundary := func(message importer.Message) string {
-		text := strings.Join(strings.Fields(session.SafeDisplayText(message.Text)), " ")
+		text := session.SafeDisplayText(session.RedactTranscriptText(message.Text))
 		return fmt.Sprintf("%s: %s", message.Role, truncateCells(text, 52))
 	}
 	return boundary(conversation.Messages[0]), boundary(conversation.Messages[len(conversation.Messages)-1])

@@ -102,6 +102,29 @@ func TestApplyImportReadsCodexThreadWithoutTurns(t *testing.T) {
 	}
 }
 
+func TestApplyImportResumesCodexThreadWithoutTurns(t *testing.T) {
+	target, _ := writeCodexImportTarget(t)
+	logPath := filepath.Join(t.TempDir(), "methods.log")
+	installFakeCodexAppServer(t, target, logPath, fakeCodexAppServerOptions{
+		RejectThreadResumeWithTurns: true,
+	})
+
+	plan, err := PlanImport(ImportRequest{
+		Mode:     ImportAppendContext,
+		Target:   target,
+		Messages: []ImportMessage{{Role: "user", Text: "small import into a long conversation"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyImport(context.Background(), plan); err != nil {
+		t.Fatalf("ApplyImport loaded existing turns during thread/resume: %v", err)
+	}
+	if methods := readMethodLog(t, logPath); !containsString(methods, "thread/inject_items") {
+		t.Fatalf("import did not reach injection after metadata-only thread/resume: %#v", methods)
+	}
+}
+
 func TestApplyImportCodexStartFailureRemainsRetryable(t *testing.T) {
 	target, _ := writeCodexImportTarget(t)
 	t.Setenv("PATH", t.TempDir())
@@ -310,6 +333,7 @@ func TestCodexAppServerHelperProcess(t *testing.T) {
 		CWD:  os.Getenv("SHOWAGENT_FAKE_CODEX_RESUME_CWD"),
 	}
 	rejectThreadReadWithTurns := os.Getenv("SHOWAGENT_FAKE_CODEX_REJECT_READ_WITH_TURNS") == "true"
+	rejectThreadResumeWithTurns := os.Getenv("SHOWAGENT_FAKE_CODEX_REJECT_RESUME_WITH_TURNS") == "true"
 
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
@@ -355,6 +379,20 @@ func TestCodexAppServerHelperProcess(t *testing.T) {
 				"id": readTarget.ID, "path": readTarget.File, "cwd": readTarget.CWD,
 			}}
 		case "thread/resume":
+			if rejectThreadResumeWithTurns {
+				var params struct {
+					ExcludeTurns bool `json:"excludeTurns"`
+				}
+				if err := json.Unmarshal(request.Params, &params); err != nil {
+					os.Exit(19)
+				}
+				if !params.ExcludeTurns {
+					_ = encoder.Encode(map[string]any{"id": request.ID, "error": map[string]any{
+						"code": -32602, "message": "thread/resume must not hydrate existing turns",
+					}})
+					continue
+				}
+			}
 			result = map[string]any{"thread": map[string]any{
 				"id": resumeTarget.ID, "path": resumeTarget.File, "cwd": resumeTarget.CWD,
 			}}
@@ -449,10 +487,11 @@ func writeCodexImportTarget(t *testing.T) (Row, []byte) {
 }
 
 type fakeCodexAppServerOptions struct {
-	ErrorMethod               string
-	RejectThreadReadWithTurns bool
-	ThreadReadTarget          *Row
-	ThreadResumeTarget        *Row
+	ErrorMethod                 string
+	RejectThreadReadWithTurns   bool
+	RejectThreadResumeWithTurns bool
+	ThreadReadTarget            *Row
+	ThreadResumeTarget          *Row
 }
 
 func installFakeCodexAppServer(t *testing.T, target Row, logPath string, options fakeCodexAppServerOptions) {
@@ -481,6 +520,7 @@ func installFakeCodexAppServer(t *testing.T, target Row, logPath string, options
 			"SHOWAGENT_FAKE_CODEX_RESUME_PATH="+resumeTarget.File,
 			"SHOWAGENT_FAKE_CODEX_RESUME_CWD="+resumeTarget.CWD,
 			fmt.Sprintf("SHOWAGENT_FAKE_CODEX_REJECT_READ_WITH_TURNS=%t", options.RejectThreadReadWithTurns),
+			fmt.Sprintf("SHOWAGENT_FAKE_CODEX_REJECT_RESUME_WITH_TURNS=%t", options.RejectThreadResumeWithTurns),
 		)
 		return command
 	}
