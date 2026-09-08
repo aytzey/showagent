@@ -147,19 +147,19 @@ func isHTMLSpace(value byte) bool {
 }
 
 func isEmbeddedJSONTag(tag []byte) bool {
-	scriptType, _ := scriptAttribute(tag, "type")
-	id, _ := scriptAttribute(tag, "id")
+	scriptType := scriptAttribute(tag, "type")
+	id := scriptAttribute(tag, "id")
 	return strings.EqualFold(scriptType, "application/json") || strings.EqualFold(id, "__NEXT_DATA__")
 }
 
-func scriptAttribute(tag []byte, wanted string) (string, bool) {
+func scriptAttribute(tag []byte, wanted string) string {
 	index := len("<script")
 	for index < len(tag) {
 		for index < len(tag) && isHTMLSpace(tag[index]) {
 			index++
 		}
 		if index >= len(tag) || tag[index] == '>' || tag[index] == '/' {
-			return "", false
+			return ""
 		}
 		nameStart := index
 		for index < len(tag) && isAttributeNameByte(tag[index]) {
@@ -199,10 +199,10 @@ func scriptAttribute(tag []byte, wanted string) (string, bool) {
 			}
 		}
 		if strings.EqualFold(name, wanted) {
-			return value, true
+			return value
 		}
 	}
-	return "", false
+	return ""
 }
 
 func isAttributeNameByte(value byte) bool {
@@ -416,7 +416,7 @@ func collectClaudeCandidates(value any, candidates *[]conversationCandidate) err
 		var valid bool
 		container, valid = conversation.(map[string]any)
 		if !valid {
-			return errors.New("Claude conversation envelope is malformed")
+			return errors.New("claude conversation envelope is malformed")
 		}
 	}
 	rawMessages, ok := container["chat_messages"].([]any)

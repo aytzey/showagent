@@ -223,7 +223,7 @@ func loadImportConversation(ctx context.Context, options importCLIOptions, stdin
 		}
 		return importer.ImportURL(ctx, options.url, importer.FetchOptions{})
 	}
-	var reader io.Reader = stdin
+	reader := stdin
 	if options.file != "" {
 		file, err := os.Open(options.file)
 		if err != nil {

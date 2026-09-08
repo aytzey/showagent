@@ -162,10 +162,7 @@ func explicitRoleHeader(line string) (Role, string, bool) {
 	default:
 		return "", "", false
 	}
-	inline := line[colon+1:]
-	if strings.HasPrefix(inline, " ") {
-		inline = inline[1:]
-	}
+	inline := strings.TrimPrefix(line[colon+1:], " ")
 	return role, inline, true
 }
 

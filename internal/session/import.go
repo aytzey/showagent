@@ -295,7 +295,7 @@ func cloneImportMessages(messages []ImportMessage) []ImportMessage {
 func importTurns(messages []ImportMessage) []Turn {
 	turns := make([]Turn, len(messages))
 	for index, message := range messages {
-		turns[index] = Turn{Role: message.Role, Text: message.Text}
+		turns[index] = Turn(message)
 	}
 	return turns
 }

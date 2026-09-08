@@ -177,13 +177,13 @@ func verifyCodexRPCThread(target Row, thread struct {
 	CWD  string `json:"cwd"`
 }) error {
 	if thread.ID != target.ID {
-		return fmt.Errorf("Codex app-server returned thread %q, want exact target %q", thread.ID, target.ID)
+		return fmt.Errorf("codex app-server returned thread %q, want exact target %q", thread.ID, target.ID)
 	}
 	if !sameImportPath(thread.Path, target.File) {
-		return fmt.Errorf("Codex app-server returned a different native session file: %s", boundedImportText(thread.Path))
+		return fmt.Errorf("codex app-server returned a different native session file: %s", boundedImportText(thread.Path))
 	}
 	if !sameImportPath(thread.CWD, target.CWD) {
-		return fmt.Errorf("Codex app-server returned a different workspace: %s", boundedImportText(thread.CWD))
+		return fmt.Errorf("codex app-server returned a different workspace: %s", boundedImportText(thread.CWD))
 	}
 	return nil
 }
@@ -233,7 +233,7 @@ func verifyCodexImportPersistence(path string, before ImportRevision, messages [
 
 	remaining := make(map[importMessageKey]int, len(messages))
 	for _, message := range messages {
-		remaining[importMessageKey{Role: message.Role, Text: message.Text}]++
+		remaining[importMessageKey(message)]++
 	}
 	scanner := bufio.NewScanner(io.TeeReader(file, fullHash))
 	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)

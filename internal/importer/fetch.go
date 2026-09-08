@@ -111,7 +111,7 @@ func (fetcher *Fetcher) Fetch(ctx context.Context, rawURL string) (FetchedPage, 
 		}
 		return FetchedPage{}, fmt.Errorf("%w: %w", ErrFetch, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return FetchedPage{}, fmt.Errorf("%w: %s", ErrHTTPStatus, response.Status)
@@ -227,7 +227,7 @@ func (fetcher *Fetcher) fetchSnapshotJSON(ctx context.Context, rawURL string) (S
 		}
 		return "", nil, fmt.Errorf("%w: %w", ErrFetch, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return "", nil, fmt.Errorf("%w: %s", ErrHTTPStatus, response.Status)
 	}
