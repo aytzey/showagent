@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,6 +99,41 @@ func TestApplyImportReadsCodexThreadWithoutTurns(t *testing.T) {
 	}
 	if methods := readMethodLog(t, logPath); !containsString(methods, "thread/inject_items") {
 		t.Fatalf("import did not reach injection after metadata-only thread/read: %#v", methods)
+	}
+}
+
+func TestApplyImportCodexStartFailureRemainsRetryable(t *testing.T) {
+	target, _ := writeCodexImportTarget(t)
+	t.Setenv("PATH", t.TempDir())
+
+	previousCommand := codexAppServerCommand
+	codexAppServerCommand = func(ctx context.Context, cwd string) *exec.Cmd {
+		command := exec.CommandContext(ctx, "codex", "app-server", "--stdio")
+		command.Dir = cwd
+		return command
+	}
+	defer func() { codexAppServerCommand = previousCommand }()
+
+	plan, err := PlanImport(ImportRequest{
+		Mode: ImportAppendContext, Target: target,
+		Messages: []ImportMessage{{Role: "user", Text: "retry after installing Codex"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		_, err = ApplyImport(context.Background(), plan)
+		if !errors.Is(err, errImportNotStarted) {
+			t.Fatalf("attempt %d error = %v, want pre-write failure", attempt, err)
+		}
+		if errors.Is(err, ErrImportOutcomeUncertain) {
+			t.Fatalf("attempt %d became outcome-uncertain before app-server start", attempt)
+		}
+	}
+	receipts, err := filepath.Glob(filepath.Join(os.Getenv("SHOWAGENT_STATE_DIR"), "imports", "*.json"))
+	if err != nil || len(receipts) != 0 {
+		t.Fatalf("pre-write failure left receipts = %#v, err=%v", receipts, err)
 	}
 }
 

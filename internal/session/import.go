@@ -33,6 +33,7 @@ var (
 	ErrImportTargetChanged     = errors.New("import target changed; review the import again")
 	ErrImportVerification      = errors.New("native import verification failed")
 	ErrImportOutcomeUncertain  = errors.New("an earlier import may have completed; inspect the target before retrying")
+	errImportNotStarted        = errors.New("native import did not start")
 )
 
 // ImportMessage is the session package's deliberately small boundary type.
@@ -215,7 +216,7 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 
 	receipt, err := applyImportNative(ctx, plan)
 	if err != nil {
-		if errors.Is(err, ErrImportTargetChanged) || errors.Is(err, ErrImportAppendUnavailable) {
+		if errors.Is(err, ErrImportTargetChanged) || errors.Is(err, ErrImportAppendUnavailable) || errors.Is(err, errImportNotStarted) {
 			_ = os.Remove(receiptPath)
 		}
 		return ImportReceipt{}, err
@@ -227,7 +228,7 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 }
 
 func importNeedsProviderCommand(plan ImportPlan) bool {
-	return plan.Mode == ImportAppendContext || plan.Mode == ImportCreate && plan.Provider == ProviderOpenCode
+	return plan.Mode == ImportCreate && plan.Provider == ProviderOpenCode
 }
 
 func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {

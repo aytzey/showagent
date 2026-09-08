@@ -88,7 +88,7 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 
 	before, err := observeImportRevision(plan.Target.File)
 	if err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 	if !sameImportRevision(plan.ObservedRevision, before) {
 		return ImportReceipt{}, ErrImportTargetChanged
@@ -96,7 +96,7 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 
 	client, err := startCodexImportClient(ctx, plan.Target.CWD)
 	if err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 	defer client.close()
 
@@ -104,20 +104,20 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 		"clientInfo":   map[string]string{"name": "showagent-import", "version": "1"},
 		"capabilities": map[string]bool{"experimentalApi": true},
 	}, nil); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 	if err := client.notify("initialized"); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 
 	var read codexImportThreadResult
 	if err := client.call(ctx, "thread/read", map[string]any{
 		"threadId": plan.Target.ID, "includeTurns": false,
 	}, &read); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 	if err := verifyCodexRPCThread(plan.Target, read.Thread); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 
 	var resumed codexImportThreadResult
@@ -125,10 +125,10 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 		"threadId": plan.Target.ID,
 		"cwd":      plan.Target.CWD,
 	}, &resumed); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 	if err := verifyCodexRPCThread(plan.Target, resumed.Thread); err != nil {
-		return ImportReceipt{}, err
+		return ImportReceipt{}, codexImportPreWriteError(err)
 	}
 
 	items := codexImportItems(plan.messages)
@@ -154,6 +154,10 @@ func applyCodexContextImport(parent context.Context, plan ImportPlan) (ImportRec
 	receipt.BeforeRevision = before
 	receipt.AfterRevision = after
 	return receipt, nil
+}
+
+func codexImportPreWriteError(err error) error {
+	return fmt.Errorf("%w: %w", errImportNotStarted, err)
 }
 
 func importContext(parent context.Context) (context.Context, context.CancelFunc) {
