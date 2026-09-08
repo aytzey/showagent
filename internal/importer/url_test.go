@@ -45,6 +45,12 @@ func TestValidateShareURL(t *testing.T) {
 	}
 }
 
+func TestValidateShareURLPublicWrapper(t *testing.T) {
+	if kind, err := ValidateShareURL("https://claude.ai/share/01234567-89ab-cdef-0123-456789abcdef"); err != nil || kind != SourceClaudeShare {
+		t.Fatalf("ValidateShareURL = %q, %v", kind, err)
+	}
+}
+
 func TestRejectNonPublicAddresses(t *testing.T) {
 	blocked := []string{
 		"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1",

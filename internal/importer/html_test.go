@@ -178,3 +178,25 @@ func TestParseChatGPTHTMLDecodesReactRouterStreamSnapshot(t *testing.T) {
 		t.Fatalf("messages = %#v", conversation.Messages)
 	}
 }
+
+func TestParseChatGPTHTMLDecodesKnownStateAssignment(t *testing.T) {
+	html := []byte(`<script>
+window.__NEXT_DATA__
+window.__INITIAL_STATE__ = {
+  "title":"Assigned state",
+  "current_node":"a1",
+  "mapping":{
+    "u1":{"parent":null,"message":{"id":"u1","author":{"role":"user"},"content":{"parts":["Question"]}}},
+    "a1":{"parent":"u1","message":{"id":"a1","author":{"role":"assistant"},"content":{"parts":["Answer"]}}}
+  }
+};
+</script>`)
+
+	conversation, err := ParseChatGPTHTML(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.Title != "Assigned state" || len(conversation.Messages) != 2 || conversation.Messages[1].Text != "Answer" {
+		t.Fatalf("assigned conversation = %#v", conversation)
+	}
+}

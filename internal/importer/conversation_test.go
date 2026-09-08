@@ -144,3 +144,49 @@ func TestParseJSONRejectsWrongVersionUnknownFieldsAndUnassignedRoles(t *testing.
 		t.Fatalf("error = %v, want AmbiguityError", err)
 	}
 }
+
+func TestConversationValidateCoversThePublicSchemaContract(t *testing.T) {
+	valid := func() Conversation {
+		return Conversation{
+			SchemaVersion: SchemaVersion,
+			SourceKind:    SourceTranscriptFile,
+			AcquiredAt:    time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC),
+			Messages:      []Message{{Role: RoleUser, Text: "question"}, {Role: RoleAssistant, Text: "answer"}},
+			Completeness:  CompletenessUnknown,
+		}
+	}
+	if err := valid().Validate(); err != nil {
+		t.Fatalf("valid conversation: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Conversation)
+		want   error
+	}{
+		{"schema", func(value *Conversation) { value.SchemaVersion++ }, ErrUnsupportedSchema},
+		{"source", func(value *Conversation) { value.SourceKind = "browser_history" }, nil},
+		{"acquired at", func(value *Conversation) { value.AcquiredAt = time.Time{} }, nil},
+		{"completeness", func(value *Conversation) { value.Completeness = "partial_guess" }, nil},
+		{"no messages", func(value *Conversation) { value.Messages = nil }, ErrNoConversation},
+		{"role", func(value *Conversation) { value.Messages[0].Role = "system" }, nil},
+		{"invalid UTF-8", func(value *Conversation) { value.Messages[0].Text = string([]byte{0xff}) }, ErrInvalidUTF8},
+		{"empty text", func(value *Conversation) { value.Messages[0].Text = " \n\t" }, ErrNoConversation},
+		{"total text limit", func(value *Conversation) { value.Messages[0].Text = strings.Repeat("x", MaxTextBytes+1) }, ErrLimitExceeded},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conversation := valid()
+			test.mutate(&conversation)
+			err := conversation.Validate()
+			if err == nil || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("Validate error = %v, want %v", err, test.want)
+			}
+		})
+	}
+
+	ambiguity := &AmbiguityError{UnassignedBlocks: 2}
+	if !strings.Contains(ambiguity.Error(), "2 unassigned") || !errors.Is(ambiguity, ErrAmbiguousRoles) {
+		t.Fatalf("ambiguity contract = %q, unwrap=%v", ambiguity.Error(), errors.Unwrap(ambiguity))
+	}
+}

@@ -590,6 +590,39 @@ func TestImportFromStdinAsOneContextNote(t *testing.T) {
 	}
 }
 
+func TestImportVersionedJSONDryRunPreservesRolesWithoutWriting(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	input := filepath.Join(t.TempDir(), "conversation.json")
+	writeFixture(t, input, `{
+  "schema_version": 1,
+  "source_kind": "transcript_file",
+  "acquired_at": "2026-09-08T12:00:00Z",
+  "messages": [
+    {"role":"user","text":"JSON question"},
+    {"role":"assistant","text":"JSON answer"}
+  ],
+  "completeness": "unknown"
+}`)
+	before := len(session.Discover())
+
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--file", input, "--format", "json", "--to", "codex", "--cwd", workspace, "--dry-run", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if result["source"] != "transcript file" || result["message_count"] != float64(2) || result["dry_run"] != true {
+		t.Fatalf("unexpected JSON preview = %#v", result)
+	}
+	if after := len(session.Discover()); after != before {
+		t.Fatalf("JSON dry-run changed discovered session count: before=%d after=%d", before, after)
+	}
+}
+
 func TestImportResolvesRelativeWorkspace(t *testing.T) {
 	setFixtureHomes(t)
 	root := t.TempDir()
