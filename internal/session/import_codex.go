@@ -411,7 +411,7 @@ func (client *codexImportRPCClient) call(ctx context.Context, method string, par
 	for {
 		select {
 		case <-callCtx.Done():
-			return fmt.Errorf("Codex app-server %s timed out: %w", method, callCtx.Err())
+			return fmt.Errorf("codex app-server %s timed out: %w", method, callCtx.Err())
 		case <-client.done:
 			return client.processError(fmt.Sprintf("Codex app-server exited during %s", method), nil)
 		case read := <-client.responses:
@@ -428,7 +428,7 @@ func (client *codexImportRPCClient) call(ctx context.Context, method string, par
 				if len(read.response.Error.Data) > 0 && string(read.response.Error.Data) != "null" {
 					message += ": " + boundedImportText(string(read.response.Error.Data))
 				}
-				return fmt.Errorf("Codex app-server %s error %d: %s", method, read.response.Error.Code, message)
+				return fmt.Errorf("codex app-server %s error %d: %s", method, read.response.Error.Code, message)
 			}
 			if result != nil && len(read.response.Result) > 0 && string(read.response.Result) != "null" {
 				if err := json.Unmarshal(read.response.Result, result); err != nil {
