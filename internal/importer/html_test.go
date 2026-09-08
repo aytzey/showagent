@@ -63,6 +63,29 @@ func TestParseClaudeHTMLReadsExplicitMessageArrayAndSkipsNonTextBlocks(t *testin
 	}
 }
 
+func TestParseClaudeHTMLPreservesTextBlockBoundaries(t *testing.T) {
+	html := []byte(`<script type="application/json">{
+  "chat_messages":[
+    {"uuid":"u1","sender":"human","content":[
+      {"type":"text","text":"Before"},
+      {"type":"attachment","name":"omitted.pdf"},
+      {"type":"text","text":"After"}
+    ]}
+  ]
+}</script>`)
+
+	conversation, err := ParseClaudeHTML(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversation.Messages) != 1 || conversation.Messages[0].Text != "Before\nAfter" {
+		t.Fatalf("message blocks = %#v, want a visible newline boundary", conversation.Messages)
+	}
+	if len(conversation.Warnings) == 0 {
+		t.Fatal("expected an omitted-content warning")
+	}
+}
+
 func TestParseShareHTMLFailsClosed(t *testing.T) {
 	tests := []struct {
 		name string

@@ -199,6 +199,12 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 	if plan.PlanVersion != importPlanVersion || plan.OperationID == "" || len(plan.messages) == 0 {
 		return ImportReceipt{}, errors.New("invalid import plan; preview the import again")
 	}
+	// Check executable availability before persisting intent. OpenCode create
+	// and Codex append have not touched native state at this point, so a missing
+	// CLI is safely retryable after installation rather than outcome-uncertain.
+	if importNeedsProviderCommand(plan) && !ProviderCommandAvailable(plan.Provider) {
+		return ImportReceipt{}, fmt.Errorf("%s not found in PATH; install it and retry", providerCommand(plan.Provider))
+	}
 	prior, receiptPath, err := prepareImportReceipt(plan)
 	if err != nil {
 		return ImportReceipt{}, err
@@ -218,6 +224,10 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 		return ImportReceipt{}, fmt.Errorf("native import completed but its receipt could not be committed; %w: %v", ErrImportOutcomeUncertain, err)
 	}
 	return receipt, nil
+}
+
+func importNeedsProviderCommand(plan ImportPlan) bool {
+	return plan.Mode == ImportAppendContext || plan.Mode == ImportCreate && plan.Provider == ProviderOpenCode
 }
 
 func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {

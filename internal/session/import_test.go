@@ -210,6 +210,52 @@ func TestApplyImportStopsBeforeNativeWriteForPreparedReceipt(t *testing.T) {
 	})
 }
 
+func TestApplyImportMissingRequiredCLIRemainsRetryable(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "project")
+	if err := makeTestDir(workspace); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHOWAGENT_STATE_DIR", filepath.Join(root, "showagent-state"))
+	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
+
+	plan, err := PlanImport(ImportRequest{
+		Mode: ImportCreate, Provider: ProviderOpenCode, CWD: workspace,
+		Messages: []ImportMessage{{Role: "user", Text: "retry after installing the CLI"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writes := 0
+	previousRegistry := registry
+	registry = append([]ProviderImpl(nil), registry...)
+	for index, impl := range registry {
+		if impl.Name() == ProviderOpenCode {
+			registry[index] = countingImportProvider{ProviderImpl: impl, writes: &writes}
+			break
+		}
+	}
+	defer func() { registry = previousRegistry }()
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		_, err = ApplyImport(context.Background(), plan)
+		if err == nil || !strings.Contains(err.Error(), "opencode not found in PATH") {
+			t.Fatalf("attempt %d error = %v, want missing CLI", attempt, err)
+		}
+		if errors.Is(err, ErrImportOutcomeUncertain) {
+			t.Fatalf("attempt %d became outcome-uncertain before a native write", attempt)
+		}
+	}
+	if writes != 0 {
+		t.Fatalf("native provider writer called %d times", writes)
+	}
+	receipts, err := filepath.Glob(filepath.Join(root, "showagent-state", "imports", "*.json"))
+	if err != nil || len(receipts) != 0 {
+		t.Fatalf("pre-write failure left receipts = %#v, err=%v", receipts, err)
+	}
+}
+
 type countingImportProvider struct {
 	ProviderImpl
 	writes *int

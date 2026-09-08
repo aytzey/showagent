@@ -612,7 +612,7 @@ func textFromContent(content any) (string, int, bool) {
 			}
 		}
 		if len(parts) > 0 {
-			return strings.Join(parts, ""), losses, true
+			return strings.Join(parts, "\n"), losses, true
 		}
 		return "", losses, false
 	}
