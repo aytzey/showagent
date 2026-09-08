@@ -31,6 +31,7 @@ def isolated_env(root):
         "CLAUDE_CONFIG_DIR": "claude", "GEMINI_CLI_HOME": "gemini",
         "OPENCODE_DATA_HOME": "opencode", "JCODE_HOME": "jcode",
         "PI_CODING_AGENT_DIR": "pi", "PI_CODING_AGENT_SESSION_DIR": "pi/sessions",
+        "SHOWAGENT_STATE_DIR": "showagent-state",
         "SHOWAGENT_LEARNINGS_DIR": "learnings", "PATH": "empty-bin",
         "TEMP": "tmp", "TMP": "tmp", "TMPDIR": "tmp",
     }
@@ -159,7 +160,8 @@ def verify(binary, report, codex=None):
         report["binary_version"] = invoke("--version").strip()
         report["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
         help_text = invoke("--help")
-        require("transcript" in help_text and "--dry-run" in help_text, "Help lacks advertised commands")
+        require("transcript" in help_text and "import" in help_text and "--dry-run" in help_text,
+                "Help lacks advertised commands")
         require(json.loads(invoke("list", "--json")) == [], "External sessions leaked into isolated environment")
         passed("empty discovery and advertised help")
         session_id, source, marker = seed(root, workspace)
@@ -199,10 +201,79 @@ def verify(binary, report, codex=None):
         require(json.loads(invoke("transcript", pi[0]["id"], "--json"))["turns"] == expected[-2:], "Scope trimming mismatch")
         bounded = json.loads(invoke("transcript", returned_id, "--max-turns", "2", "--json"))
         require(bounded["truncated"] and bounded["turns"] == expected[-2:], "Transcript bound mismatch")
+        import_source = root / "web-conversation.txt"
+        import_source.write_text(
+            "User:\nBring this web decision into the project.\n\n"
+            "Assistant:\nKeep Unicode: Türkçe — and code indentation.\n"
+            "```go\n  imported()\n```\n",
+            encoding="utf-8",
+        )
+        before_import = files(root)
+        preview = json.loads(invoke(
+            "import", "--file", str(import_source), "--to", "codex",
+            "--cwd", str(workspace), "--dry-run", "--json",
+        ))
+        require(preview["dry_run"] and preview["message_count"] == 2,
+                "Web conversation import preview mismatch")
+        require(files(root) == before_import, "Import dry-run changed the filesystem")
+        imported_result = json.loads(invoke(
+            "import", "--file", str(import_source), "--to", "codex",
+            "--cwd", str(workspace), "--json",
+        ))
+        imported_id = imported_result["session_id"]
+        imported = json.loads(invoke("transcript", imported_id, "--json"))
+        expected_import = [
+            {"role": "user", "text": "Bring this web decision into the project."},
+            {"role": "assistant", "text": "Keep Unicode: Türkçe — and code indentation.\n```go\n  imported()\n```"},
+        ]
+        require(imported["turns"] == expected_import,
+                "Imported web conversation changed text or roles: " + repr(imported["turns"]))
+        repeated_import = json.loads(invoke(
+            "import", "--file", str(import_source), "--to", "codex",
+            "--cwd", str(workspace), "--json",
+        ))
+        require(repeated_import.get("no_op") is True and repeated_import["session_id"] == imported_id,
+                "Repeated create import was not a verified no-op")
+        passed("text import preview, native Codex creation and idempotent retry")
         require(hashlib.sha256(source.read_bytes()).hexdigest() == original_hash, "Original fixture was changed")
         passed("scoped copy, bounded transcript and original preservation")
         report["synthetic_conversion"] = "passed"
         if codex:
+            env["PATH"] = os.pathsep.join((str(codex.parent), env["PATH"]))
+            append_source = root / "append-context.txt"
+            append_marker = "imported-context-" + uuid.uuid4().hex
+            append_source.write_text(
+                "User:\nUse this imported context marker: " + append_marker + "\n\n"
+                "Assistant:\nContext received without starting a model turn.\n",
+                encoding="utf-8",
+            )
+            native_files = [path for path in (root / "codex" / "sessions").rglob("*.jsonl")
+                            if returned_id in path.name]
+            require(len(native_files) == 1, "Could not identify the exact Codex append target")
+            original = native_files[0].read_bytes()
+            append_result = json.loads(invoke(
+                "import", "--file", str(append_source), "--into", "codex:" + returned_id, "--json",
+            ))
+            require(append_result["session_id"] == returned_id and append_result["operation"] == "append-context",
+                    "Context import changed the target session identity")
+            updated = native_files[0].read_bytes()
+            require(len(updated) > len(original) and updated.startswith(original),
+                    "Context import did not preserve the original native prefix")
+            repeated_append = json.loads(invoke(
+                "import", "--file", str(append_source), "--into", "codex:" + returned_id, "--json",
+            ))
+            require(repeated_append.get("no_op") is True and native_files[0].read_bytes() == updated,
+                    "Repeated context import wrote duplicate native records")
+            appended_transcript = json.loads(invoke("transcript", returned_id, "--max-turns", "2", "--json"))
+            require(append_marker in json.dumps(appended_transcript["turns"]),
+                    "Imported context was not persisted in the native transcript")
+            report["native_context_import"] = {
+                "status": "passed", "version": command(codex, ["--version"], env, workspace).strip(),
+                "method": "thread/inject_items", "same_session_id": True,
+                "original_prefix_preserved": True, "model_call": False,
+                "native_history_visible": False,
+            }
+            passed("actual Codex app-server context import preserves ID and native prefix")
             report["native_loader"] = {"status": "failed", "reason": "Native reader validation did not complete"}
             report["native_loader"] = native_codex_read(codex, env, workspace, returned_id, marker)
 
@@ -215,6 +286,7 @@ def main():
     args = parser.parse_args()
     report = {"date_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "platform": platform.platform(),
               "checks": [], "synthetic_conversion": "not_run", "native_loader": {"status": "not_run"},
+              "native_context_import": {"status": "not_run"},
               "model_continuation": {"status": "not_run", "reason": "This harness does not call a model."}}
     try:
         verify(args.binary.resolve(strict=True), report, args.codex.resolve(strict=True) if args.codex else None)

@@ -33,6 +33,7 @@ func setFixtureHomes(t *testing.T) {
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	t.Setenv("SHOWAGENT_STATE_DIR", filepath.Join(root, "showagent-state"))
 
 	writeFixture(t, filepath.Join(codexHome, "sessions", "2026", "06", "01", "rollout-2026-06-01T12-00-00-"+codexID+".jsonl"), `
 {"timestamp":"2026-06-01T09:00:00Z","type":"session_meta","payload":{"id":"`+codexID+`","cwd":"/work/codex"}}
@@ -515,6 +516,158 @@ func TestConvertWritesTargetAndPrintsRecipe(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_HOME"), "projects", "*", "*.jsonl"))
 	if err != nil || len(matches) != 2 {
 		t.Fatalf("converted claude files = %v, %v; want original + copy", matches, err)
+	}
+}
+
+func TestImportTextDryRunDoesNotWriteSession(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	input := filepath.Join(t.TempDir(), "conversation.txt")
+	writeFixture(t, input, "User:\nKeep the index local.\n\nAssistant:\nUse an embedded database.\n")
+	before := len(session.Discover())
+
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--file", input, "--to", "codex", "--cwd", workspace, "--dry-run"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	for _, want := range []string{"import preview", "transcript file", "codex", workspace, "2 messages", "text only"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("preview missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "source:    pasted text") {
+		t.Fatalf("file import was reported as pasted text:\n%s", stdout.String())
+	}
+	if after := len(session.Discover()); after != before {
+		t.Fatalf("dry-run changed discovered session count: before=%d after=%d", before, after)
+	}
+}
+
+func TestImportTextCreatesNativeSession(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	input := filepath.Join(t.TempDir(), "conversation.txt")
+	writeFixture(t, input, "User:\nTürkçe karar\n\nAssistant:\n```go\n  keepIndent()\n```\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--file", input, "--to", "codex", "--cwd", workspace, "--json"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if result["operation"] != "create" || result["source"] != "transcript file" || result["provider"] != "codex" || result["workspace"] != workspace || result["message_count"] != float64(2) {
+		t.Fatalf("unexpected import result: %#v", result)
+	}
+	id, _ := result["session_id"].(string)
+	row, err := resolveSession(session.Discover(), id)
+	if err != nil {
+		t.Fatalf("created session is not discoverable: %v", err)
+	}
+	turns, err := session.Transcript(row)
+	if err != nil || len(turns) != 2 || turns[0].Text != "Türkçe karar" || !strings.Contains(turns[1].Text, "  keepIndent()") {
+		t.Fatalf("unexpected native transcript: turns=%#v err=%v", turns, err)
+	}
+}
+
+func TestImportFromStdinAsOneContextNote(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--stdin", "--as-note", "--to", "claude", "--cwd", workspace, "--json"}, strings.NewReader("Unlabelled research\n  keep this indentation\n"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if result["source"] != "pasted text" || result["provider"] != "claude" || result["message_count"] != float64(1) {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestImportResolvesRelativeWorkspace(t *testing.T) {
+	setFixtureHomes(t)
+	root := t.TempDir()
+	workspace := filepath.Join(root, "project")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	input := filepath.Join(t.TempDir(), "conversation.txt")
+	writeFixture(t, input, "User:\nQuestion\n\nAssistant:\nAnswer\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runWithInput([]string{"import", "--file", input, "--to", "codex", "--cwd", "project", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if result["workspace"] != workspace {
+		t.Fatalf("workspace = %#v, want %q", result["workspace"], workspace)
+	}
+}
+
+func TestImportRetryReturnsVerifiedNoOp(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	input := filepath.Join(t.TempDir(), "conversation.txt")
+	writeFixture(t, input, "User:\nKeep this once.\n")
+	args := []string{"import", "--file", input, "--to", "codex", "--cwd", workspace, "--json"}
+
+	var firstOut, firstErr bytes.Buffer
+	if code := runWithInput(args, strings.NewReader(""), &firstOut, &firstErr); code != 0 {
+		t.Fatalf("first exit=%d stderr=%s", code, firstErr.String())
+	}
+	var first map[string]any
+	if err := json.Unmarshal(firstOut.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+
+	var secondOut, secondErr bytes.Buffer
+	if code := runWithInput(args, strings.NewReader(""), &secondOut, &secondErr); code != 0 {
+		t.Fatalf("second exit=%d stderr=%s", code, secondErr.String())
+	}
+	var second map[string]any
+	if err := json.Unmarshal(secondOut.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second["no_op"] != true || second["session_id"] != first["session_id"] {
+		t.Fatalf("second result=%#v, first=%#v", second, first)
+	}
+}
+
+func TestImportRejectsAmbiguousAndConflictingInput(t *testing.T) {
+	setFixtureHomes(t)
+	workspace := t.TempDir()
+	input := filepath.Join(t.TempDir(), "conversation.txt")
+	writeFixture(t, input, "No speaker labels here")
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"ambiguous roles", []string{"import", "--file", input, "--to", "codex", "--cwd", workspace}, "no speaker"},
+		{"two sources", []string{"import", "--file", input, "--stdin", "--to", "codex", "--cwd", workspace}, "exactly one source"},
+		{"two target modes", []string{"import", "--file", input, "--to", "codex", "--cwd", workspace, "--into", "codex:" + codexID}, "either --to"},
+		{"latest append", []string{"import", "--file", input, "--as-note", "--into", "codex:latest"}, "exact session id"},
+		{"link as note", []string{"import", "--url", "https://chatgpt.com/share/12345678", "--as-note", "--to", "codex", "--cwd", workspace}, "only valid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := runWithInput(test.args, strings.NewReader("ignored"), &stdout, &stderr)
+			if code != 2 || !strings.Contains(strings.ToLower(stderr.String()), test.want) {
+				t.Fatalf("exit=%d stderr=%q, want usage error containing %q", code, stderr.String(), test.want)
+			}
+		})
 	}
 }
 

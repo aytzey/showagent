@@ -227,6 +227,7 @@ type model struct {
 	compoundChoosing bool
 	compoundRow      *session.Row
 	compoundNotice   string
+	importFlow       *importWizard
 	isDark           bool
 	width            int
 	height           int
@@ -348,8 +349,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDelete(msg)
 	case conversionPreviewMsg:
 		return m.applyConversionPreview(msg)
+	case importParsedMsg:
+		return m.applyImportParsed(msg)
+	case importPlannedMsg:
+		return m.applyImportPlanned(msg)
+	case importAppliedMsg:
+		return m.applyImportApplied(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	}
+	if m.importFlow != nil {
+		return m.updateImportInput(msg)
 	}
 
 	var cmd tea.Cmd
@@ -365,6 +375,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	}
+
+	if m.importFlow != nil {
+		return m.updateImport(msg)
 	}
 
 	// The compound chooser is a modal: pick the agent by digit, or cancel.
@@ -435,6 +449,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch {
+	case key.Matches(msg, m.keys.Import):
+		return m.openImport()
 	case key.Matches(msg, m.keys.Resume):
 		if header, ok := m.list.SelectedItem().(headerItem); ok {
 			return m.toggleGroup(header.path)
@@ -801,6 +817,8 @@ func (m model) View() tea.View {
 	switch {
 	case m.loading:
 		content = m.loadingView()
+	case m.importFlow != nil:
+		content = m.importView()
 	case m.compoundChoosing:
 		content = m.compoundView()
 	case len(m.allRows) == 0:
@@ -1120,7 +1138,7 @@ func (m model) emptyView() string {
 	}
 	lines = append(lines,
 		"",
-		th.hint.Render("Start a conversation with a supported agent, then press r to rescan."),
+		th.hint.Render("Press i to Import conversation, or r to rescan local sessions."),
 		th.hint.Render("Press q to quit."),
 	)
 	body := strings.Join(lines, "\n")
