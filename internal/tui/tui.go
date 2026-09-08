@@ -1138,7 +1138,7 @@ func (m model) emptyView() string {
 	}
 	lines = append(lines,
 		"",
-		th.hint.Render("Press i to Import conversation, or r to rescan local sessions."),
+		th.hint.Render("Press i to Import conversation; press r to rescan local sessions."),
 		th.hint.Render("Press q to quit."),
 	)
 	body := strings.Join(lines, "\n")
