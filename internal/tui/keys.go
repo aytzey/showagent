@@ -11,6 +11,7 @@ type keyMap struct {
 	Down      key.Binding
 	Page      key.Binding
 	Search    key.Binding
+	Import    key.Binding
 	Resume    key.Binding
 	Collapse  key.Binding
 	Compound  key.Binding
@@ -33,6 +34,7 @@ func defaultKeys() keyMap {
 		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Page:     key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "page")),
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		Import:   key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "import")),
 		Resume:   key.NewBinding(key.WithKeys("enter", "ctrl+m"), key.WithHelp("enter", "resume")),
 		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
@@ -67,13 +69,13 @@ func providerFilterKeys() []string {
 // ShortHelp is the one-line hint shown under the header. Entries are ordered
 // by importance because narrow terminals truncate the tail.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Search, k.Providers, k.Preview, k.Target, k.Scope, k.Convert, k.Branch, k.Delete, k.Rescan, k.Yolo, k.Compound, k.Help, k.Quit}
+	return []key.Binding{k.Resume, k.Import, k.Search, k.Providers, k.Preview, k.Target, k.Scope, k.Convert, k.Branch, k.Delete, k.Rescan, k.Yolo, k.Compound, k.Help, k.Quit}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Page, k.Search},
+		{k.Up, k.Down, k.Page, k.Search, k.Import},
 		{k.Resume, k.Collapse, k.Compound, k.Convert, k.Branch},
 		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo},
 		{k.Providers, k.Rescan, k.Help, k.Quit},

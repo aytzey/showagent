@@ -23,7 +23,7 @@ import (
 var version = "dev"
 
 const (
-	usageLine              = "usage: showagent [list [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
+	usageLine              = "usage: showagent [list [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
 	defaultTranscriptTurns = 50
 	maxTranscriptTurns     = 500
 )
@@ -35,6 +35,10 @@ func main() {
 // run dispatches CLI arguments and returns the process exit code. It is
 // separated from main so argument handling stays testable.
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithInput(args, os.Stdin, stdout, stderr)
+}
+
+func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return runDefault(stdout, stderr)
 	}
@@ -54,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runResume(args[1:], stderr)
 	case "convert":
 		return runConvert(args[1:], stdout, stderr)
+	case "import":
+		return runImport(args[1:], stdin, stdout, stderr)
 	case "info":
 		return runInfo(args[1:], stdout, stderr)
 	case "mcp":
@@ -569,6 +575,8 @@ Usage:
                                      resume a session directly, without the picker
   showagent convert <id|latest> --to <provider> [--scope all|last:50] [--dry-run]
                                      preview or write a native session for another agent
+  showagent import (--url URL|--file PATH|--stdin) (--to <provider> --cwd DIR|--into PROVIDER:ID) [--format auto|text|json] [--as-note] [--dry-run] [--json]
+                                     import a ChatGPT/Claude share or pasted text
   showagent info <id|latest> [--yolo]
                                      print the exact resume command and storage location
   showagent mcp [--read-only] [--allow-secrets]
@@ -588,6 +596,10 @@ Flags:
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
   --dry-run                          (convert) preview without writing anything
+                                     (import) parse and preview without writing a session
+  --url/--file/--stdin               (import) choose exactly one conversation source
+  --into                             (import) add context to an exact provider:session-id
+  --as-note                          (import) treat unlabelled text as one user context note
   --read-only                        (mcp) omit branch/convert tools; never write session stores
   --allow-secrets                    (mcp) return transcript values verbatim instead of redacting
 
@@ -595,7 +607,7 @@ Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope
   x preview/confirm hand-off · n branch a copy · C compound · d/del delete
   p cycle preview (first/latest/both) · 1..9 toggle providers · r rescan
-  ? full help · esc clear search/overlay · q quit
+  i import a web conversation · ? full help · esc clear search/overlay · q quit
 
 Session locations:
   codex     ~/.codex/sessions, ~/.codex/multica-sessions

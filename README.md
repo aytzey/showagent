@@ -80,6 +80,10 @@ supported stores and brings their sessions into one terminal picker:
 - **Switch agents** — preview what will carry over, then write a new session
   for the target agent. File-backed copies are private and written atomically;
   OpenCode imports go through its own CLI. Originals are preserved.
+- **Bring web chats into your coding workflow** — import a public ChatGPT or
+  Claude share link, a transcript file, or pasted text into a native local
+  session. You can also add imported text to the context of an exact Codex
+  session without starting a model turn.
 - **Keep your history local** — no hosted service, telemetry, or showagent
   account. The optional updater uses the network; an MCP client may send
   requested transcript content to its model provider. See the [privacy FAQ](#faq).
@@ -153,6 +157,10 @@ showagent transcript latest --max-turns 50 --json
 showagent resume latest    # reopen the most recent session, any agent
 showagent convert SOURCE_SESSION_ID --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
+showagent import --url CHAT_SHARE_URL --to codex --cwd ./my-project
+                           # create a native coding-agent session from a public web chat
+showagent import --file conversation.txt --into codex:EXACT_SESSION_ID
+                           # add text to an existing Codex session's context
 showagent info latest      # exact resume command + storage location
 showagent mcp              # serve session history to MCP-capable agents (stdio)
 showagent mcp --read-only  # same search/transcript tools, without tools that write copies
@@ -165,6 +173,9 @@ showagent --help           # full CLI help
 Replace `SOURCE_SESSION_ID` with the ID you selected from `showagent list`.
 The `transcript` command is not present in older builds such as v0.11.0;
 check [distribution details](docs/distribution.md) if your help output differs.
+See [web conversation import](docs/web-import.md) for accepted transcript
+formats, security boundaries, and the difference between creating a session
+and adding context to an existing one.
 
 ### Keybindings
 
@@ -182,6 +193,7 @@ check [distribution details](docs/distribution.md) if your help output differs.
 | `n` | Branch: copy the transferable conversation to a new session in the same agent |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
+| `i` | Import a ChatGPT/Claude share link or pasted transcript |
 | `d`, `del`, `backspace` | Delete the session — second press confirms, moving disarms |
 | `r` | Rescan session stores (keeps cursor, search, and filters) |
 | `?` | Toggle the full keybinding overlay |
@@ -218,6 +230,13 @@ before writing anything: source session, target provider, workspace, scope,
 transferable turn count, last user ask, and the agent-specific state that will
 be dropped. Remove `--dry-run` to write the converted session, then showagent
 prints the resume recipe for the new row.
+
+`showagent import --url <public-share-url> --to <provider> --cwd <directory>`
+creates a new native session from a ChatGPT or Claude web share. Use `--file`
+or `--stdin` for copied transcripts, and preview with `--dry-run`. Existing
+Codex sessions accept `--into codex:<exact-id>`; imported messages become model
+context but may not appear as normal chat bubbles. Other existing-session
+targets stay disabled until their CLIs provide a safe same-ID append contract.
 
 `showagent info <id|latest> [--yolo]` prints the exact resume command,
 working directory, and storage location for a session.
@@ -317,9 +336,11 @@ is idempotent and only installs what is missing.
 showagent itself does not upload session content and has no telemetry or
 account. An MCP client may send `get_transcript` results to that client's model
 provider, so MCP transcripts redact common secrets by default; keep that
-boundary in mind before registering the server. showagent's own HTTP client is
-used only by the optional release updater and startup update check (disable
-with `SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
+boundary in mind before registering the server. Web import fetches only the
+public ChatGPT or Claude share URL you explicitly provide; it does not use
+browser cookies, private-chat URLs, or arbitrary hosts. The optional release
+updater and startup update check also use HTTP (disable the update check with
+`SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
 Codex/Claude/Pi CLIs, which may download the requested plugin. Message previews
 also redact password-like strings and API keys before rendering (covered by
 tests in [`internal/session/session_test.go`](internal/session/session_test.go)).
