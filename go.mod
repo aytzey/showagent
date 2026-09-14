@@ -1,6 +1,6 @@
 module github.com/aytzey/showagent
 
-go 1.25.13
+go 1.26.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 )
 
 require (
