@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -505,6 +507,38 @@ func sessionIDFromPath(path string) string {
 		return match[1]
 	}
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+}
+
+// scanLines calls visit with each line of r, without its line ending. A line
+// longer than scanBufferMax is skipped instead of failing the whole scan:
+// Codex inlines screenshots into tool-output records, and one such record must
+// not make an otherwise readable transcript impossible to hand off.
+func scanLines(r io.Reader, visit func([]byte)) error {
+	reader := bufio.NewReaderSize(r, 64*1024)
+	var line []byte
+	oversized := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if !oversized && len(line)+len(chunk) > scanBufferMax {
+			line, oversized = line[:0], true
+		}
+		if !oversized {
+			line = append(line, chunk...)
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if !oversized && len(line) > 0 {
+			visit(bytes.TrimRight(line, "\r\n"))
+		}
+		line, oversized = line[:0], false
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // reverseLines calls fn with each non-empty line of path from last to first,
