@@ -130,6 +130,20 @@ func TestTranscriptPreservesCodeFormattingAndValues(t *testing.T) {
 	}
 }
 
+func TestTranscriptSkipsOversizedLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex.jsonl")
+	image := `{"type":"response_item","payload":{"type":"custom_tool_call_output","output":"` + strings.Repeat("A", scanBufferMax) + `"}}`
+	writeFile(t, path, strings.Replace(codexSourceFixture, "\n{", "\n"+image+"\r\n{", 2))
+
+	turns, err := codexTranscript(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 || turns[0].Text != "build the feature" || turns[1].Text != "implemented it" {
+		t.Fatalf("turns around an oversized line were lost: %#v", turns)
+	}
+}
+
 func TestDiscoverCodexIncludesMulticaSessionStores(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "multica-sessions", "default", "agent-1", "issue-1", "2026", "07", "15", "rollout-2026-07-15T12-00-00-11111111-2222-3333-4444-555555555555.jsonl")

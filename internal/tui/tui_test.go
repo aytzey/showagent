@@ -254,6 +254,14 @@ func TestSelectResumeWithEmptyList(t *testing.T) {
 	}
 }
 
+func TestStatusMessageIsVisible(t *testing.T) {
+	m := sizedModel([]session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "hi"}})
+	m.list.NewStatusMessage("preview failed: token too long")
+	if view := m.browseView(); !strings.Contains(view, "preview failed: token too long") {
+		t.Fatalf("status message not rendered:\n%s", view)
+	}
+}
+
 func TestUpsertAndSortRowsSelectsNewSession(t *testing.T) {
 	old := session.Row{
 		Provider: session.ProviderCodex,

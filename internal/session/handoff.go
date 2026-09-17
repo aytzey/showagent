@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -68,20 +67,17 @@ func codexTranscript(path string) ([]Turn, error) {
 	defer func() { _ = file.Close() }()
 
 	var turns []Turn
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
-	for scanner.Scan() {
+	err = scanLines(file, func(line []byte) {
 		var record codexLine
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil || record.Type != "response_item" {
-			continue
+		if err := json.Unmarshal(line, &record); err != nil || record.Type != "response_item" {
+			return
 		}
 		role, text := codexMessage(record.Payload)
-		if !keepTranscriptTurn(role, text) {
-			continue
+		if keepTranscriptTurn(role, text) {
+			turns = append(turns, Turn{Role: role, Text: text})
 		}
-		turns = append(turns, Turn{Role: role, Text: text})
-	}
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	return turns, nil
@@ -95,21 +91,18 @@ func claudeTranscript(path string) ([]Turn, error) {
 	defer func() { _ = file.Close() }()
 
 	var turns []Turn
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
-	for scanner.Scan() {
+	err = scanLines(file, func(line []byte) {
 		var record claudeRecord
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil || record.Message == nil {
-			continue
+		if err := json.Unmarshal(line, &record); err != nil || record.Message == nil {
+			return
 		}
 		role := record.Message.Role
 		text := cleanTranscriptText(textFromContent(record.Message.Content))
-		if !keepTranscriptTurn(role, text) {
-			continue
+		if keepTranscriptTurn(role, text) {
+			turns = append(turns, Turn{Role: role, Text: text})
 		}
-		turns = append(turns, Turn{Role: role, Text: text})
-	}
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	return turns, nil

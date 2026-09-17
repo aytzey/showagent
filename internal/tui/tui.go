@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -253,7 +254,13 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetShowStatusBar(false)
-	l.SetShowTitle(false)
+	// The list only draws status messages beside its title, so keep an empty,
+	// unstyled title: the row it uses is already reserved for the filter
+	// input, and action failures would otherwise be silently invisible.
+	l.Title = ""
+	l.Styles.Title = lipgloss.NewStyle()
+	l.Styles.TitleBar = lipgloss.NewStyle()
+	l.StatusMessageLifetime = 4 * time.Second
 	l.DisableQuitKeybindings()
 
 	// The default list keymap binds f/l/b/d/h/u to paging. Restrict paging to

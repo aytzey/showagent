@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -317,12 +316,7 @@ func scanPiLines(file *os.File, visit func([]byte)) error {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
-	for scanner.Scan() {
-		visit(scanner.Bytes())
-	}
-	return scanner.Err()
+	return scanLines(file, visit)
 }
 
 func loadPiEntries(file *os.File, wanted map[string]bool) (map[string]piSessionEntry, []piSessionEntry, error) {

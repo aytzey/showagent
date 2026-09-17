@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -296,19 +295,13 @@ func loadGeminiConversation(path string) (geminiConversation, error) {
 	var conversation geminiConversation
 	indexByID := map[string]int{}
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), scanBufferMax)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	err = scanLines(file, func(line []byte) {
 		var record map[string]any
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			// Individual bad lines are ignored, exactly like gemini-cli's
-			// reader; a legacy pretty-printed document lands here too and is
-			// handled by the whole-file fallback below.
-			continue
+		if err := json.Unmarshal(line, &record); err != nil {
+			// Individual bad and blank lines are ignored, exactly like
+			// gemini-cli's reader; a legacy pretty-printed document lands
+			// here too and is handled by the whole-file fallback below.
+			return
 		}
 
 		switch {
@@ -344,8 +337,8 @@ func loadGeminiConversation(path string) (geminiConversation, error) {
 				indexByID = reindexGeminiMessages(messages)
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return geminiConversation{}, err
 	}
 

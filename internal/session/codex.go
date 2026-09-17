@@ -206,8 +206,8 @@ func scanCodexStart(path string) (string, string, string) {
 	if err := scanner.Err(); err != nil {
 		// Deliberate skip: a file we cannot scan to the end (read error, or
 		// a single line beyond scanBufferMax) is dropped from discovery
-		// instead of being shown half-parsed. Conversion paths report the
-		// same condition as an error.
+		// instead of being shown half-parsed. Transcript readers skip such
+		// lines instead (see scanLines).
 		return "", "", ""
 	}
 

@@ -100,6 +100,7 @@ Only targets with a CLI on `PATH` appear in the picker.
 | Code blocks, newlines, and indentation in those messages | Permission and approval history |
 | Workspace association and a new native session ID | Model/token/runtime metadata, caches, checkpoints, and subagent internals |
 | | Provider attachments and encrypted reasoning state |
+| | Any single session record over 16 MiB, such as a tool result with inline screenshots |
 
 For file-backed agents, showagent writes a new private file atomically.
 OpenCode imports use its own CLI. Neither conversion nor branching modifies
