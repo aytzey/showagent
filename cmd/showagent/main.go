@@ -23,7 +23,7 @@ import (
 var version = "dev"
 
 const (
-	usageLine              = "usage: showagent [list [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
+	usageLine              = "usage: showagent [--mimo | list [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] [--mimo] | convert <id|latest> --to <provider> [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> [--mimo] | mcp [--read-only] [--allow-secrets] | update | setup]"
 	defaultTranscriptTurns = 50
 	maxTranscriptTurns     = 500
 )
@@ -40,10 +40,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return runDefault(stdout, stderr)
+		return runDefault(stdout, stderr, false)
 	}
 
 	switch args[0] {
+	case "--mimo":
+		if len(args) != 1 {
+			return usageError(stderr, "use 'showagent --mimo' or 'showagent resume <id> --mimo'")
+		}
+		return runDefault(stdout, stderr, true)
 	case "--help", "-h", "help":
 		printHelp(stdout)
 		return 0
@@ -179,7 +184,7 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 
 // runDefault keeps the original no-argument behavior: an interactive picker on
 // a terminal, and a plain table when output is piped or redirected.
-func runDefault(stdout, stderr io.Writer) int {
+func runDefault(stdout, stderr io.Writer, mimo bool) int {
 	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		rows := session.Discover()
 		if len(rows) == 0 {
@@ -193,7 +198,7 @@ func runDefault(stdout, stderr io.Writer) int {
 		return code
 	}
 
-	selection, err := tui.Run()
+	selection, err := tui.Run(mimo)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
@@ -293,6 +298,10 @@ func runResume(args []string, stderr io.Writer) int {
 		switch {
 		case arg == "--yolo":
 			options.Dangerous = true
+		case arg == "--mimo":
+			options.MiMo = true
+		case strings.HasPrefix(arg, "-"):
+			return usageError(stderr, fmt.Sprintf("unknown resume argument %q", arg))
 		case id == "":
 			id = arg
 		default:
@@ -303,7 +312,7 @@ func runResume(args []string, stderr io.Writer) int {
 		return usageError(stderr, "resume needs a session id or 'latest'")
 	}
 
-	row, err := resolveResumableSession(session.Discover(), id)
+	row, err := resolveResumableSession(resumeRows(session.Discover(), options), id)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
@@ -398,6 +407,8 @@ func runInfo(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case arg == "--yolo":
 			options.Dangerous = true
+		case arg == "--mimo":
+			options.MiMo = true
 		case strings.HasPrefix(arg, "-"):
 			return usageError(stderr, fmt.Sprintf("unknown info argument %q", arg))
 		case id == "":
@@ -409,13 +420,27 @@ func runInfo(args []string, stdout, stderr io.Writer) int {
 	if id == "" {
 		return usageError(stderr, "info needs a session id or 'latest'")
 	}
-	row, err := resolveResumableSession(session.Discover(), id)
+	row, err := resolveResumableSession(resumeRows(session.Discover(), options), id)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
 	printResumeRecipe(stdout, session.RecipeFor(row, options))
 	return 0
+}
+
+// MiMo uses Claude's session format; latest must select the latest Claude row.
+func resumeRows(rows []session.Row, options session.ResumeOptions) []session.Row {
+	if !options.MiMo {
+		return rows
+	}
+	var claude []session.Row
+	for _, row := range rows {
+		if row.Provider == session.ProviderClaude {
+			claude = append(claude, row)
+		}
+	}
+	return claude
 }
 
 // resolveSession maps a user-supplied id (or the literal "latest") to a
@@ -566,18 +591,18 @@ func printHelp(w io.Writer) {
 	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, jcode, and Pi sessions.
 
 Usage:
-  showagent                          open the interactive session picker
+  showagent [--mimo]                 open the picker; --mimo enables DevPass for Claude
   showagent list [--json]            print sessions (plain table, or JSON with --json)
   showagent transcript <id|latest> [--max-turns N] [--json]
                                      export recent turns for local context handoff
                                      (always secret-redacted; hard max 500 turns)
-  showagent resume <id|latest> [--yolo]
+  showagent resume <id|latest> [--yolo] [--mimo]
                                      resume a session directly, without the picker
   showagent convert <id|latest> --to <provider> [--scope all|last:50] [--dry-run]
                                      preview or write a native session for another agent
   showagent import (--url URL|--file PATH|--stdin) (--to <provider> --cwd DIR|--into PROVIDER:ID) [--format auto|text|json] [--as-note] [--dry-run] [--json]
                                      import a ChatGPT/Claude share or pasted text
-  showagent info <id|latest> [--yolo]
+  showagent info <id|latest> [--yolo] [--mimo]
                                      print the exact resume command and storage location
   showagent mcp [--read-only] [--allow-secrets]
                                      serve session history to MCP clients over stdio
@@ -593,6 +618,9 @@ Flags:
   --max-turns                        (transcript) recent turns to emit (default 50, max 500)
   --yolo                             (resume) request the provider's permission bypass
                                      (jcode and Pi add no extra flag)
+  --mimo                             (picker/resume/info) Claude with MiMo V2.6 Pro via DevPass
+                                     requires the optional claude --mimo launcher
+                                     (resume/info) latest selects the latest Claude session
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
   --dry-run                          (convert) preview without writing anything
@@ -604,7 +632,7 @@ Flags:
   --allow-secrets                    (mcp) return transcript values verbatim instead of redacting
 
 Picker keys:
-  enter resume · y yolo · space collapse group · / search · t scope
+  enter resume · m Claude default/MiMo · y yolo · space collapse group · / search · t scope
   x preview/confirm hand-off · n branch a copy · C compound · d/del delete
   p cycle preview (first/latest/both) · 1..9 toggle providers · r rescan
   i import a web conversation · ? full help · esc clear search/overlay · q quit

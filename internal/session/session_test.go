@@ -1116,6 +1116,30 @@ func TestPreviewConversionSummarizesTransferWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestMiMoClaudeCommands(t *testing.T) {
+	row := Row{Provider: ProviderClaude, ID: "claude-session"}
+	options := ResumeOptions{MiMo: true, Dangerous: true}
+	want := "claude --mimo --dangerously-skip-permissions --resume claude-session"
+	if got := RecipeFor(row, options).CommandString; got != want {
+		t.Fatalf("MiMo recipe = %q, want %q", got, want)
+	}
+	if got := strings.Join(row.CompoundCommand(options, "capture"), " "); got != want+" capture" {
+		t.Fatalf("MiMo compound = %q", got)
+	}
+	if got := strings.Join(row.ResumeCommand(ResumeOptions{}), " "); got != "claude --resume claude-session" {
+		t.Fatalf("default Claude changed: %q", got)
+	}
+	for _, provider := range ProviderOrder() {
+		if provider == ProviderClaude {
+			continue
+		}
+		row.Provider = provider
+		if got := strings.Join(row.ResumeCommand(options), " "); strings.Contains(got, "--mimo") {
+			t.Fatalf("MiMo leaked into %s: %q", provider, got)
+		}
+	}
+}
+
 func TestRecipeForQuotesCommandAndReportsStorage(t *testing.T) {
 	row := Row{
 		Provider: ProviderClaude,

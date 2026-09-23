@@ -610,6 +610,34 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 	}
 }
 
+func TestMiMoToggleAndSelection(t *testing.T) {
+	withFakeCommands(t, "claude")
+	row := session.Row{Provider: session.ProviderClaude, ID: "x", File: "/tmp/x.jsonl"}
+	m := sizedModel([]session.Row{row})
+	if m.mimo || strings.Contains(m.detailView(), "--mimo") {
+		t.Fatal("MiMo must be opt-in")
+	}
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'm'}))
+	m = asModel(t, updated)
+	if !m.mimo || !strings.Contains(m.detailView(), "--mimo") {
+		t.Fatal("m must enable MiMo in the displayed resume command")
+	}
+	selected, _ := m.selectResume()
+	if got := asModel(t, selected).selected; got == nil || !got.Options.MiMo {
+		t.Fatal("resume lost the MiMo selection")
+	}
+	m.compoundRow = &row
+	compound, _ := m.startCompound(session.ProviderClaude)
+	if got := asModel(t, compound).selected; got == nil || !got.Options.MiMo {
+		t.Fatal("compound lost the MiMo selection")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'm'}))
+	m = asModel(t, updated)
+	if m.mimo || strings.Contains(m.detailView(), "--mimo") {
+		t.Fatal("m must restore the default Claude launch")
+	}
+}
+
 func TestScopeCycling(t *testing.T) {
 	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})

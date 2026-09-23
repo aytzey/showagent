@@ -50,6 +50,7 @@ type Row struct {
 
 type ResumeOptions struct {
 	Dangerous bool
+	MiMo      bool // Claude only; requires the optional claude --mimo launcher.
 }
 
 // ResumeCommand is the argv that resumes r in its own CLI, or nil when the

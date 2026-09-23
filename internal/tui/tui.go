@@ -216,6 +216,7 @@ type model struct {
 	collapsedGroups  map[string]bool
 	mode             previewMode
 	dangerous        bool
+	mimo             bool
 	handoff          session.HandoffOptions
 	handoffTarget    session.Provider
 	selected         *Selection
@@ -499,6 +500,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Yolo):
 		m.dangerous = !m.dangerous
 		return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))
+	case key.Matches(msg, m.keys.MiMo):
+		m.mimo = !m.mimo
+		return m, m.list.NewStatusMessage("Claude model: " + m.claudeModelLabel())
 	case key.Matches(msg, m.keys.Scope):
 		m.pendingConvert = nil
 		m.handoff = nextHandoffScope(m.handoff)
@@ -551,7 +555,7 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	cmd := m.list.SetItems(m.currentItems())
 	selectRowItem(&m.list, msg.row)
 
-	recipe := session.RecipeFor(msg.row, session.ResumeOptions{Dangerous: m.dangerous})
+	recipe := session.RecipeFor(msg.row, session.ResumeOptions{Dangerous: m.dangerous, MiMo: m.mimo})
 	status := "converted to " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
 	if msg.kind == mutationBranch {
 		status = "branched " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
@@ -754,7 +758,7 @@ func (m model) selectResume() (tea.Model, tea.Cmd) {
 	}
 	m.selected = &Selection{
 		Row:     selected.row,
-		Options: session.ResumeOptions{Dangerous: m.dangerous},
+		Options: session.ResumeOptions{Dangerous: m.dangerous, MiMo: m.mimo},
 	}
 	return m, tea.Quit
 }
@@ -818,7 +822,7 @@ func (m model) startCompound(agent session.Provider) (tea.Model, tea.Cmd) {
 	}
 	m.selected = &Selection{
 		Row:     *m.compoundRow,
-		Options: session.ResumeOptions{Dangerous: m.dangerous},
+		Options: session.ResumeOptions{Dangerous: m.dangerous, MiMo: m.mimo},
 		Action:  ActionCompound,
 		Agent:   agent,
 	}
@@ -944,7 +948,15 @@ func (m model) dynamicKeys() keyMap {
 	keys.Scope.SetHelp("t", "scope:"+m.handoff.Label())
 	keys.Preview.SetHelp("p", "preview:"+modeShort(m.mode))
 	keys.Yolo.SetHelp("y", "mode:"+resumeModeLabel(m.dangerous))
+	keys.MiMo.SetHelp("m", "claude:"+m.claudeModelLabel())
 	return keys
+}
+
+func (m model) claudeModelLabel() string {
+	if m.mimo {
+		return "MiMo V2.6 Pro (DevPass)"
+	}
+	return "default"
 }
 
 // providerFilterHelp describes the digit filter keys for the providers that
@@ -1034,7 +1046,7 @@ func (m model) detailView() string {
 		return th.detail.Width(width).Render(strings.Join(lines, "\n"))
 	}
 
-	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
+	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous, MiMo: m.mimo})
 	lines = append(lines,
 		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
 		th.label.Render(padLabel("session"))+session.SafeDisplayText(row.ID),
@@ -1213,8 +1225,10 @@ func Pick(rows []session.Row) (*Selection, error) {
 
 // Run launches the interactive picker, discovering sessions asynchronously with
 // a loading spinner so startup never blocks on a blank screen.
-func Run() (*Selection, error) {
-	return runProgram(newLoadingModel(firstMessage))
+func Run(mimo bool) (*Selection, error) {
+	m := newLoadingModel(firstMessage)
+	m.mimo = mimo
+	return runProgram(m)
 }
 
 func runProgram(m model) (*Selection, error) {

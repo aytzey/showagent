@@ -192,6 +192,7 @@ and adding context to an existing one.
 | `x` | Preview convert; press `x` again to write and select the new session |
 | `n` | Branch: copy the transferable conversation to a new session in the same agent |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
+| `m` | Toggle Claude between its default model and MiMo V2.6 Pro via DevPass |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
 | `d`, `del`, `backspace` | Delete the session — second press confirms, moving disarms |
@@ -218,8 +219,25 @@ are a stable contract:
 ]
 ```
 
-`showagent resume <id|latest> [--yolo]` resumes without the picker, so a shell
+`showagent resume <id|latest> [--yolo] [--mimo]` resumes without the picker, so a shell
 alias can reopen your last session in one keystroke.
+
+`showagent --mimo` starts the picker with MiMo enabled for Claude launches.
+Press `m` to toggle it; other agents keep their normal launch commands.
+`showagent resume latest --mimo` selects the latest Claude session. Add
+`--mimo` to `showagent info` to preview the corresponding command.
+
+MiMo requires the optional Python 3 launcher in `scripts/claude-mimo.py`,
+installed as `claude` earlier in `PATH` than the original CLI. It forwards
+plain `claude` unchanged and only reads `~/.config/claude-mimo/api-key`
+(mode `600`, parent directory `700`) when `--mimo` is present. Keep this
+DevPass key outside the repository. The original CLI must remain later in
+`PATH`, or be linked at `~/.local/lib/claude-native`. The launcher selects
+`mimo-v2.6-pro` through `https://api.llmgateway.io` for that process and its
+subagents without rewriting Claude's saved subscription or model settings.
+MiMo defaults to `--effort high`; `low` and `medium` also work. Claude's
+`xhigh` and `max` are rejected because this model does not support them.
+See the [LLM Gateway integration guide](https://docs.llmgateway.io/guides/claude-code).
 
 `showagent transcript <id|latest> [--max-turns N] [--json]` exports the most
 recent turns for local tools that need a bounded context handoff. Output is

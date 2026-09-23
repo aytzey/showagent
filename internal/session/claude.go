@@ -34,6 +34,9 @@ func (p claudeProvider) Discover() []Row {
 
 func (claudeProvider) ResumeArgs(row Row, options ResumeOptions) []string {
 	command := []string{"claude"}
+	if options.MiMo {
+		command = append(command, "--mimo")
+	}
 	if options.Dangerous {
 		command = append(command, "--dangerously-skip-permissions")
 	}

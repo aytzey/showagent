@@ -158,7 +158,7 @@ func TestListTableIncludesSessionID(t *testing.T) {
 func TestDefaultNonTerminalPrintsTable(t *testing.T) {
 	setFixtureHomes(t)
 	var stdout, stderr bytes.Buffer
-	if code := runDefault(&stdout, &stderr); code != 0 {
+	if code := runDefault(&stdout, &stderr, false); code != 0 {
 		t.Fatalf("runDefault exit = %d; stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), codexID) || !strings.Contains(stdout.String(), claudeID) {
@@ -781,6 +781,31 @@ func TestInfoPrintsResumeRecipe(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("recipe missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestMiMoCLI(t *testing.T) {
+	setFixtureHomes(t)
+	for _, args := range [][]string{{"info", claudeID, "--mimo"}, {"info", "--mimo", "latest"}} {
+		code, stdout, stderr := runCLI(t, args...)
+		if code != 0 || !strings.Contains(stdout, "claude --mimo --resume "+claudeID) {
+			t.Fatalf("%v = %d, %s, %s", args, code, stdout, stderr)
+		}
+	}
+	for _, command := range []string{"resume", "info"} {
+		code, _, _ := runCLI(t, command, codexID, "--mimo")
+		if code != 1 {
+			t.Fatalf("%s must reject a non-Claude session with --mimo", command)
+		}
+	}
+	code, _, stderr := runCLI(t, "--mimo")
+	if code != 0 {
+		t.Fatalf("MiMo non-terminal picker = %d, %s", code, stderr)
+	}
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "newer"}, {Provider: session.ProviderClaude, ID: "older"}}
+	row, err := resolveResumableSession(resumeRows(rows, session.ResumeOptions{MiMo: true}), "latest")
+	if err != nil || row.ID != "older" {
+		t.Fatalf("latest MiMo row = %v, %v", row, err)
 	}
 }
 

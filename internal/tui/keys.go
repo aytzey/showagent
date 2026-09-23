@@ -22,6 +22,7 @@ type keyMap struct {
 	Preview   key.Binding
 	Scope     key.Binding
 	Yolo      key.Binding
+	MiMo      key.Binding
 	Providers key.Binding
 	Rescan    key.Binding
 	Help      key.Binding
@@ -45,6 +46,7 @@ func defaultKeys() keyMap {
 		Preview:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "preview")),
 		Scope:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "scope")),
 		Yolo:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
+		MiMo:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "claude:default")),
 		Providers: key.NewBinding(
 			key.WithKeys(providerFilterKeys()...),
 			key.WithHelp("1-9", "providers"),
@@ -69,7 +71,7 @@ func providerFilterKeys() []string {
 // ShortHelp is the one-line hint shown under the header. Entries are ordered
 // by importance because narrow terminals truncate the tail.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Import, k.Search, k.Providers, k.Preview, k.Target, k.Scope, k.Convert, k.Branch, k.Delete, k.Rescan, k.Yolo, k.Compound, k.Help, k.Quit}
+	return []key.Binding{k.Resume, k.MiMo, k.Import, k.Search, k.Providers, k.Preview, k.Target, k.Scope, k.Convert, k.Branch, k.Delete, k.Rescan, k.Yolo, k.Compound, k.Help, k.Quit}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".
@@ -77,7 +79,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Page, k.Search, k.Import},
 		{k.Resume, k.Collapse, k.Compound, k.Convert, k.Branch},
-		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo},
+		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo, k.MiMo},
 		{k.Providers, k.Rescan, k.Help, k.Quit},
 	}
 }
