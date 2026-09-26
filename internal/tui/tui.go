@@ -185,6 +185,41 @@ func selectFirstSession(l *list.Model) {
 	}
 }
 
+// rowItemIndex returns where target sits in items, or fallback if absent.
+func rowItemIndex(items []list.Item, target session.Row, fallback int) int {
+	wanted := rowKey(target)
+	for index, it := range items {
+		if si, ok := it.(item); ok && rowKey(si.row) == wanted {
+			return index
+		}
+	}
+	return fallback
+}
+
+// selectNearestSession keeps the cursor where it was after the list shrinks,
+// landing on the session now at index (or the closest one after it, then
+// before it) so deleting a row does not scroll the list back to the top.
+func selectNearestSession(l *list.Model, index int) {
+	visible := l.VisibleItems()
+	if len(visible) == 0 {
+		return
+	}
+	index = min(max(index, 0), len(visible)-1)
+	for i := index; i < len(visible); i++ {
+		if _, ok := visible[i].(item); ok {
+			l.Select(i)
+			return
+		}
+	}
+	for i := index - 1; i >= 0; i-- {
+		if _, ok := visible[i].(item); ok {
+			l.Select(i)
+			return
+		}
+	}
+	l.Select(index)
+}
+
 func selectRowItem(l *list.Model, target session.Row) {
 	wanted := rowKey(target)
 	for index, it := range l.VisibleItems() {
@@ -574,8 +609,9 @@ func (m model) applyDelete(msg sessionDeleteMsg) (tea.Model, tea.Cmd) {
 		m.providers = defaultProviderFilter(m.allRows)
 	}
 	m.pruneCollapsedGroups()
+	index := rowItemIndex(m.list.VisibleItems(), msg.row, m.list.Index())
 	cmd := m.list.SetItems(m.currentItems())
-	selectFirstSession(&m.list)
+	selectNearestSession(&m.list, index)
 	return m, tea.Batch(cmd, m.list.NewStatusMessage("deleted "+string(msg.row.Provider)+" session"))
 }
 

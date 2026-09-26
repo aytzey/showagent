@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1152,5 +1153,46 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("empty view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+// TestDeleteKeepsScrollPosition: deleting a session deep in the list selects
+// its neighbour instead of jumping back to the first session.
+func TestDeleteKeepsScrollPosition(t *testing.T) {
+	now := time.Now()
+	rows := make([]session.Row, 0, 60)
+	for i := range 60 {
+		rows = append(rows, session.Row{
+			Provider:  session.ProviderCodex,
+			ID:        fmt.Sprintf("s%02d", i),
+			CWD:       "/p/a",
+			LastAt:    now.Add(-time.Duration(i) * time.Minute),
+			File:      fmt.Sprintf("/t/s%02d.jsonl", i),
+			FirstUser: "hi",
+		})
+	}
+	m := sizedModel(rows)
+	selectRowItem(&m.list, rows[45])
+	page := m.list.Paginator.Page
+	if page == 0 {
+		t.Fatal("test setup: row 45 should not be on the first page")
+	}
+
+	updated, _ := m.Update(sessionDeleteMsg{row: rows[45]})
+	done := asModel(t, updated)
+	sel, ok := done.list.SelectedItem().(item)
+	if !ok || sel.row.ID != "s46" {
+		t.Fatalf("selection after delete = %#v, want s46", done.list.SelectedItem())
+	}
+	if done.list.Paginator.Page != page {
+		t.Fatalf("page after delete = %d, want %d", done.list.Paginator.Page, page)
+	}
+
+	// Deleting the last row falls back to the one before it.
+	selectRowItem(&done.list, rows[59])
+	updated, _ = done.Update(sessionDeleteMsg{row: rows[59]})
+	sel, ok = asModel(t, updated).list.SelectedItem().(item)
+	if !ok || sel.row.ID != "s58" {
+		t.Fatalf("selection after deleting last row = %#v, want s58", asModel(t, updated).list.SelectedItem())
 	}
 }
