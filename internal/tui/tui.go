@@ -220,6 +220,8 @@ func selectNearestSession(l *list.Model, index int) {
 	l.Select(index)
 }
 
+// selectRowItem moves the cursor to target, or to the first session if
+// target is no longer visible.
 func selectRowItem(l *list.Model, target session.Row) {
 	wanted := rowKey(target)
 	for index, it := range l.VisibleItems() {
@@ -594,6 +596,8 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
 }
 
+// applyDelete removes a deleted session from the list and keeps the cursor
+// near where the deleted row was.
 func (m model) applyDelete(msg sessionDeleteMsg) (tea.Model, tea.Cmd) {
 	m.busy = ""
 	m.deleteArmed = ""
