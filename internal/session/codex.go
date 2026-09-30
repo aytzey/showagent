@@ -31,6 +31,11 @@ func (p codexProvider) Discover() []Row {
 
 func (codexProvider) ResumeArgs(row Row, options ResumeOptions) []string {
 	command := []string{"codex", "resume"}
+	// ponytail: file size conservatively predicts oversized daemon history replies;
+	// inspect reply size if smaller rollouts also hit the transport limit.
+	if info, err := os.Stat(row.File); err == nil && info.Size() >= 64<<20 {
+		command = append(command, "--no-daemon")
+	}
 	if options.Dangerous {
 		command = append(command, "--dangerously-bypass-approvals-and-sandbox")
 	}
