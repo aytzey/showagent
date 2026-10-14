@@ -196,7 +196,7 @@ and adding context to an existing one.
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
 | `d`, `del`, `backspace` | Delete the session — second press confirms, moving disarms |
 | `r` | Rescan session stores (keeps cursor, search, and filters) |
-| `?` | Toggle the full keybinding overlay |
+| `?` | Hide or show the keys box (on small terminals: the full keybinding overlay) |
 | `esc` | Clear search / close overlay / cancel an armed delete (never quits) |
 | `q`, `ctrl+c` | Quit |
 

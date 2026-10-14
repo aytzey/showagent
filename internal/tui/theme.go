@@ -28,6 +28,13 @@ type theme struct {
 	message      lipgloss.Style
 	deleteBanner lipgloss.Style
 	detail       lipgloss.Style
+	detailEdge   lipgloss.Style // session box border and title
+	keysEdge     lipgloss.Style // keys box border
+	boxTitle     lipgloss.Style
+	keyGroup     lipgloss.Style
+	keyCap       lipgloss.Style
+	keyDesc      lipgloss.Style
+	keyValue     lipgloss.Style
 	label        lipgloss.Style
 	hint         lipgloss.Style
 	spinner      lipgloss.Style
@@ -119,10 +126,17 @@ func newTheme(isDark bool) *theme {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ld(lipgloss.Color("#1A7F37"), lipgloss.Color("#3FB950"))).
 			Padding(0, 1),
-		label:   lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#BC4C00"), lipgloss.Color("#FFA657"))),
-		hint:    c("#57606A", "#8B949E"),
-		spinner: lipgloss.NewStyle().Foreground(accent),
-		help:    help.DefaultStyles(isDark),
+		detailEdge: lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#1A7F37"), lipgloss.Color("#3FB950"))),
+		keysEdge:   c("#D0D7DE", "#3D444D"),
+		boxTitle:   lipgloss.NewStyle().Bold(true).Foreground(accent),
+		keyGroup:   lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#8250DF"), lipgloss.Color("#D2A8FF"))),
+		keyCap:     lipgloss.NewStyle().Bold(true).Foreground(accent),
+		keyDesc:    c("#1F2328", "#C9D1D9"),
+		keyValue:   lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#BC4C00"), lipgloss.Color("#FFA657"))),
+		label:      lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#BC4C00"), lipgloss.Color("#FFA657"))),
+		hint:       c("#57606A", "#8B949E"),
+		spinner:    lipgloss.NewStyle().Foreground(accent),
+		help:       help.DefaultStyles(isDark),
 	}
 }
 
@@ -150,6 +164,13 @@ func monoTheme() *theme {
 		message:      plain,
 		deleteBanner: reverse,
 		detail:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
+		detailEdge:   plain,
+		keysEdge:     plain,
+		boxTitle:     bold,
+		keyGroup:     bold,
+		keyCap:       bold,
+		keyDesc:      plain,
+		keyValue:     bold,
 		label:        bold,
 		hint:         plain,
 		spinner:      plain,
