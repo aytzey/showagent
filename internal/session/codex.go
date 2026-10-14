@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,13 +34,26 @@ func (codexProvider) ResumeArgs(row Row, options ResumeOptions) []string {
 	command := []string{"codex", "resume"}
 	// ponytail: file size conservatively predicts oversized daemon history replies;
 	// inspect reply size if smaller rollouts also hit the transport limit.
-	if info, err := os.Stat(row.File); err == nil && info.Size() >= 64<<20 {
+	if info, err := os.Stat(row.File); err == nil && info.Size() >= 64<<20 && codexNoDaemon() {
 		command = append(command, "--no-daemon")
 	}
 	if options.Dangerous {
 		command = append(command, "--dangerously-bypass-approvals-and-sandbox")
 	}
 	return append(command, row.ID)
+}
+
+// codexNoDaemon reports whether the installed codex accepts --no-daemon
+// (added in 0.156); older CLIs reject the unknown flag and would not resume.
+// shortcut: cached per process, so a long-running `showagent mcp` keeps the
+// first answer until restarted; re-probe if codex upgrades mid-session matter.
+var codexNoDaemon = sync.OnceValue(probeCodexNoDaemon)
+
+func probeCodexNoDaemon() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "codex", "resume", "--help").Output()
+	return err == nil && strings.Contains(string(output), "--no-daemon")
 }
 
 func (p codexProvider) CompoundArgs(row Row, options ResumeOptions, prompt string) []string {
