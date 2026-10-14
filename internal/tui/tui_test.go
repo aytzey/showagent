@@ -614,6 +614,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 }
 
 func TestScopeCycling(t *testing.T) {
+	// The hint names the scope only when there is a target to hand off to.
+	withFakeCommands(t, "codex")
 	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})
 	if m.handoff.MaxTurns != 0 {
