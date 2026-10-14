@@ -42,6 +42,7 @@ import (
 // causes opencode to create a fresh data dir. OPENCODE_DATA_HOME overrides
 // the data dir for hermetic tests.
 const ProviderOpenCode Provider = "opencode"
+const ProviderMiMo Provider = "mimocode"
 
 // opencodeTimeout bounds every opencode CLI invocation so a hung CLI cannot
 // wedge discovery or conversion.
@@ -57,43 +58,85 @@ const (
 // (packages/core/src/session/sql.ts: session/message/part tables; message
 // and part ids are ascending, so MIN/MAX order by id is chronological).
 // Synthetic and ignored text parts are injected context, not user prompts.
+// shortcut: MiMo previews stop at 200 characters to stay under its CLI output
+// flush limit; paginate the query if the session count makes JSON exceed it.
 const opencodeSessionQuery = `SELECT s.id AS id, s.directory AS directory, s.title AS title, s.time_created AS created, s.time_updated AS updated,
- (SELECT json_extract(p.data,'$.text') FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id LIMIT 1) AS first_user,
- (SELECT json_extract(p.data,'$.text') FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id DESC LIMIT 1) AS last_user
+ (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id LIMIT 1) AS first_user,
+ (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id DESC LIMIT 1) AS last_user
  FROM session s WHERE s.parent_id IS NULL AND s.time_archived IS NULL ORDER BY s.time_updated DESC`
 
-// opencodeProvider adapts the OpenCode CLI to the provider registry.
-type opencodeProvider struct{}
+// sessionQuery bounds previews only for MiMo; OpenCode keeps whole prompts so
+// search, list --json and MCP filtering still see every word.
+func (p opencodeProvider) sessionQuery() string {
+	if p.mimo {
+		return opencodeSessionQuery
+	}
+	return strings.ReplaceAll(opencodeSessionQuery, "substr(json_extract(p.data,'$.text'),1,200)", "json_extract(p.data,'$.text')")
+}
 
-func (opencodeProvider) Name() Provider      { return ProviderOpenCode }
-func (opencodeProvider) DisplayName() string { return "OpenCode" }
-func (opencodeProvider) CommandName() string { return "opencode" }
-func (opencodeProvider) Home() string        { return defaultOpenCodeDataHome() }
+// opencodeProvider adapts the OpenCode CLI to the provider registry.
+// MiMoCode is an OpenCode fork with the same CLI import/export format and its
+// own binary and database. Keep both on the same adapter.
+type opencodeProvider struct{ mimo bool }
+
+func (p opencodeProvider) Name() Provider {
+	if p.mimo {
+		return ProviderMiMo
+	}
+	return ProviderOpenCode
+}
+func (p opencodeProvider) DisplayName() string {
+	if p.mimo {
+		return "MiMoCode"
+	}
+	return "OpenCode"
+}
+func (p opencodeProvider) CommandName() string {
+	if p.mimo {
+		return "mimo"
+	}
+	return "opencode"
+}
+func (p opencodeProvider) Home() string {
+	if p.mimo {
+		return defaultMiMoDataHome()
+	}
+	return defaultOpenCodeDataHome()
+}
+func (p opencodeProvider) envVar() string {
+	if p.mimo {
+		return "MIMOCODE_HOME"
+	}
+	return "OPENCODE_DATA_HOME"
+}
 
 func (p opencodeProvider) ScanTargets() []ScanTarget {
 	target := ScanTarget{
-		Provider: ProviderOpenCode,
+		Provider: p.Name(),
 		Path:     p.Home(),
-		EnvVar:   "OPENCODE_DATA_HOME",
+		EnvVar:   p.envVar(),
 	}
 	switch {
-	case !ProviderCommandAvailable(ProviderOpenCode):
-		target.Note = "skipped: opencode CLI not installed"
-	case !opencodeDatabaseExists():
-		target.Note = "skipped: no opencode database found"
+	case !ProviderCommandAvailable(p.Name()):
+		target.Note = "skipped: " + p.CommandName() + " CLI not installed"
+	case !p.databaseExists():
+		target.Note = "skipped: no " + p.CommandName() + " database found"
 	}
 	return []ScanTarget{target}
 }
 
-func (opencodeProvider) Discover() []Row {
-	return discoverOpenCode()
+func (p opencodeProvider) Discover() []Row {
+	return discoverOpenCode(p)
 }
 
-func (opencodeProvider) ResumeArgs(row Row, options ResumeOptions) []string {
-	command := []string{"opencode"}
+func (p opencodeProvider) ResumeArgs(row Row, options ResumeOptions) []string {
+	command := []string{p.CommandName()}
 	if options.Dangerous {
-		// --auto is opencode's documented auto-approve-permissions flag.
-		command = append(command, "--auto")
+		if p.mimo {
+			command = append(command, "--dangerously-skip-permissions")
+		} else {
+			command = append(command, "--auto")
+		}
 	}
 	return append(command, "--session", row.ID)
 }
@@ -104,19 +147,19 @@ func (p opencodeProvider) CompoundArgs(row Row, options ResumeOptions, prompt st
 
 // Delete shells out to opencode so the removal cascades to the session's
 // messages, parts, and child sessions inside the database.
-func (opencodeProvider) Delete(row Row) error {
-	if _, err := runOpenCode(existingDir(row.CWD), "session", "delete", row.ID); err != nil {
-		return fmt.Errorf("opencode session delete failed: %w", err)
+func (p opencodeProvider) Delete(row Row) error {
+	if _, err := runOpenCodeCLI(p.CommandName(), existingDir(row.CWD), "session", "delete", row.ID); err != nil {
+		return fmt.Errorf("%s session delete failed: %w", p.CommandName(), err)
 	}
 	return nil
 }
 
-func (opencodeProvider) Transcript(row Row) ([]Turn, error) {
-	return opencodeTranscript(row)
+func (p opencodeProvider) Transcript(row Row) ([]Turn, error) {
+	return opencodeTranscript(p.CommandName(), row)
 }
 
-func (opencodeProvider) WriteConverted(source Row, turns []Turn) (Row, error) {
-	return writeOpenCodeConverted(source, turns)
+func (p opencodeProvider) WriteConverted(source Row, turns []Turn) (Row, error) {
+	return writeOpenCodeConverted(p, source, turns)
 }
 
 // defaultOpenCodeDataHome mirrors opencode's data dir resolution
@@ -132,12 +175,23 @@ func defaultOpenCodeDataHome() string {
 	return filepath.Join(homeDir(), ".local", "share", "opencode")
 }
 
-// opencodeDatabaseExists reports whether opencode has a session database on
-// this machine (opencode.db, or opencode-<channel>.db for channel builds).
-// Without one there is nothing to list, and invoking the CLI anyway would
-// make it create an empty database as a side effect.
-func opencodeDatabaseExists() bool {
-	matches, err := filepath.Glob(filepath.Join(defaultOpenCodeDataHome(), "opencode*.db"))
+func defaultMiMoDataHome() string {
+	if value := os.Getenv("MIMOCODE_HOME"); value != "" {
+		return filepath.Join(value, "data")
+	}
+	if value := os.Getenv("XDG_DATA_HOME"); value != "" {
+		return filepath.Join(expandHome(value), "mimocode")
+	}
+	return filepath.Join(homeDir(), ".local", "share", "mimocode")
+}
+
+// Avoid invoking a CLI with no database: discovery must not create an empty store.
+func (p opencodeProvider) databaseExists() bool {
+	name := p.CommandName()
+	if p.mimo {
+		name = "mimocode"
+	}
+	matches, err := filepath.Glob(filepath.Join(p.Home(), name+"*.db"))
 	return err == nil && len(matches) > 0
 }
 
@@ -153,12 +207,12 @@ type opencodeSessionEntry struct {
 	LastUser  string `json:"last_user"`
 }
 
-func discoverOpenCode() []Row {
-	if !ProviderCommandAvailable(ProviderOpenCode) || !opencodeDatabaseExists() {
+func discoverOpenCode(p opencodeProvider) []Row {
+	if !ProviderCommandAvailable(p.Name()) || !p.databaseExists() {
 		return nil
 	}
 
-	output, err := runOpenCode("", "db", "--format", "json", opencodeSessionQuery)
+	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
 	if err != nil {
 		// Deliberate skip, matching the other providers: discovery shows what
 		// it can parse and never fails the whole listing.
@@ -197,7 +251,7 @@ func discoverOpenCode() []Row {
 		}
 
 		rows = append(rows, Row{
-			Provider:  ProviderOpenCode,
+			Provider:  p.Name(),
 			ID:        entry.ID,
 			LastAt:    time.UnixMilli(lastAt),
 			CWD:       cwd,
@@ -233,10 +287,13 @@ type opencodeExportData struct {
 	} `json:"messages"`
 }
 
-func opencodeTranscript(row Row) ([]Turn, error) {
-	output, err := runOpenCode(existingDir(row.CWD), "export", row.ID)
+func opencodeTranscript(command string, row Row) ([]Turn, error) {
+	if command == "mimo" {
+		return mimoTranscript(row)
+	}
+	output, err := runOpenCodeCLI(command, existingDir(row.CWD), "export", row.ID)
 	if err != nil {
-		return nil, fmt.Errorf("opencode export failed: %w", err)
+		return nil, fmt.Errorf("%s export failed: %w", command, err)
 	}
 
 	var data opencodeExportData
@@ -262,18 +319,83 @@ func opencodeTranscript(row Row) ([]Turn, error) {
 	return turns, nil
 }
 
+// MiMoCode's export can exit successfully after truncating large JSON output.
+// Query only transferable text parts, paging below its db command's output cap.
+func mimoTranscript(row Row) ([]Turn, error) {
+	const pageSize = 64
+	id := strings.ReplaceAll(row.ID, "'", "''")
+	var turns []Turn
+	var messageID, role string
+	var parts []string
+	flush := func() {
+		text := cleanTranscriptText(strings.Join(parts, "\n"))
+		if keepTranscriptTurn(role, text) {
+			turns = append(turns, Turn{Role: role, Text: text})
+		}
+	}
+
+	for offset, limit := 0, pageSize; ; {
+		query := fmt.Sprintf(`SELECT m.id AS message_id, json_extract(m.data,'$.role') AS role, json_extract(p.data,'$.text') AS text
+FROM message m JOIN part p ON p.message_id=m.id
+WHERE m.session_id='%s' AND p.session_id='%s' AND json_extract(p.data,'$.type')='text'
+AND COALESCE(json_extract(p.data,'$.synthetic'),0)=0 AND COALESCE(json_extract(p.data,'$.ignored'),0)=0
+ORDER BY m.id,p.id LIMIT %d OFFSET %d`, id, id, limit, offset)
+		output, err := runOpenCodeCLI("mimo", existingDir(row.CWD), "db", "--format", "json", query)
+		if err != nil {
+			return nil, fmt.Errorf("read MiMoCode transcript for %s: %w", row.ID, err)
+		}
+		var page []struct {
+			MessageID string `json:"message_id"`
+			Role      string `json:"role"`
+			Text      string `json:"text"`
+		}
+		if err := decodeOpenCodeJSON(output, &page); err != nil {
+			if limit == 1 {
+				return nil, fmt.Errorf("parse MiMoCode transcript for %s: %w", row.ID, err)
+			}
+			// ponytail: a single text part can still exceed MiMo's CLI output cap;
+			// read SQLite directly if that becomes a real case.
+			limit = max(1, limit/2)
+			continue
+		}
+		for _, item := range page {
+			if messageID != "" && item.MessageID != messageID {
+				flush()
+				parts = nil
+			}
+			messageID, role = item.MessageID, item.Role
+			parts = append(parts, item.Text)
+		}
+		offset += len(page)
+		if len(page) < limit {
+			break
+		}
+	}
+	if messageID != "" {
+		flush()
+	}
+	return turns, nil
+}
+
 // writeOpenCodeConverted synthesizes a session in opencode's export format
 // and hands it to `opencode import`, which validates it and writes it into
 // the database under the project of the working directory it runs in. The
 // import CLI reports failures on stdout with a zero exit code, so success is
 // confirmed by its "Imported session: <id>" acknowledgement.
-func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
+func writeOpenCodeConverted(p opencodeProvider, source Row, turns []Turn) (Row, error) {
 	dir, err := launchDir(source.CWD)
 	if err != nil {
-		return Row{}, fmt.Errorf("opencode conversion needs the session workspace: %w", err)
+		return Row{}, fmt.Errorf("%s conversion needs the session workspace: %w", p.CommandName(), err)
 	}
 	if dir == "" {
-		return Row{}, errors.New("opencode conversion needs a known workspace directory")
+		return Row{}, fmt.Errorf("%s conversion needs a known workspace directory", p.CommandName())
+	}
+	modelProviderID, modelID := "showagent", "converted-transcript"
+	if p.mimo {
+		modelProviderID, modelID, err = mimoDefaultModel(dir)
+		if err != nil {
+			return Row{}, err
+		}
 	}
 
 	now := time.Now()
@@ -307,15 +429,15 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 		}
 		if turn.Role == "user" {
 			info["agent"] = "build"
-			info["model"] = map[string]any{"providerID": "showagent", "modelID": "converted-transcript"}
+			info["model"] = map[string]any{"providerID": modelProviderID, "modelID": modelID}
 		} else {
 			parentID := parent
 			if parentID == "" {
 				parentID = messageID
 			}
 			info["parentID"] = parentID
-			info["modelID"] = "converted-transcript"
-			info["providerID"] = "showagent"
+			info["modelID"] = modelID
+			info["providerID"] = modelProviderID
 			info["mode"] = "build"
 			info["agent"] = "build"
 			info["path"] = map[string]any{"cwd": source.CWD, "root": source.CWD}
@@ -364,7 +486,7 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, err
 	}
 
-	file, err := os.CreateTemp("", "showagent-opencode-*.json")
+	file, err := os.CreateTemp("", "showagent-"+p.CommandName()+"-*.json")
 	if err != nil {
 		return Row{}, fmt.Errorf("create opencode import file: %w", err)
 	}
@@ -377,16 +499,16 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, fmt.Errorf("close opencode import file: %w", err)
 	}
 
-	output, err := runOpenCode(dir, "import", file.Name())
+	output, err := runOpenCodeCLI(p.CommandName(), dir, "import", file.Name())
 	if err != nil {
-		return Row{}, fmt.Errorf("opencode import failed: %w", err)
+		return Row{}, fmt.Errorf("%s import failed: %w", p.CommandName(), err)
 	}
 	if !strings.Contains(string(output), "Imported session: "+sessionID) {
-		return Row{}, fmt.Errorf("opencode import did not confirm the session: %s", strings.TrimSpace(string(output)))
+		return Row{}, fmt.Errorf("%s import did not confirm the session: %s", p.CommandName(), strings.TrimSpace(string(output)))
 	}
 
 	return Row{
-		Provider:  ProviderOpenCode,
+		Provider:  p.Name(),
 		ID:        sessionID,
 		LastAt:    updatedAt,
 		CWD:       source.CWD,
@@ -394,6 +516,26 @@ func writeOpenCodeConverted(source Row, turns []Turn) (Row, error) {
 		FirstUser: firstUser,
 		LastUser:  lastUser,
 	}, nil
+}
+
+// MiMoCode resumes with the last imported user message's model. Ask its CLI
+// for the resolved default so JSONC, project config, and auth stay MiMo's job.
+func mimoDefaultModel(dir string) (string, string, error) {
+	output, err := runOpenCodeCLI("mimo", dir, "debug", "config")
+	if err != nil {
+		return "", "", fmt.Errorf("read MiMoCode default model: %w", err)
+	}
+	var config struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(output, &config); err != nil {
+		return "", "", fmt.Errorf("parse MiMoCode default model: %w", err)
+	}
+	providerID, modelID, ok := strings.Cut(config.Model, "/")
+	if !ok || providerID == "" || modelID == "" {
+		return "", "", fmt.Errorf("MiMoCode needs a configured default model before handover")
+	}
+	return providerID, modelID, nil
 }
 
 func opencodeTitle(source Row, firstUser string) string {
@@ -440,25 +582,29 @@ func opencodeID(prefix string, descending bool, at time.Time) (string, error) {
 // command.Stdout/Stderr to an io.Writer and letting exec.Run() drain the
 // pipes itself loses the tail of large outputs — see issue #10.
 func runOpenCode(dir string, args ...string) ([]byte, error) {
+	return runOpenCodeCLI("opencode", dir, args...)
+}
+
+func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeTimeout)
 	defer cancel()
 
-	command := exec.CommandContext(ctx, "opencode", args...)
+	command := exec.CommandContext(ctx, binary, args...)
 	if dir != "" {
 		command.Dir = dir
 	}
 
 	stdoutPipe, err := command.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("opencode %s stdout pipe: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("%s %s stdout pipe: %w", binary, strings.Join(args, " "), err)
 	}
 	stderrPipe, err := command.StderrPipe()
 	if err != nil {
-		return nil, fmt.Errorf("opencode %s stderr pipe: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("%s %s stderr pipe: %w", binary, strings.Join(args, " "), err)
 	}
 
 	if err := command.Start(); err != nil {
-		return nil, fmt.Errorf("opencode %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("%s %s: %w", binary, strings.Join(args, " "), err)
 	}
 
 	var stdout cappedBuffer
@@ -479,14 +625,14 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 	waitErr := command.Wait()
 
 	if stdout.Len() > maxOpenCodeOutput {
-		return nil, fmt.Errorf("opencode %s: command output exceeds %d bytes", strings.Join(args, " "), maxOpenCodeOutput)
+		return nil, fmt.Errorf("%s %s: command output exceeds %d bytes", binary, strings.Join(args, " "), maxOpenCodeOutput)
 	}
 	if waitErr != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
-		return nil, fmt.Errorf("opencode %s: %w: %s", strings.Join(args, " "), waitErr, detail)
+		return nil, fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
 	}
 	return stdout.Bytes(), nil
 }

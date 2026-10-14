@@ -1,7 +1,7 @@
 # Compatibility evidence
 
 showagent implements adapters for Codex, Claude Code, Gemini CLI, OpenCode,
-jcode, and Pi. An implemented adapter is not a promise that every released
+MiMoCode, jcode, and Pi. An implemented adapter is not a promise that every released
 CLI version, platform, and transfer direction has passed a native-resume
 test. This page distinguishes the checks we can report.
 
@@ -16,6 +16,15 @@ test. This page distinguishes the checks we can report.
 | Model continuation | A target model uses a fact supplied only in the source conversation | Complete tool/runtime-state portability or compatibility with other versions |
 
 ## Recorded checks
+
+### Local MiMoCode build, 2026-09-26
+
+On Linux, the local showagent build discovered 34 sessions from MiMoCode 0.1.15.
+A two-message synthetic Codex session was converted through `mimo import` and
+read back through `mimo export`. `mimo run --session` without a model flag then
+answered the source conversation's codeword, and its new assistant message
+recorded `devpass/mimo-v2.6-pro`. The local session and source tests passed.
+This check covers this direction and installed MiMoCode version.
 
 ### Local web-import build, 2026-09-08
 

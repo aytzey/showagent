@@ -3,7 +3,7 @@
 
 <p align="center"><b>Switch coding agents. Bring the conversation.</b><br>
 Find a local session and carry its user and assistant messages into another agent's native session format.<br>
-Codex · Claude Code · Gemini CLI · OpenCode · jcode · Pi</p>
+Codex · Claude Code · Gemini CLI · OpenCode · MiMoCode · jcode · Pi</p>
 
 <p align="center">
 <a href="https://github.com/aytzey/showagent/actions/workflows/ci.yml"><img src="https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -73,13 +73,13 @@ Star showagent to keep it handy for your next agent switch.
 Each coding agent keeps its own local session store. showagent reads the
 supported stores and brings their sessions into one terminal picker:
 
-- **Find a past session** — group by workspace and fuzzy-search agent, session
+- **Find a past session** — group by workspace and search agent, session
   ID, paths, and first/latest user prompts. This is not full-transcript search.
 - **Resume or branch** — reopen a session in its own CLI, or copy its
   transferable conversation into a new native session to try another direction.
 - **Switch agents** — preview what will carry over, then write a new session
   for the target agent. File-backed copies are private and written atomically;
-  OpenCode imports go through its own CLI. Originals are preserved.
+  OpenCode and MiMoCode imports go through their own CLIs. Originals are preserved.
 - **Bring web chats into your coding workflow** — import a public ChatGPT or
   Claude share link, a transcript file, or pasted text into a native local
   session. You can also add imported text to the context of an exact Codex
@@ -96,6 +96,7 @@ supported stores and brings their sessions into one terminal picker:
 | Claude Code | `claude` | `~/.claude/projects/**/*.jsonl` | `CLAUDE_HOME` | ✅ | ✅ |
 | Gemini CLI | `gemini` | `~/.gemini/tmp/<project>/chats/` | `GEMINI_CLI_HOME` | ✅ | ✅ |
 | OpenCode | `opencode` | `opencode.db`, via the `opencode` CLI | `OPENCODE_DATA_HOME` | ✅ | ✅ |
+| MiMoCode | `mimo` | `mimocode.db`, via the `mimo` CLI | `MIMOCODE_HOME` | ✅ | ✅ |
 | jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
 | Pi | `pi` | `~/.pi/agent/sessions/**/*.jsonl` | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` | ✅ | ✅ |
 
@@ -104,14 +105,13 @@ Notes:
 - The table describes implemented adapters, not a claim that every provider
   version and conversion direction has passed a real CLI test. See the
   [compatibility record](docs/compatibility.md).
-- OpenCode stores sessions in a SQLite database, so every OpenCode operation
-  (discover, export, import, delete) goes through your own `opencode` CLI —
-  showagent never writes into the database directly. OpenCode and jcode only
-  appear when their CLI is installed.
+- OpenCode and MiMoCode store sessions in separate SQLite databases. Their
+  discover, export, import, and delete operations go through the respective
+  `opencode` and `mimo` CLIs; showagent never writes into either database directly.
+  They only appear when their CLI is installed.
 - The picker only offers hand-off targets whose CLI is on `PATH`.
-  Scripted conversion to file-backed agents can still
-  prepare a session before their CLI is installed; OpenCode always requires
-  its CLI because imports go through OpenCode itself.
+  Scripted conversion to file-backed agents can still prepare a session before
+  their CLI is installed; OpenCode and MiMoCode require their CLIs for import.
 - jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
   `jcode` binary is on `PATH`, showagent never shows it.
 - Pi sessions are versioned JSONL trees. showagent follows Pi's active leaf
@@ -182,7 +182,7 @@ and adding context to an existing one.
 | Key | Action |
 |---|---|
 | `↑/k`, `↓/j`, `pgup/pgdn` | Move through sessions |
-| `/` | Fuzzy search across agent, session id, paths, and first/latest user prompts |
+| `/` | Search agent, session id, paths, and first/latest user prompts (every word must match) |
 | `enter` | Resume the selected session in its own CLI |
 | `1`..`9` | Toggle provider visibility, numbered as listed in the header bar |
 | `p` | Cycle the preview column: first → latest → first + latest message |

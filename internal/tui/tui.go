@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/aytzey/showagent/internal/session"
 )
@@ -110,9 +111,8 @@ type item struct {
 
 func (i item) FilterValue() string { return i.row.FilterValue() }
 
-// headerItem is a selectable group header (one per workspace folder). It
-// returns an empty filter value so it is hidden automatically while searching,
-// which turns the grouped view into a flat result list during a search.
+// headerItem is a selectable group header (one per workspace folder). Search
+// runs over flatItems, so headers never reach the filter.
 type headerItem struct {
 	path      string
 	count     int
@@ -134,8 +134,31 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	case headerItem:
 		_, _ = fmt.Fprint(w, renderGroupHeader(d.state.theme, m.Width(), it, index == m.Index()))
 	case item:
-		_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index()))
+		flat := m.FilterState() != list.Unfiltered
+		_, _ = fmt.Fprint(w, renderTableRow(d.state.theme, m.Width(), it.row, d.state.mode, index == m.Index(), flat))
 	}
+}
+
+// matchAllWords keeps the sessions whose search text contains every query
+// word, case-insensitively, in input (flatItems: newest-first) order. Fuzzy subsequence
+// matching ranked unrelated sessions above the ones containing the words.
+func matchAllWords(term string, targets []string) []list.Rank {
+	words := strings.Fields(strings.ToLower(term))
+	var ranks []list.Rank
+	for index, target := range targets {
+		target = strings.ToLower(target)
+		matched := true
+		for _, word := range words {
+			if !strings.Contains(target, word) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			ranks = append(ranks, list.Rank{Index: index})
+		}
+	}
+	return ranks
 }
 
 // groupedItems lays out rows under one header per workspace folder. Rows arrive
@@ -162,6 +185,16 @@ func groupedItems(rows []session.Row, collapsed map[string]bool) []list.Item {
 				items = append(items, item{row: row})
 			}
 		}
+	}
+	return items
+}
+
+// flatItems lists sessions without workspace headers in their global
+// newest-first order, which is the order search results keep.
+func flatItems(rows []session.Row) []list.Item {
+	items := make([]list.Item, len(rows))
+	for index, row := range rows {
+		items[index] = item{row: row}
 	}
 	return items
 }
@@ -288,6 +321,9 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 	l := list.New(items, itemDelegate{state: render}, 80, 20)
 	l.SetFilteringEnabled(true)
 	l.SetShowFilter(true)
+	l.Filter = matchAllWords
+	l.FilterInput.Prompt = "search: "
+	l.FilterInput.Placeholder = "words from a prompt, path, agent or id"
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetShowStatusBar(false)
@@ -452,8 +488,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// While typing a filter, every key belongs to the list.
 	if m.list.SettingFilter() {
+		selected, hadSession := m.list.SelectedItem().(item)
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
+		// A cancelled or empty search returns to the grouped view.
+		if m.list.FilterState() == list.Unfiltered {
+			cmd = tea.Batch(cmd, m.rebuildList())
+			if hadSession {
+				selectRowItem(&m.list, selected.row)
+			}
+		}
 		m.reconcileDeleteArm()
 		m.reconcilePendingConversion()
 		return m, cmd
@@ -463,9 +507,15 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// delete) and otherwise does nothing: it never quits the picker.
 	if msg.String() == "esc" {
 		if m.list.IsFiltered() {
+			selected, hadSession := m.list.SelectedItem().(item)
 			var cmd tea.Cmd
 			m.list, cmd = m.list.Update(msg)
 			rebuild := m.rebuildList()
+			// Stay on the session picked from the results instead of jumping
+			// to the top group header.
+			if hadSession {
+				selectRowItem(&m.list, selected.row)
+			}
 			m.reconcileDeleteArm()
 			return m, tea.Batch(cmd, rebuild)
 		}
@@ -510,7 +560,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if header, ok := m.list.SelectedItem().(headerItem); ok {
 			return m.toggleGroup(header.path)
 		}
-		return m, m.list.NewStatusMessage("select a category header to collapse")
+		return m, m.list.NewStatusMessage("select a workspace header to collapse it")
 	case key.Matches(msg, m.keys.Compound):
 		selected, ok := m.list.SelectedItem().(item)
 		if !ok {
@@ -559,7 +609,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if msg.String() == "/" {
 		m.pendingConvert = nil
+		selected, hadSession := m.list.SelectedItem().(item)
 		rebuild := m.rebuildListForSearch()
+		if hadSession {
+			selectRowItem(&m.list, selected.row)
+		}
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, tea.Batch(rebuild, cmd)
@@ -631,7 +685,7 @@ func (m model) applyConversionPreview(msg conversionPreviewMsg) (tea.Model, tea.
 		options: msg.options,
 		preview: msg.preview,
 	}
-	return m, m.list.NewStatusMessage("preview ready · press x again to write the " + string(msg.target) + " session")
+	return m, m.list.NewStatusMessage("preview ready · press x again to create the " + string(msg.target) + " session")
 }
 
 func (m model) startMutation(cmd tea.Cmd, busy, status string) (tea.Model, tea.Cmd) {
@@ -705,11 +759,11 @@ func (m *model) resizeList() {
 }
 
 func (m *model) currentItems() []list.Item {
-	collapsed := m.collapsedGroups
+	rows := filterRows(m.allRows, m.providers)
 	if m.list.SettingFilter() || m.list.IsFiltered() {
-		collapsed = nil
+		return flatItems(rows)
 	}
-	return groupedItems(filterRows(m.allRows, m.providers), collapsed)
+	return groupedItems(rows, m.collapsedGroups)
 }
 
 func (m *model) rebuildList() tea.Cmd {
@@ -717,7 +771,7 @@ func (m *model) rebuildList() tea.Cmd {
 }
 
 func (m *model) rebuildListForSearch() tea.Cmd {
-	return m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers), nil))
+	return m.list.SetItems(flatItems(filterRows(m.allRows, m.providers)))
 }
 
 func (m *model) pruneCollapsedGroups() {
@@ -740,7 +794,7 @@ func (m model) toggleGroup(path string) (tea.Model, tea.Cmd) {
 	if m.collapsedGroups[path] {
 		state = "collapsed"
 	}
-	return m, tea.Batch(cmd, m.list.NewStatusMessage("category "+state+": "+collapseHome(path)))
+	return m, tea.Batch(cmd, m.list.NewStatusMessage("workspace "+state+": "+collapseHome(path)))
 }
 
 func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
@@ -833,7 +887,7 @@ func (m model) startDelete() (tea.Model, tea.Cmd) {
 	key := rowKey(selected.row)
 	if m.deleteArmed != key {
 		m.deleteArmed = key
-		return m, m.list.NewStatusMessage("press delete again to permanently remove this " + string(selected.row.Provider) + " session")
+		return m, m.list.NewStatusMessage("press d again to permanently delete this " + string(selected.row.Provider) + " session · esc keeps it")
 	}
 
 	row := selected.row
@@ -885,11 +939,20 @@ func (m model) View() tea.View {
 }
 
 func (m model) browseView() string {
-	helpBar := m.helpView()
+	// Clamp before joining: JoinVertical pads every line to the widest one,
+	// so one overlong line would otherwise clip the whole screen.
+	helpBar := clampLineWidths(m.helpView(), m.width)
+	if m.list.FilterState() == list.FilterApplied {
+		m.list.Title = m.render.theme.hint.Render(fmt.Sprintf("search: %s · esc clears", m.list.FilterValue()))
+	}
+	// The list's first row holds the search input and status messages; draw
+	// it above the column header so the header sits directly over the rows.
+	searchRow, rows, _ := strings.Cut(m.list.View(), "\n")
 	parts := []string{
 		m.headerView(),
-		columnHeader(m.render.theme, m.width, m.mode),
-		m.list.View(),
+		searchRow,
+		columnHeader(m.render.theme, m.width, m.mode, m.list.FilterState() != list.Unfiltered),
+		rows,
 		m.detailView(),
 	}
 	body := parts[:0]
@@ -949,24 +1012,55 @@ func (m model) headerView() string {
 	return title
 }
 
+// statsParts is ordered by importance: headerView drops parts from the end
+// when the terminal is narrow, so the YOLO warning is the last to go.
 func (m model) statsParts() []string {
 	th := m.render.theme
-	parts := []string{
-		th.muted.Render(fmt.Sprintf("%d/%d sessions", sessionCount(m.list.VisibleItems()), len(m.allRows))),
-		th.chip.Render(providerLabel(m.providers)),
-		th.muted.Render("preview " + modeShort(m.mode)),
-	}
-	if target := m.selectedHandoffTarget(); target != "" {
-		parts = append(parts, th.muted.Render("target "+string(target)))
-	}
+	var parts []string
 	if m.dangerous {
 		parts = append(parts, th.yoloChip.Render("YOLO"))
 	}
-	return parts
+	count := fmt.Sprintf("%d sessions", len(m.allRows))
+	if shown := sessionCount(m.list.VisibleItems()); shown != len(m.allRows) {
+		count = fmt.Sprintf("%d of %d sessions", shown, len(m.allRows))
+	}
+	parts = append(parts, th.muted.Render(count))
+	if chips := m.providerChips(); chips != "" {
+		parts = append(parts, chips)
+	}
+	return append(parts, th.hint.Render("· resume a coding-agent session, or hand it to another agent"))
+}
+
+// providerChips shows each discovered provider with the digit that toggles
+// it; hidden providers are struck through.
+func (m model) providerChips() string {
+	th := m.render.theme
+	chips := make([]string, 0, len(m.providers))
+	for index, provider := range discoveredProviders(m.allRows) {
+		label := fmt.Sprintf("%d %s", index+1, provider)
+		if m.providers[provider] {
+			chips = append(chips, th.badgeFor(provider).Padding(0, 1).Render(label))
+		} else {
+			chips = append(chips, th.muted.Strikethrough(true).Padding(0, 1).Render(label))
+		}
+	}
+	return strings.Join(chips, " ")
 }
 
 func (m model) helpView() string {
-	return m.help.View(m.dynamicKeys())
+	keys := m.dynamicKeys()
+	if m.help.ShowAll {
+		return m.help.View(keys)
+	}
+	// Drop hints before the last one ("? all keys") until the bar fits: the
+	// help component overflows instead of truncating when "…" does not fit.
+	short := keys.ShortHelp()
+	unbounded := m.help
+	unbounded.SetWidth(0)
+	for len(short) > 2 && m.width > 0 && lipgloss.Width(unbounded.ShortHelpView(short)) > m.width {
+		short = append(short[:len(short)-2], short[len(short)-1])
+	}
+	return m.help.ShortHelpView(short)
 }
 
 // dynamicKeys copies the static keymap and rewrites the help text of stateful
@@ -981,6 +1075,16 @@ func (m model) dynamicKeys() keyMap {
 		target = string(t)
 	}
 	keys.Target.SetHelp("o", "target:"+target)
+	switch selected := m.list.SelectedItem().(type) {
+	case headerItem:
+		keys.Resume.SetHelp("enter", "expand/collapse")
+	case item:
+		if m.selectedConversionPreview(selected.row) != nil {
+			keys.Convert.SetHelp("x", "confirm hand-off → "+target)
+		} else if target != "none" {
+			keys.Convert.SetHelp("x", "hand off → "+target)
+		}
+	}
 	keys.Scope.SetHelp("t", "scope:"+m.handoff.Label())
 	keys.Preview.SetHelp("p", "preview:"+modeShort(m.mode))
 	keys.Yolo.SetHelp("y", "mode:"+resumeModeLabel(m.dangerous))
@@ -1029,71 +1133,71 @@ func (m model) detailView() string {
 				state = "collapsed"
 			}
 			lines := []string{
-				th.label.Render(padLabel("category")) + truncateMiddle(collapseHome(session.SafeDisplayText(header.path)), valueW),
+				th.label.Render(padLabel("workspace")) + truncateMiddle(collapseHome(session.SafeDisplayText(header.path)), valueW),
 				th.label.Render(padLabel("sessions")) + fmt.Sprintf("%d", header.count),
 				th.label.Render(padLabel("state")) + state,
-				th.hint.Render("enter/space → collapse or expand category"),
+				th.hint.Render("enter or space → collapse or expand this workspace"),
 			}
-			if len(lines) > count {
-				lines = lines[:count]
-			}
-			for i := range lines {
-				lines[i] = truncateCells(lines[i], innerW)
-			}
-			return th.detail.Width(width).Render(strings.Join(lines, "\n"))
+			return th.detail.Width(width).Render(fitLines(lines, count, innerW))
 		}
 		msg := "No session selected."
 		if m.list.IsFiltered() {
 			msg = "No session matches this search · press esc to clear."
 		}
-		return th.detail.Width(width).Render(th.muted.Render(truncateCells(msg, innerW)))
+		return th.detail.Width(width).Render(fitLines([]string{th.muted.Render(msg)}, count, innerW))
 	}
 	row := selected.row
 
 	var lines []string
 	if m.deleteArmed == rowKey(row) {
-		lines = append(lines, th.deleteBanner.Render("⚠ press delete again to permanently remove this session"))
+		lines = append(lines, th.deleteBanner.Render("⚠ press d again to permanently delete this session · esc keeps it"))
 	}
 	if pending := m.selectedConversionPreview(row); pending != nil {
-		lines = append(lines,
-			th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s", pending.preview.SourceProvider, pending.preview.TargetProvider),
-			th.label.Render(padLabel("scope"))+fmt.Sprintf("%s · %d turns", pending.preview.Scope, pending.preview.TransferTurns),
-			th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW),
-			th.label.Render(padLabel("drops"))+truncateCells(strings.Join(pending.preview.Dropped, ", "), valueW),
-			th.hint.Render("press x again to write · esc cancel · o target · t scope"),
-		)
+		lines = append(lines, th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s · %s · %d turns",
+			pending.preview.SourceProvider, pending.preview.TargetProvider, pending.preview.Scope, pending.preview.TransferTurns))
 		if len(pending.preview.Warnings) > 0 {
 			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
 		}
-		if len(lines) > count {
-			lines = lines[:count]
+		lines = append(lines, th.hint.Render("x again → create the "+string(pending.preview.TargetProvider)+" session (original stays) · esc cancel · o target · t scope"))
+		// What gets dropped must be readable before confirming, even in the
+		// 4-row panel, so it comes before the last message and wraps.
+		label := padLabel("drops")
+		for _, part := range strings.Split(ansi.Wordwrap(strings.Join(pending.preview.Dropped, ", "), valueW, ""), "\n") {
+			lines = append(lines, th.label.Render(label)+part)
+			label = padLabel("")
 		}
-		for i := range lines {
-			lines[i] = truncateCells(lines[i], innerW)
-		}
-		return th.detail.Width(width).Render(strings.Join(lines, "\n"))
+		lines = append(lines, th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW))
+		return th.detail.Width(width).Render(fitLines(lines, count, innerW))
 	}
 
+	// Ordered by importance: short terminals show only the first lines, so the
+	// conversation and the two main actions come before storage details.
 	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
 	lines = append(lines,
-		th.label.Render(padLabel("provider"))+m.providerWord(row.Provider),
-		th.label.Render(padLabel("session"))+session.SafeDisplayText(row.ID),
-		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(session.SafeDisplayText(row.CWD)), valueW),
-		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(session.SafeDisplayText(recipe.StorageLocation)), valueW),
-		th.label.Render(padLabel("command"))+truncateCells(session.SafeDisplayText(recipe.CommandString), valueW),
-		th.label.Render(padLabel("updated"))+localTime(row.LastAt),
 		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(session.SafeDisplayText(row.FirstUser)), valueW),
 		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(session.SafeDisplayText(bestLast(row))), valueW),
 		th.hint.Render(m.resumeHint(row)),
 		th.hint.Render(m.handoffHint(row)),
+		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(session.SafeDisplayText(row.CWD)), valueW),
+		th.label.Render(padLabel("updated"))+localTime(row.LastAt)+th.muted.Render(" ("+relativeTime(row.LastAt)+")"),
+		th.label.Render(padLabel("session"))+m.providerWord(row.Provider)+" "+session.SafeDisplayText(row.ID),
+		th.label.Render(padLabel("command"))+truncateCells(session.SafeDisplayText(recipe.CommandString), valueW),
+		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(session.SafeDisplayText(recipe.StorageLocation)), valueW),
 	)
-	if len(lines) > count {
-		lines = lines[:count]
+	return th.detail.Width(width).Render(fitLines(lines, count, innerW))
+}
+
+// fitLines pads or cuts lines to exactly count rows of at most width cells, so
+// the panel never wraps and keeps its height as the selection moves.
+func fitLines(lines []string, count, width int) string {
+	for len(lines) < count {
+		lines = append(lines, "")
 	}
+	lines = lines[:count]
 	for i := range lines {
-		lines[i] = truncateCells(lines[i], innerW)
+		lines[i] = truncateCells(lines[i], width)
 	}
-	return th.detail.Width(width).Render(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 func (m model) selectedConversionPreview(row session.Row) *pendingConversion {
@@ -1126,9 +1230,9 @@ func (m model) resumeHint(row session.Row) string {
 func (m model) handoffHint(row session.Row) string {
 	target := m.handoffTargetFor(row)
 	if target == "" {
-		return fmt.Sprintf("x → no hand-off target · n → branch · t → scope %s", m.handoff.Label())
+		return "x → no other agent CLI on PATH to hand off to · n → branch a copy"
 	}
-	return fmt.Sprintf("x → hand off to %s (%s) · o → target · n → branch · t → scope", target, m.handoff.Label())
+	return fmt.Sprintf("x → hand off to %s (%s turns) · o other agent · t turns · n branch a copy", target, m.handoff.Label())
 }
 
 func (m model) detailLineCount() int {
@@ -1142,7 +1246,7 @@ func (m model) detailLineCount() int {
 	case m.height < 28:
 		return 6
 	default:
-		return 10
+		return 9
 	}
 }
 
@@ -1214,20 +1318,17 @@ func (m model) compoundView() string {
 		}
 		return label
 	}
-	options := make([]string, 0, 4)
-	for index, agent := range session.CompoundAgents() {
-		options = append(options, option(fmt.Sprintf("%d", index+1), session.DisplayName(agent), agent))
-	}
 	lines := []string{
 		th.title.Render("Compound engineering"),
 		"",
 		th.muted.Render("Run a compound pass on " + target + " and"),
 		th.muted.Render("pool the learnings for this project across agents."),
 		"",
-		strings.Join(options, "   "),
-		"",
-		th.hint.Render("esc cancel · current mode: " + resumeModeLabel(m.dangerous)),
 	}
+	for index, agent := range session.CompoundAgents() {
+		lines = append(lines, option(fmt.Sprintf("%d", index+1), session.DisplayName(agent), agent))
+	}
+	lines = append(lines, "", th.hint.Render("press a number to choose · esc cancel · mode: "+resumeModeLabel(m.dangerous)))
 	if m.compoundNotice != "" {
 		lines = append(lines, th.deleteBanner.Render(m.compoundNotice))
 	}

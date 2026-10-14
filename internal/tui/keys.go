@@ -39,7 +39,7 @@ func defaultKeys() keyMap {
 		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
 		Target:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "target")),
-		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "preview")),
+		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "hand off")),
 		Branch:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
 		Delete:   key.NewBinding(key.WithKeys("d", "delete", "backspace"), key.WithHelp("d/del", "delete")),
 		Preview:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "preview")),
@@ -66,10 +66,12 @@ func providerFilterKeys() []string {
 	return keys
 }
 
-// ShortHelp is the one-line hint shown under the header. Entries are ordered
-// by importance because narrow terminals truncate the tail.
+// ShortHelp is the always-visible bottom bar: only the core actions, short
+// enough for an 80-column terminal. Everything else lives behind "?".
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Resume, k.Import, k.Search, k.Providers, k.Preview, k.Target, k.Scope, k.Convert, k.Branch, k.Delete, k.Rescan, k.Yolo, k.Compound, k.Help, k.Quit}
+	more := k.Help
+	more.SetHelp("?", "all keys")
+	return []key.Binding{k.Resume, k.Convert, k.Search, k.Import, k.Quit, more}
 }
 
 // FullHelp is the multi-column layout shown when the user presses "?".

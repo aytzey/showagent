@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	list "charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -156,8 +158,8 @@ func TestTruncateMiddleEdgeCases(t *testing.T) {
 
 func TestComposeLineAlignsHeaderAndRows(t *testing.T) {
 	width := 96
-	header := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
-	row := composeLine(width, "  ", "codex", "2026-06-22 10:24", "/home/aytug", "preview")
+	header := composeLine(width, true, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
+	row := composeLine(width, true, "  ", "codex", "2h ago", "/home/aytug", "preview")
 
 	if lipgloss.Width(header) != width {
 		t.Fatalf("header width = %d, want %d", lipgloss.Width(header), width)
@@ -184,10 +186,10 @@ func TestRenderTableRowFitsWidth(t *testing.T) {
 		FirstUser: strings.Repeat("preview ", 30),
 	}
 
-	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, false)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, false, true)); got != width {
 		t.Fatalf("renderTableRow width = %d, want %d", got, width)
 	}
-	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, true)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, true, true)); got != width {
 		t.Fatalf("selected renderTableRow width = %d, want %d", got, width)
 	}
 }
@@ -431,7 +433,7 @@ func TestConversionPreviewRendersAndEscCancels(t *testing.T) {
 		t.Fatal("preview message did not set pending conversion")
 	}
 	detail := got.detailView()
-	for _, want := range []string{"codex", "claude", "last 20", "fix the bug", "press x again"} {
+	for _, want := range []string{"codex", "claude", "last 20", "fix the bug", "x again"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail missing %q:\n%s", want, detail)
 		}
@@ -612,6 +614,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 }
 
 func TestScopeCycling(t *testing.T) {
+	// The hint names the scope only when there is a target to hand off to.
+	withFakeCommands(t, "codex")
 	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})
 	if m.handoff.MaxTurns != 0 {
@@ -716,7 +720,7 @@ func TestEscClearsAppliedFilter(t *testing.T) {
 		{Provider: session.ProviderClaude, ID: "b", LastAt: time.Now(), File: "/tmp/b.jsonl", FirstUser: "bravo"},
 	}
 	m := sizedModel(rows)
-	m.list.SetFilterText("alpha")
+	m.list.SetFilterText("bravo")
 	if !m.list.IsFiltered() {
 		t.Fatal("expected an applied filter")
 	}
@@ -728,6 +732,62 @@ func TestEscClearsAppliedFilter(t *testing.T) {
 	}
 	if got.list.IsFiltered() {
 		t.Fatal("esc did not clear the applied filter")
+	}
+	if sel, ok := got.list.SelectedItem().(item); !ok || sel.row.ID != "b" {
+		t.Fatalf("esc lost the session picked from the results: %#v", got.list.SelectedItem())
+	}
+}
+
+func TestSearchMatchesAllWordsInRecencyOrder(t *testing.T) {
+	targets := []string{"codex\nfix the Redis TTL test", "claude\nrefactor checkout", "codex\nredis cache warmup", ""}
+	ids := func(ranks []list.Rank) []int {
+		var out []int
+		for _, rank := range ranks {
+			out = append(out, rank.Index)
+		}
+		return out
+	}
+	if got := ids(matchAllWords("redis", targets)); !reflect.DeepEqual(got, []int{0, 2}) {
+		t.Fatalf("redis matched %v, want [0 2] in input order", got)
+	}
+	if got := ids(matchAllWords("TTL  REDIS", targets)); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("multi-word search matched %v, want [0]", got)
+	}
+	// Fuzzy subsequence matching used to accept this ("r…e…d…i…s").
+	if got := ids(matchAllWords("redis", []string{"refactor the checkout form into server components"})); len(got) != 0 {
+		t.Fatalf("unrelated text matched: %v", got)
+	}
+}
+
+// TestShortHelpFitsAndKeepsAllKeysHint: the bottom bar must never overflow
+// (one wide line clips the whole screen) and must keep pointing at "?".
+func TestShortHelpFitsAndKeepsAllKeysHint(t *testing.T) {
+	withFakeCommands(t, "claude")
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "hi"}}
+	for _, width := range []int{30, 45, 60, 70, 80, 120} {
+		m := sizedModel(rows)
+		m.width = width
+		m.resizeList()
+		bar := m.helpView()
+		if got := lipgloss.Width(bar); got > width || !strings.Contains(bar, "all keys") {
+			t.Fatalf("width %d help bar (%d cells) = %q", width, got, bar)
+		}
+	}
+}
+
+// TestDetailShowsActionsOnShortTerminal: a 24-row terminal only fits part of
+// the panel, and that part must include the conversation and both actions.
+func TestDetailShowsActionsOnShortTerminal(t *testing.T) {
+	withFakeCommands(t, "codex", "claude")
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "first ask", LastUser: "latest ask"}}
+	m := sizedModel(rows)
+	m.width, m.height = 80, 24
+	m.resizeList()
+	detail := m.detailView()
+	for _, want := range []string{"first ask", "latest ask", "enter → resume", "x → hand off to claude"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("short-terminal detail missing %q:\n%s", want, detail)
+		}
 	}
 }
 
@@ -1138,6 +1198,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
@@ -1147,7 +1208,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join(root, "codex", "sessions"),
 		filepath.Join(root, "claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "MIMOCODE_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
 		"press r to rescan",
 	} {
 		if !strings.Contains(view, want) {
@@ -1194,5 +1255,65 @@ func TestDeleteKeepsScrollPosition(t *testing.T) {
 	sel, ok = asModel(t, updated).list.SelectedItem().(item)
 	if !ok || sel.row.ID != "s58" {
 		t.Fatalf("selection after deleting last row = %#v, want s58", asModel(t, updated).list.SelectedItem())
+	}
+}
+
+// TestSearchResultsAreNewestFirstAcrossWorkspaces: results must not inherit
+// the grouped order, where a whole workspace precedes a newer match elsewhere.
+func TestSearchResultsAreNewestFirstAcrossWorkspaces(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a-new", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl", FirstUser: "fix login"},
+		{Provider: session.ProviderClaude, ID: "b-mid", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl", FirstUser: "fix login"},
+		{Provider: session.ProviderCodex, ID: "a-old", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC), File: "/t/a2.jsonl", FirstUser: "fix login"},
+	}
+	m := sizedModel(rows)
+	searching, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+	got := asModel(t, searching)
+	got.list.SetFilterText("login")
+	var ids []string
+	for _, it := range got.list.VisibleItems() {
+		ids = append(ids, it.(item).row.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"a-new", "b-mid", "a-old"}) {
+		t.Fatalf("search order = %v, want newest first across workspaces", ids)
+	}
+}
+
+func TestCancelledSearchRestoresGroups(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a", CWD: "/p/alpha", LastAt: time.Now(), File: "/t/a.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderClaude, ID: "b", CWD: "/p/beta", LastAt: time.Now().Add(-time.Hour), File: "/t/b.jsonl", FirstUser: "bravo"},
+	}
+	m := sizedModel(rows)
+	searching, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+	cancelled, _ := asModel(t, searching).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	got := asModel(t, cancelled)
+	if headers := len(got.list.VisibleItems()) - sessionCount(got.list.VisibleItems()); headers != 2 {
+		t.Fatalf("workspace headers after cancelling search = %d, want 2", headers)
+	}
+	if sel, ok := got.list.SelectedItem().(item); !ok || sel.row.ID != "a" {
+		t.Fatalf("cancelling search lost the selected session: %#v", got.list.SelectedItem())
+	}
+}
+
+// TestShortHandoffPreviewShowsDrops: the 4-row panel still offers the second
+// x, so it must also say what the copy leaves behind, warnings or not.
+func TestShortHandoffPreviewShowsDrops(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "source", LastAt: time.Now(), File: "/tmp/source.jsonl", FirstUser: "hi"}
+	m := sizedModel([]session.Row{row})
+	m.width, m.height = 80, 18
+	m.resizeList()
+	m.pendingConvert = &pendingConversion{rowKey: rowKey(row), target: session.ProviderClaude, preview: session.ConversionPreview{
+		SourceProvider: session.ProviderCodex,
+		TargetProvider: session.ProviderClaude,
+		Scope:          "all",
+		Dropped:        []string{"tool calls", "runtime state"},
+		Warnings:       []string{"source workspace is unknown"},
+	}}
+	detail := m.detailView()
+	for _, want := range []string{"drops", "tool calls", "x again"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("short preview missing %q:\n%s", want, detail)
+		}
 	}
 }

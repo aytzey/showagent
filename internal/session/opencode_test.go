@@ -26,6 +26,9 @@ func withFakeOpenCode(t *testing.T, fixtureDir string) {
 export PATH=/usr/bin:/bin
 echo "$@" >> "` + fixtureDir + `/calls.log"
 case "$1" in
+debug)
+  echo '{"model":"devpass/mimo-v2.6-pro"}'
+  ;;
 db)
   cat "` + fixtureDir + `/sessions.json"
   ;;
@@ -64,9 +67,11 @@ func setEmptyHomes(t *testing.T, root string) {
 	t.Setenv("CODEX_HOME", filepath.Join(root, "empty-codex"))
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "empty-claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
+	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 }
 
 func TestDiscoverFindsOpenCodeSessions(t *testing.T) {
@@ -177,7 +182,7 @@ func TestOpenCodeResumeAndCompoundCommands(t *testing.T) {
 
 func TestCompoundAgentsFollowRegistryOrder(t *testing.T) {
 	agents := CompoundAgents()
-	want := []Provider{ProviderCodex, ProviderClaude, ProviderJCode, ProviderOpenCode, ProviderGemini, ProviderPi}
+	want := []Provider{ProviderCodex, ProviderClaude, ProviderJCode, ProviderOpenCode, ProviderMiMo, ProviderGemini, ProviderPi}
 	if len(agents) != len(want) {
 		t.Fatalf("agents = %v, want %v", agents, want)
 	}
@@ -372,6 +377,48 @@ func TestConvertCodexToOpenCode(t *testing.T) {
 	}
 }
 
+func TestMiMoDiscoverAndHandoff(t *testing.T) {
+	root := t.TempDir()
+	setEmptyHomes(t, root)
+	fixture := t.TempDir()
+	t.Setenv("MIMOCODE_HOME", fixture)
+	writeFile(t, filepath.Join(fixture, "data", "mimocode.db"), "fixture")
+	writeFile(t, filepath.Join(fixture, "sessions.json"), `[{"id":"ses_aaaaaaaaaaaaAAAAAAAAAAAAAA","directory":"/work/mimo","title":"MiMo session","created":1751500800000,"updated":1751504400000,"first_user":"hello","last_user":"hello"}]`)
+	withFakeOpenCode(t, fixture)
+	bin := os.Getenv("PATH")
+	if err := os.Symlink(filepath.Join(bin, "opencode"), filepath.Join(bin, "mimo")); err != nil {
+		t.Fatal(err)
+	}
+	rows := Discover()
+	if len(rows) != 1 || rows[0].Provider != ProviderMiMo {
+		t.Fatalf("MiMo discovery = %#v", rows)
+	}
+	if got := strings.Join(rows[0].ResumeCommand(ResumeOptions{}), " "); got != "mimo --session "+rows[0].ID {
+		t.Fatalf("MiMo resume = %q", got)
+	}
+	workspace := t.TempDir()
+	source := filepath.Join(root, "source.jsonl")
+	writeFile(t, source, `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"carry this to MiMo"}]}}`)
+	converted, err := Convert(Row{Provider: ProviderCodex, CWD: workspace, File: source}, ProviderMiMo, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.Provider != ProviderMiMo || !strings.HasPrefix(converted.ID, "ses_") {
+		t.Fatalf("MiMo conversion = %#v", converted)
+	}
+	if !strings.Contains(RecipeFor(converted, ResumeOptions{}).CommandString, "mimo --session ") {
+		t.Fatal("converted session has no MiMo resume command")
+	}
+	content, err := os.ReadFile(filepath.Join(fixture, "imported.json"))
+	if err != nil || !strings.Contains(string(content), "carry this to MiMo") {
+		t.Fatalf("MiMo import payload missing: %v", err)
+	}
+	if !strings.Contains(string(content), `"providerID":"devpass","modelID":"mimo-v2.6-pro"`) &&
+		!strings.Contains(string(content), `"modelID":"mimo-v2.6-pro","providerID":"devpass"`) {
+		t.Fatal("MiMo import payload did not retain its configured default model")
+	}
+}
+
 func TestConvertToOpenCodeNeedsWorkspace(t *testing.T) {
 	root := t.TempDir()
 	setEmptyHomes(t, root)
@@ -490,5 +537,14 @@ fi
 	}
 	if !strings.HasSuffix(string(out), tail) {
 		t.Fatalf("tail marker missing; last 32 bytes: %q", string(out[len(out)-32:]))
+	}
+}
+
+func TestOnlyMiMoBoundsPreviewText(t *testing.T) {
+	if query := (opencodeProvider{}).sessionQuery(); strings.Contains(query, "substr(") || !strings.Contains(query, "json_extract(p.data,'$.text') FROM part") {
+		t.Fatalf("OpenCode previews must keep whole prompts:\n%s", query)
+	}
+	if query := (opencodeProvider{mimo: true}).sessionQuery(); strings.Count(query, "substr(json_extract(p.data,'$.text'),1,200)") != 2 {
+		t.Fatalf("MiMo previews must stay bounded:\n%s", query)
 	}
 }

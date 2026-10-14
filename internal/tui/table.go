@@ -18,7 +18,8 @@ const (
 	gutterWidth        = 2
 	tableProviderWidth = 8
 	tableDateWidth     = 16
-	tableGapWidth      = 3
+	// tableAgeWidth fits every relativeTime value ("just now", "59m ago").
+	tableAgeWidth = 8
 )
 
 // PrintTable renders the plain, unstyled table used when output is piped or
@@ -66,8 +67,8 @@ func plainLine(width, idWidth int, id, provider, date, cwd, preview string) stri
 	return strings.TrimRight(line, " ")
 }
 
-func columnHeader(th *theme, width int, mode previewMode) string {
-	line := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE · "+modeShort(mode))
+func columnHeader(th *theme, width int, mode previewMode, withWorkspace bool) string {
+	line := composeLine(width, withWorkspace, "  ", "AGENT", "UPDATED", "WORKSPACE", strings.ToUpper(modeLong(mode)))
 	return th.header.Render(line)
 }
 
@@ -104,29 +105,28 @@ func collapseHome(path string) string {
 	return path
 }
 
-func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected bool) string {
-	pw, dw, cw, vw := tableWidths(width)
+// renderTableRow draws one session. withWorkspace is false in the grouped view,
+// where the group header already names the workspace and the message gets the
+// space instead.
+func renderTableRow(th *theme, width int, row session.Row, mode previewMode, selected, withWorkspace bool) string {
+	pw, dw, cw, vw := tableWidths(width, withWorkspace)
 	date := relativeTime(row.LastAt)
 	workspace := collapseHome(session.SafeDisplayText(row.CWD))
 	preview := emptyFallback(session.SafeDisplayText(previewFor(row, mode)))
 
 	if selected {
-		inner := fmt.Sprintf(
-			"❯ %-*s %-*s %-*s %s",
-			pw, providerPlainLabel(string(row.Provider), pw),
-			dw, truncateCells(date, dw),
-			cw, truncateMiddle(workspace, cw),
-			truncateCells(preview, vw),
-		)
-		return th.selected.Width(width).Render(truncateCells(inner, width))
+		line := composeLine(width, withWorkspace, "❯ ", providerPlainLabel(string(row.Provider), pw), date, workspace, preview)
+		return th.selected.Width(width).Render(line)
 	}
 
 	cells := []string{
 		providerBadge(th, string(row.Provider), pw),
 		th.date.Width(dw).Render(truncateCells(date, dw)),
-		renderWorkspaceCell(th, workspace, cw),
-		th.message.Width(vw).Render(truncateCells(preview, vw)),
 	}
+	if cw > 0 {
+		cells = append(cells, renderWorkspaceCell(th, workspace, cw))
+	}
+	cells = append(cells, th.message.Width(vw).Render(truncateCells(preview, vw)))
 	return padCells("  "+strings.Join(cells, " "), width)
 }
 
@@ -150,32 +150,34 @@ func renderWorkspaceCell(th *theme, cwd string, width int) string {
 	return padCells(rendered, width)
 }
 
-func composeLine(width int, gutter, provider, date, cwd, preview string) string {
-	pw, dw, cw, vw := tableWidths(width)
-	line := gutter + fmt.Sprintf(
-		"%-*s %-*s %-*s %s",
-		pw, truncateCells(provider, pw),
-		dw, truncateCells(date, dw),
-		cw, truncateMiddle(cwd, cw),
-		truncateCells(preview, vw),
-	)
-	return padCells(truncateCells(line, width), width)
+func composeLine(width int, withWorkspace bool, gutter, provider, date, cwd, preview string) string {
+	pw, dw, cw, vw := tableWidths(width, withWorkspace)
+	cells := []string{padCells(truncateCells(provider, pw), pw), padCells(truncateCells(date, dw), dw)}
+	if cw > 0 {
+		cells = append(cells, padCells(truncateMiddle(cwd, cw), cw))
+	}
+	cells = append(cells, truncateCells(preview, vw))
+	return padCells(truncateCells(gutter+strings.Join(cells, " "), width), width)
 }
 
-func tableWidths(width int) (provider, date, cwd, preview int) {
+// tableWidths splits a picker row into columns; cwd is 0 without the
+// workspace column. Cells are separated by single spaces.
+func tableWidths(width int, withWorkspace bool) (provider, date, cwd, preview int) {
 	inner := width - gutterWidth
-	if inner < tableProviderWidth+tableDateWidth+tableGapWidth+10 {
-		provider = min(tableProviderWidth, max(3, inner/5))
-		date = min(tableDateWidth, max(5, inner/4))
-		cwd = max(5, inner-provider-date-tableGapWidth-5)
-		preview = max(1, inner-provider-date-cwd-tableGapWidth)
-		return
+	gaps := 2
+	if withWorkspace {
+		gaps = 3
 	}
-	provider = tableProviderWidth
-	date = tableDateWidth
-	cwd = clamp(inner/3, 22, 46)
-	preview = max(1, inner-provider-date-cwd-tableGapWidth)
-	return
+	provider, date = tableProviderWidth, tableAgeWidth
+	if inner < provider+date+gaps+10 {
+		provider = min(provider, max(3, inner/5))
+		date = min(date, max(5, inner/4))
+	}
+	rest := max(2, inner-provider-date-gaps)
+	if withWorkspace {
+		cwd = min(clamp(inner/3, 10, 46), rest/2)
+	}
+	return provider, date, cwd, max(1, rest-cwd)
 }
 
 func previewFor(row session.Row, mode previewMode) string {

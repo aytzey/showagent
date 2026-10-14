@@ -74,8 +74,8 @@ func PreviewConversion(row Row, target Provider, options HandoffOptions) (Conver
 	if strings.TrimSpace(row.resumeCWD()) == "" || strings.HasPrefix(strings.TrimSpace(row.resumeCWD()), "(") {
 		preview.Warnings = append(preview.Warnings, "source workspace is unknown; some target providers may refuse conversion")
 	}
-	if target == ProviderOpenCode && !ProviderCommandAvailable(ProviderOpenCode) {
-		preview.Warnings = append(preview.Warnings, "opencode CLI is not on PATH; writing the conversion will fail until it is installed")
+	if (target == ProviderOpenCode || target == ProviderMiMo) && !ProviderCommandAvailable(target) {
+		preview.Warnings = append(preview.Warnings, providerCommand(target)+" CLI is not on PATH; writing the conversion will fail until it is installed")
 	}
 	return preview, nil
 }
@@ -102,6 +102,8 @@ func SourceLocation(row Row) string {
 	switch row.Provider {
 	case ProviderOpenCode:
 		return filepath.Join(defaultOpenCodeDataHome(), "opencode*.db") + " via `opencode export " + row.ID + "`"
+	case ProviderMiMo:
+		return filepath.Join(defaultMiMoDataHome(), "mimocode*.db") + " via `mimo db`"
 	default:
 		return "(unknown source location)"
 	}
@@ -114,12 +116,17 @@ func StorageLocation(row Row) string {
 	switch row.Provider {
 	case ProviderOpenCode:
 		return filepath.Join(defaultOpenCodeDataHome(), "opencode*.db") + " via `opencode import`"
+	case ProviderMiMo:
+		return filepath.Join(defaultMiMoDataHome(), "mimocode*.db") + " via `mimo import`"
 	default:
 		return "(unknown storage location)"
 	}
 }
 
 func recipeNote(row Row) string {
+	if row.Provider == ProviderMiMo {
+		return "MiMoCode sessions live in its SQLite database; showagent reads and writes through the mimo CLI."
+	}
 	if row.Provider == ProviderOpenCode {
 		return "OpenCode sessions live in its SQLite database; showagent reads and writes through the opencode CLI."
 	}
