@@ -1257,3 +1257,63 @@ func TestDeleteKeepsScrollPosition(t *testing.T) {
 		t.Fatalf("selection after deleting last row = %#v, want s58", asModel(t, updated).list.SelectedItem())
 	}
 }
+
+// TestSearchResultsAreNewestFirstAcrossWorkspaces: results must not inherit
+// the grouped order, where a whole workspace precedes a newer match elsewhere.
+func TestSearchResultsAreNewestFirstAcrossWorkspaces(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a-new", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC), File: "/t/a1.jsonl", FirstUser: "fix login"},
+		{Provider: session.ProviderClaude, ID: "b-mid", CWD: "/p/beta", LastAt: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), File: "/t/b1.jsonl", FirstUser: "fix login"},
+		{Provider: session.ProviderCodex, ID: "a-old", CWD: "/p/alpha", LastAt: time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC), File: "/t/a2.jsonl", FirstUser: "fix login"},
+	}
+	m := sizedModel(rows)
+	searching, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+	got := asModel(t, searching)
+	got.list.SetFilterText("login")
+	var ids []string
+	for _, it := range got.list.VisibleItems() {
+		ids = append(ids, it.(item).row.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"a-new", "b-mid", "a-old"}) {
+		t.Fatalf("search order = %v, want newest first across workspaces", ids)
+	}
+}
+
+func TestCancelledSearchRestoresGroups(t *testing.T) {
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "a", CWD: "/p/alpha", LastAt: time.Now(), File: "/t/a.jsonl", FirstUser: "alpha"},
+		{Provider: session.ProviderClaude, ID: "b", CWD: "/p/beta", LastAt: time.Now().Add(-time.Hour), File: "/t/b.jsonl", FirstUser: "bravo"},
+	}
+	m := sizedModel(rows)
+	searching, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+	cancelled, _ := asModel(t, searching).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	got := asModel(t, cancelled)
+	if headers := len(got.list.VisibleItems()) - sessionCount(got.list.VisibleItems()); headers != 2 {
+		t.Fatalf("workspace headers after cancelling search = %d, want 2", headers)
+	}
+	if sel, ok := got.list.SelectedItem().(item); !ok || sel.row.ID != "a" {
+		t.Fatalf("cancelling search lost the selected session: %#v", got.list.SelectedItem())
+	}
+}
+
+// TestShortHandoffPreviewShowsDrops: the 4-row panel still offers the second
+// x, so it must also say what the copy leaves behind, warnings or not.
+func TestShortHandoffPreviewShowsDrops(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "source", LastAt: time.Now(), File: "/tmp/source.jsonl", FirstUser: "hi"}
+	m := sizedModel([]session.Row{row})
+	m.width, m.height = 80, 18
+	m.resizeList()
+	m.pendingConvert = &pendingConversion{rowKey: rowKey(row), target: session.ProviderClaude, preview: session.ConversionPreview{
+		SourceProvider: session.ProviderCodex,
+		TargetProvider: session.ProviderClaude,
+		Scope:          "all",
+		Dropped:        []string{"tool calls", "runtime state"},
+		Warnings:       []string{"source workspace is unknown"},
+	}}
+	detail := m.detailView()
+	for _, want := range []string{"drops", "tool calls", "x again"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("short preview missing %q:\n%s", want, detail)
+		}
+	}
+}

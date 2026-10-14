@@ -111,9 +111,8 @@ type item struct {
 
 func (i item) FilterValue() string { return i.row.FilterValue() }
 
-// headerItem is a selectable group header (one per workspace folder). It
-// returns an empty filter value so it is hidden automatically while searching,
-// which turns the grouped view into a flat result list during a search.
+// headerItem is a selectable group header (one per workspace folder). Search
+// runs over flatItems, so headers never reach the filter.
 type headerItem struct {
 	path      string
 	count     int
@@ -141,7 +140,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 // matchAllWords keeps the sessions whose search text contains every query
-// word, case-insensitively, in their newest-first order. Fuzzy subsequence
+// word, case-insensitively, in input (flatItems: newest-first) order. Fuzzy subsequence
 // matching ranked unrelated sessions above the ones containing the words.
 func matchAllWords(term string, targets []string) []list.Rank {
 	words := strings.Fields(strings.ToLower(term))
@@ -186,6 +185,16 @@ func groupedItems(rows []session.Row, collapsed map[string]bool) []list.Item {
 				items = append(items, item{row: row})
 			}
 		}
+	}
+	return items
+}
+
+// flatItems lists sessions without workspace headers in their global
+// newest-first order, which is the order search results keep.
+func flatItems(rows []session.Row) []list.Item {
+	items := make([]list.Item, len(rows))
+	for index, row := range rows {
+		items[index] = item{row: row}
 	}
 	return items
 }
@@ -479,8 +488,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// While typing a filter, every key belongs to the list.
 	if m.list.SettingFilter() {
+		selected, hadSession := m.list.SelectedItem().(item)
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
+		// A cancelled or empty search returns to the grouped view.
+		if m.list.FilterState() == list.Unfiltered {
+			cmd = tea.Batch(cmd, m.rebuildList())
+			if hadSession {
+				selectRowItem(&m.list, selected.row)
+			}
+		}
 		m.reconcileDeleteArm()
 		m.reconcilePendingConversion()
 		return m, cmd
@@ -592,7 +609,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if msg.String() == "/" {
 		m.pendingConvert = nil
+		selected, hadSession := m.list.SelectedItem().(item)
 		rebuild := m.rebuildListForSearch()
+		if hadSession {
+			selectRowItem(&m.list, selected.row)
+		}
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, tea.Batch(rebuild, cmd)
@@ -738,11 +759,11 @@ func (m *model) resizeList() {
 }
 
 func (m *model) currentItems() []list.Item {
-	collapsed := m.collapsedGroups
+	rows := filterRows(m.allRows, m.providers)
 	if m.list.SettingFilter() || m.list.IsFiltered() {
-		collapsed = nil
+		return flatItems(rows)
 	}
-	return groupedItems(filterRows(m.allRows, m.providers), collapsed)
+	return groupedItems(rows, m.collapsedGroups)
 }
 
 func (m *model) rebuildList() tea.Cmd {
@@ -750,7 +771,7 @@ func (m *model) rebuildList() tea.Cmd {
 }
 
 func (m *model) rebuildListForSearch() tea.Cmd {
-	return m.list.SetItems(groupedItems(filterRows(m.allRows, m.providers), nil))
+	return m.list.SetItems(flatItems(filterRows(m.allRows, m.providers)))
 }
 
 func (m *model) pruneCollapsedGroups() {
@@ -1132,24 +1153,20 @@ func (m model) detailView() string {
 		lines = append(lines, th.deleteBanner.Render("⚠ press d again to permanently delete this session · esc keeps it"))
 	}
 	if pending := m.selectedConversionPreview(row); pending != nil {
-		lines = append(lines,
-			th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s", pending.preview.SourceProvider, pending.preview.TargetProvider),
-			th.label.Render(padLabel("scope"))+fmt.Sprintf("%s · %d turns", pending.preview.Scope, pending.preview.TransferTurns),
-		)
+		lines = append(lines, th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s · %s · %d turns",
+			pending.preview.SourceProvider, pending.preview.TargetProvider, pending.preview.Scope, pending.preview.TransferTurns))
 		if len(pending.preview.Warnings) > 0 {
 			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
 		}
-		lines = append(lines,
-			th.hint.Render("x again → create the "+string(pending.preview.TargetProvider)+" session (original stays) · esc cancel · o target · t scope"),
-			th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW),
-		)
-		// The drop list is what users must read before confirming, so it
-		// wraps into the spare rows instead of being cut off.
+		lines = append(lines, th.hint.Render("x again → create the "+string(pending.preview.TargetProvider)+" session (original stays) · esc cancel · o target · t scope"))
+		// What gets dropped must be readable before confirming, even in the
+		// 4-row panel, so it comes before the last message and wraps.
 		label := padLabel("drops")
 		for _, part := range strings.Split(ansi.Wordwrap(strings.Join(pending.preview.Dropped, ", "), valueW, ""), "\n") {
 			lines = append(lines, th.label.Render(label)+part)
 			label = padLabel("")
 		}
+		lines = append(lines, th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW))
 		return th.detail.Width(width).Render(fitLines(lines, count, innerW))
 	}
 

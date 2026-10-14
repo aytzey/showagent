@@ -539,3 +539,12 @@ fi
 		t.Fatalf("tail marker missing; last 32 bytes: %q", string(out[len(out)-32:]))
 	}
 }
+
+func TestOnlyMiMoBoundsPreviewText(t *testing.T) {
+	if query := (opencodeProvider{}).sessionQuery(); strings.Contains(query, "substr(") || !strings.Contains(query, "json_extract(p.data,'$.text') FROM part") {
+		t.Fatalf("OpenCode previews must keep whole prompts:\n%s", query)
+	}
+	if query := (opencodeProvider{mimo: true}).sessionQuery(); strings.Count(query, "substr(json_extract(p.data,'$.text'),1,200)") != 2 {
+		t.Fatalf("MiMo previews must stay bounded:\n%s", query)
+	}
+}

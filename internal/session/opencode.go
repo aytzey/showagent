@@ -58,12 +58,21 @@ const (
 // (packages/core/src/session/sql.ts: session/message/part tables; message
 // and part ids are ascending, so MIN/MAX order by id is chronological).
 // Synthetic and ignored text parts are injected context, not user prompts.
-// ponytail: previews stop at 200 characters to stay under MiMo's CLI output
+// shortcut: MiMo previews stop at 200 characters to stay under its CLI output
 // flush limit; paginate the query if the session count makes JSON exceed it.
 const opencodeSessionQuery = `SELECT s.id AS id, s.directory AS directory, s.title AS title, s.time_created AS created, s.time_updated AS updated,
  (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id LIMIT 1) AS first_user,
  (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id DESC LIMIT 1) AS last_user
  FROM session s WHERE s.parent_id IS NULL AND s.time_archived IS NULL ORDER BY s.time_updated DESC`
+
+// sessionQuery bounds previews only for MiMo; OpenCode keeps whole prompts so
+// search, list --json and MCP filtering still see every word.
+func (p opencodeProvider) sessionQuery() string {
+	if p.mimo {
+		return opencodeSessionQuery
+	}
+	return strings.ReplaceAll(opencodeSessionQuery, "substr(json_extract(p.data,'$.text'),1,200)", "json_extract(p.data,'$.text')")
+}
 
 // opencodeProvider adapts the OpenCode CLI to the provider registry.
 // MiMoCode is an OpenCode fork with the same CLI import/export format and its
@@ -203,7 +212,7 @@ func discoverOpenCode(p opencodeProvider) []Row {
 		return nil
 	}
 
-	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
+	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
 	if err != nil {
 		// Deliberate skip, matching the other providers: discovery shows what
 		// it can parse and never fails the whole listing.
@@ -512,12 +521,7 @@ func writeOpenCodeConverted(p opencodeProvider, source Row, turns []Turn) (Row, 
 // MiMoCode resumes with the last imported user message's model. Ask its CLI
 // for the resolved default so JSONC, project config, and auth stay MiMo's job.
 func mimoDefaultModel(dir string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), opencodeTimeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, "mimo", "debug", "config")
-	command.Dir = dir
-	command.Stderr = io.Discard
-	output, err := command.Output()
+	output, err := runOpenCodeCLI("mimo", dir, "debug", "config")
 	if err != nil {
 		return "", "", fmt.Errorf("read MiMoCode default model: %w", err)
 	}
