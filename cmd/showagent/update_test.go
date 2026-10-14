@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReleaseAsset(t *testing.T) {
@@ -526,4 +527,99 @@ func zipArchive(t *testing.T, name string, payload []byte) []byte {
 		t.Fatal(err)
 	}
 	return output.Bytes()
+}
+
+// TestMain keeps every test away from the real release cache (prompt tests
+// save fake tags) and runs the background refresh synchronously.
+func TestMain(m *testing.M) {
+	cache, err := os.MkdirTemp("", "showagent-test-cache-*")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("XDG_CACHE_HOME", cache)
+	refreshInBackground = func(refresh func()) { refresh() }
+	code := m.Run()
+	_ = os.RemoveAll(cache)
+	os.Exit(code)
+}
+
+// promptDeclined runs the startup prompt and answers no.
+func promptDeclined(t *testing.T) string {
+	t.Helper()
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }()
+	if _, err := stdin.WriteString("no\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	_, _ = maybePromptForUpdate(stdin, &stderr)
+	return stderr.String()
+}
+
+func useReleaseCache(t *testing.T, latestURL, current string) string {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	savedLatest, savedVersion := latestReleaseURL, version
+	t.Cleanup(func() { latestReleaseURL, version = savedLatest, savedVersion })
+	latestReleaseURL, version = latestURL, current
+	path, err := cachedReleasePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestUpdatePromptSurvivesSlowNetworks: a check slower than the startup
+// budget must still lead to a prompt, on the next start.
+func TestUpdatePromptSurvivesSlowNetworks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(1500 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"tag_name":"v2.0.0"}`))
+	}))
+	defer server.Close()
+	path := useReleaseCache(t, server.URL, "v1.0.0")
+
+	if out := promptDeclined(t); strings.Contains(out, "Install now") {
+		t.Fatalf("first slow start prompted without a cached tag: %q", out)
+	}
+	if data, err := os.ReadFile(path); err != nil || strings.TrimSpace(string(data)) != "v2.0.0" {
+		t.Fatalf("background refresh cached %q, %v; want v2.0.0", data, err)
+	}
+	if out := promptDeclined(t); !strings.Contains(out, "v2.0.0 is available (current v1.0.0)") {
+		t.Fatalf("next slow start did not prompt from the cache: %q", out)
+	}
+}
+
+func TestUpdatePromptCachesAndValidatesTags(t *testing.T) {
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.0"}`))
+	}))
+	defer ok.Close()
+	path := useReleaseCache(t, ok.URL, "v1.0.0")
+	if out := promptDeclined(t); !strings.Contains(out, "v1.2.0 is available") {
+		t.Fatalf("fast check prompt = %q", out)
+	}
+	if data, _ := os.ReadFile(path); strings.TrimSpace(string(data)) != "v1.2.0" {
+		t.Fatalf("fast check cached %q, want v1.2.0", data)
+	}
+
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer down.Close()
+	latestReleaseURL = down.URL
+	for _, cached := range []string{"v1.2.3/../../evil", "v9.9.9-rc1", "garbage", "v1.0.0"} {
+		if err := os.WriteFile(path, []byte(cached+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out := promptDeclined(t); strings.Contains(out, "Install now") {
+			t.Fatalf("cached %q must not prompt: %q", cached, out)
+		}
+	}
 }

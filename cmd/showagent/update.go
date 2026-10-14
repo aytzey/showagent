@@ -90,7 +90,22 @@ func maybePromptForUpdate(stdin *os.File, stderr io.Writer) (code int, handled b
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
 	latest, err := fetchLatestRelease(ctx)
-	if err != nil || !isNewerVersion(latest, current) {
+	if err == nil {
+		saveCachedRelease(latest)
+	} else {
+		// Slow networks miss this startup budget: prompt from the tag an
+		// earlier run saved, and refresh it while the picker is open.
+		latest = loadCachedRelease()
+		url := latestReleaseURL
+		refreshInBackground(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if tag, err := fetchReleaseTag(ctx, url); err == nil {
+				saveCachedRelease(tag)
+			}
+		})
+	}
+	if !isNewerVersion(latest, current) {
 		return 0, false
 	}
 
@@ -113,8 +128,55 @@ func maybePromptForUpdate(stdin *os.File, stderr io.Writer) (code int, handled b
 	return 0, true
 }
 
+// refreshInBackground runs the slow-network release check without delaying
+// startup; tests swap it for a synchronous call.
+var refreshInBackground = func(refresh func()) { go refresh() }
+
+func cachedReleasePath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "showagent", "latest-release"), nil
+}
+
+// loadCachedRelease returns the saved tag only when it is a plain vX.Y.Z,
+// since it becomes part of the download URL.
+func loadCachedRelease() string {
+	path, err := cachedReleasePath()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	tag := strings.TrimSpace(string(data))
+	if version, ok := parseVersion(tag); !ok || version.prerelease || strings.ContainsAny(tag, "+/") {
+		return ""
+	}
+	return tag
+}
+
+// saveCachedRelease is best effort: without a cache the next slow start
+// simply skips the prompt again.
+func saveCachedRelease(tag string) {
+	path, err := cachedReleasePath()
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(tag+"\n"), 0o644)
+}
+
 func fetchLatestRelease(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestReleaseURL, nil)
+	return fetchReleaseTag(ctx, latestReleaseURL)
+}
+
+func fetchReleaseTag(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
