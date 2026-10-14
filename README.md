@@ -73,7 +73,7 @@ Star showagent to keep it handy for your next agent switch.
 Each coding agent keeps its own local session store. showagent reads the
 supported stores and brings their sessions into one terminal picker:
 
-- **Find a past session** — group by workspace and fuzzy-search agent, session
+- **Find a past session** — group by workspace and search agent, session
   ID, paths, and first/latest user prompts. This is not full-transcript search.
 - **Resume or branch** — reopen a session in its own CLI, or copy its
   transferable conversation into a new native session to try another direction.
@@ -182,7 +182,7 @@ and adding context to an existing one.
 | Key | Action |
 |---|---|
 | `↑/k`, `↓/j`, `pgup/pgdn` | Move through sessions |
-| `/` | Fuzzy search across agent, session id, paths, and first/latest user prompts |
+| `/` | Search agent, session id, paths, and first/latest user prompts (every word must match) |
 | `enter` | Resume the selected session in its own CLI |
 | `1`..`9` | Toggle provider visibility, numbered as listed in the header bar |
 | `p` | Cycle the preview column: first → latest → first + latest message |

@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	list "charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -156,8 +158,8 @@ func TestTruncateMiddleEdgeCases(t *testing.T) {
 
 func TestComposeLineAlignsHeaderAndRows(t *testing.T) {
 	width := 96
-	header := composeLine(width, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
-	row := composeLine(width, "  ", "codex", "2026-06-22 10:24", "/home/aytug", "preview")
+	header := composeLine(width, true, "  ", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE")
+	row := composeLine(width, true, "  ", "codex", "2h ago", "/home/aytug", "preview")
 
 	if lipgloss.Width(header) != width {
 		t.Fatalf("header width = %d, want %d", lipgloss.Width(header), width)
@@ -184,10 +186,10 @@ func TestRenderTableRowFitsWidth(t *testing.T) {
 		FirstUser: strings.Repeat("preview ", 30),
 	}
 
-	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, false)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, false, true)); got != width {
 		t.Fatalf("renderTableRow width = %d, want %d", got, width)
 	}
-	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, true)); got != width {
+	if got := lipgloss.Width(renderTableRow(th, width, row, firstMessage, true, true)); got != width {
 		t.Fatalf("selected renderTableRow width = %d, want %d", got, width)
 	}
 }
@@ -431,7 +433,7 @@ func TestConversionPreviewRendersAndEscCancels(t *testing.T) {
 		t.Fatal("preview message did not set pending conversion")
 	}
 	detail := got.detailView()
-	for _, want := range []string{"codex", "claude", "last 20", "fix the bug", "press x again"} {
+	for _, want := range []string{"codex", "claude", "last 20", "fix the bug", "x again"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail missing %q:\n%s", want, detail)
 		}
@@ -716,7 +718,7 @@ func TestEscClearsAppliedFilter(t *testing.T) {
 		{Provider: session.ProviderClaude, ID: "b", LastAt: time.Now(), File: "/tmp/b.jsonl", FirstUser: "bravo"},
 	}
 	m := sizedModel(rows)
-	m.list.SetFilterText("alpha")
+	m.list.SetFilterText("bravo")
 	if !m.list.IsFiltered() {
 		t.Fatal("expected an applied filter")
 	}
@@ -728,6 +730,62 @@ func TestEscClearsAppliedFilter(t *testing.T) {
 	}
 	if got.list.IsFiltered() {
 		t.Fatal("esc did not clear the applied filter")
+	}
+	if sel, ok := got.list.SelectedItem().(item); !ok || sel.row.ID != "b" {
+		t.Fatalf("esc lost the session picked from the results: %#v", got.list.SelectedItem())
+	}
+}
+
+func TestSearchMatchesAllWordsInRecencyOrder(t *testing.T) {
+	targets := []string{"codex\nfix the Redis TTL test", "claude\nrefactor checkout", "codex\nredis cache warmup", ""}
+	ids := func(ranks []list.Rank) []int {
+		var out []int
+		for _, rank := range ranks {
+			out = append(out, rank.Index)
+		}
+		return out
+	}
+	if got := ids(matchAllWords("redis", targets)); !reflect.DeepEqual(got, []int{0, 2}) {
+		t.Fatalf("redis matched %v, want [0 2] in input order", got)
+	}
+	if got := ids(matchAllWords("TTL  REDIS", targets)); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("multi-word search matched %v, want [0]", got)
+	}
+	// Fuzzy subsequence matching used to accept this ("r…e…d…i…s").
+	if got := ids(matchAllWords("redis", []string{"refactor the checkout form into server components"})); len(got) != 0 {
+		t.Fatalf("unrelated text matched: %v", got)
+	}
+}
+
+// TestShortHelpFitsAndKeepsAllKeysHint: the bottom bar must never overflow
+// (one wide line clips the whole screen) and must keep pointing at "?".
+func TestShortHelpFitsAndKeepsAllKeysHint(t *testing.T) {
+	withFakeCommands(t, "claude")
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "hi"}}
+	for _, width := range []int{30, 45, 60, 70, 80, 120} {
+		m := sizedModel(rows)
+		m.width = width
+		m.resizeList()
+		bar := m.helpView()
+		if got := lipgloss.Width(bar); got > width || !strings.Contains(bar, "all keys") {
+			t.Fatalf("width %d help bar (%d cells) = %q", width, got, bar)
+		}
+	}
+}
+
+// TestDetailShowsActionsOnShortTerminal: a 24-row terminal only fits part of
+// the panel, and that part must include the conversation and both actions.
+func TestDetailShowsActionsOnShortTerminal(t *testing.T) {
+	withFakeCommands(t, "codex", "claude")
+	rows := []session.Row{{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "first ask", LastUser: "latest ask"}}
+	m := sizedModel(rows)
+	m.width, m.height = 80, 24
+	m.resizeList()
+	detail := m.detailView()
+	for _, want := range []string{"first ask", "latest ask", "enter → resume", "x → hand off to claude"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("short-terminal detail missing %q:\n%s", want, detail)
+		}
 	}
 }
 
