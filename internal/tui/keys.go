@@ -1,6 +1,12 @@
 package tui
 
-import "charm.land/bubbles/v2/key"
+import (
+	"fmt"
+	"strings"
+
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
+)
 
 // keyMap holds every binding the picker reacts to. It satisfies help.KeyMap so
 // the bubbles help component can render both the compact and full layouts.
@@ -82,4 +88,133 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo},
 		{k.Providers, k.Rescan, k.Help, k.Quit},
 	}
+}
+
+// keysPanelHeight is the always-visible keys box: a group-title row, four
+// key rows, and the top and bottom borders.
+const keysPanelHeight = 7
+
+// minListRows keeps the session list usable; below it the keys box gives way
+// to the one-line help bar.
+const minListRows = 5
+
+type keyHint struct{ key, desc, value string }
+
+var keyGroupTitles = []string{"SESSION", "HAND OFF", "FIND", "MORE"}
+
+// keyGroups lists every picker key in four fixed groups with live values, so
+// the box shows the current target, turns, preview and mode.
+func (m model) keyGroups() [][]keyHint {
+	target := string(m.selectedHandoffTarget())
+	resume := keyHint{"enter", "resume", ""}
+	if _, ok := m.list.SelectedItem().(headerItem); ok {
+		resume.desc = "open/close"
+	}
+	handoff := keyHint{"x", "hand off", ""}
+	if target != "" {
+		handoff = keyHint{"x", "hand off →", target}
+	}
+	if selected, ok := m.list.SelectedItem().(item); ok && m.selectedConversionPreview(selected.row) != nil {
+		handoff.desc = "confirm →"
+	}
+	agents := "1"
+	if n := len(discoveredProviders(m.allRows)); n > 1 {
+		agents = fmt.Sprintf("1-%d", min(n, 9))
+	}
+	preview := modeShort(m.mode)
+	if m.mode == bothMessages {
+		preview = "both"
+	}
+	return [][]keyHint{
+		{resume, {"n", "branch", ""}, {"C", "compound", ""}, {"d", "delete", ""}},
+		{handoff, {"o", "target", target}, {"t", "turns", m.handoff.Label()}, {"i", "import", ""}},
+		{{"/", "search", ""}, {"p", "preview", preview}, {agents, "agents", ""}, {"space", "collapse", ""}},
+		{{"y", "mode", resumeModeLabel(m.dangerous)}, {"r", "rescan", ""}, {"?", "hide keys", ""}, {"q", "quit", ""}},
+	}
+}
+
+func (m model) keysPanelFits() bool {
+	return m.width >= 80 && m.height-3-m.detailHeight()-keysPanelHeight >= minListRows
+}
+
+// bottomView is the keys box when it fits and is not hidden, otherwise the
+// one-line help bar (or the "?" overlay on small terminals).
+func (m model) bottomView() string {
+	if !m.keysHidden && m.keysPanelFits() {
+		return m.keysPanel()
+	}
+	// Clamp before joining: JoinVertical pads every line to the widest one,
+	// so one overlong line would otherwise clip the whole screen.
+	return clampLineWidths(m.helpView(), m.width)
+}
+
+func (m model) keysPanel() string {
+	th := m.render.theme
+	const gap = 3
+	groups := m.keyGroups()
+	columns := make([][]string, len(groups))
+	widths := make([]int, len(groups))
+	for index, group := range groups {
+		keyWidth := 0
+		for _, hint := range group {
+			keyWidth = max(keyWidth, lipgloss.Width(hint.key))
+		}
+		cells := []string{th.keyGroup.Render(keyGroupTitles[index])}
+		for _, hint := range group {
+			cell := th.keyCap.Render(padCells(hint.key, keyWidth)) + " " + th.keyDesc.Render(hint.desc)
+			if hint.value != "" {
+				value := th.keyValue.Render(hint.value)
+				if hint.key == "y" && m.dangerous {
+					value = th.yoloChip.Render(hint.value)
+				}
+				cell += " " + value
+			}
+			cells = append(cells, cell)
+		}
+		for _, cell := range cells {
+			widths[index] = max(widths[index], lipgloss.Width(cell))
+		}
+		columns[index] = cells
+	}
+	// Columns sit on a fixed grid so they do not shift as values change;
+	// when that does not fit, the widest column shrinks and truncates.
+	innerW := m.width - 4
+	slot := min((innerW-gap*(len(widths)-1))/len(widths), 30)
+	grid := make([]int, len(widths))
+	for index, width := range widths {
+		grid[index] = max(width, slot)
+	}
+	if sum(grid)+gap*(len(grid)-1) <= innerW {
+		widths = grid
+	}
+	for sum(widths)+gap*(len(widths)-1) > innerW && maxIndex(widths) >= 0 && widths[maxIndex(widths)] > 8 {
+		widths[maxIndex(widths)]--
+	}
+	lines := make([]string, keysPanelHeight-2)
+	for row := range lines {
+		cells := make([]string, len(columns))
+		for index, column := range columns {
+			cells[index] = padCells(truncateCells(column[row], widths[index]), widths[index])
+		}
+		lines[row] = strings.Join(cells, strings.Repeat(" ", gap))
+	}
+	return titledBox(th.keysEdge, th.boxTitle, "Keys", fitLines(lines, len(lines), innerW), m.width)
+}
+
+func sum(values []int) int {
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return total
+}
+
+func maxIndex(values []int) int {
+	best := -1
+	for index, value := range values {
+		if best < 0 || value > values[best] {
+			best = index
+		}
+	}
+	return best
 }

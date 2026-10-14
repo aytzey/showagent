@@ -13,6 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/aytzey/showagent/internal/session"
 )
 
@@ -594,8 +596,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 	if m.dangerous {
 		t.Fatal("model should start with dangerous=false")
 	}
-	if !strings.Contains(m.resumeHint(row), "(normal)") {
-		t.Fatalf("normal hint should mark normal mode: %q", m.resumeHint(row))
+	if strings.Contains(m.detailView(), "YOLO") {
+		t.Fatalf("normal mode must not show YOLO:\n%s", m.detailView())
 	}
 
 	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))
@@ -603,8 +605,8 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 	if !got.dangerous {
 		t.Fatal("y did not enable dangerous mode")
 	}
-	if !strings.Contains(got.resumeHint(row), "yolo:") {
-		t.Fatalf("yolo hint should describe yolo mode: %q", got.resumeHint(row))
+	if detail := got.detailView(); !strings.Contains(detail, "YOLO") || !strings.Contains(detail, "bypasses approvals") {
+		t.Fatalf("yolo mode should be stated with its effect:\n%s", detail)
 	}
 
 	back, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: 'y'}))
@@ -614,7 +616,6 @@ func TestYoloToggleChangesResumeHint(t *testing.T) {
 }
 
 func TestScopeCycling(t *testing.T) {
-	// The hint names the scope only when there is a target to hand off to.
 	withFakeCommands(t, "codex")
 	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})
@@ -629,8 +630,8 @@ func TestScopeCycling(t *testing.T) {
 			t.Fatalf("scope MaxTurns = %d, want %d", m.handoff.MaxTurns, want)
 		}
 	}
-	if !strings.Contains(m.handoffHint(row), "all") {
-		t.Fatalf("handoff hint after wrap = %q, want to contain 'all'", m.handoffHint(row))
+	if keys := ansi.Strip(m.keysPanel()); !strings.Contains(keys, "turns all") {
+		t.Fatalf("keys box after wrap does not show the scope:\n%s", keys)
 	}
 }
 
@@ -639,9 +640,9 @@ func TestPiDangerousResumeHintDoesNotClaimUnsupportedBypass(t *testing.T) {
 	row := session.Row{Provider: session.ProviderPi, ID: "pi-session", LastAt: time.Now(), File: "/tmp/pi.jsonl"}
 	m := sizedModel([]session.Row{row})
 	m.dangerous = true
-	hint := m.resumeHint(row)
-	if !strings.Contains(hint, "no extra pi flag") || strings.Contains(hint, "bypasses approvals") {
-		t.Fatalf("Pi dangerous hint = %q", hint)
+	detail := m.detailView()
+	if !strings.Contains(detail, "no extra pi flag") || strings.Contains(detail, "bypasses approvals") {
+		t.Fatalf("Pi yolo detail claims an unsupported bypass:\n%s", detail)
 	}
 }
 
@@ -667,22 +668,34 @@ func TestHandoffTargetCycling(t *testing.T) {
 	if got.handoffTarget != session.ProviderJCode {
 		t.Fatalf("cycled target = %q, want jcode", got.handoffTarget)
 	}
-	if !strings.Contains(got.handoffHint(selected.row), "jcode") {
-		t.Fatalf("handoff hint missing jcode target: %q", got.handoffHint(selected.row))
+	if keys := ansi.Strip(got.keysPanel()); !strings.Contains(keys, "hand off → jcode") || !strings.Contains(keys, "target jcode") {
+		t.Fatalf("keys box missing jcode target:\n%s", keys)
 	}
 }
 
+// TestHelpToggle: "?" hides and restores the keys box where it fits, and
+// opens the full overlay on terminals too small for the box.
 func TestHelpToggle(t *testing.T) {
 	row := session.Row{Provider: session.ProviderClaude, ID: "x", LastAt: time.Now(), CWD: "/tmp", File: "/tmp/x.jsonl", FirstUser: "msg"}
 	m := sizedModel([]session.Row{row})
-	if m.help.ShowAll {
-		t.Fatal("help should start collapsed")
+	if !strings.Contains(m.bottomView(), "Keys") {
+		t.Fatalf("keys box should show by default:\n%s", m.bottomView())
+	}
+	hidden := asModel(t, first(m.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))))
+	if bar := hidden.bottomView(); strings.Contains(bar, "Keys") || !strings.Contains(bar, "show keys") {
+		t.Fatalf("? did not swap the keys box for the bar:\n%s", bar)
+	}
+	shown := asModel(t, first(hidden.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))))
+	if !strings.Contains(shown.bottomView(), "Keys") {
+		t.Fatal("? did not restore the keys box")
 	}
 
-	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))
-	got := asModel(t, updated)
+	small := sizedModel([]session.Row{row})
+	small.height = 18 // too short for the keys box
+	small.resizeList()
+	got := asModel(t, first(small.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))))
 	if !got.help.ShowAll {
-		t.Fatal("? did not expand help")
+		t.Fatal("? did not expand help on a small terminal")
 	}
 	full := got.helpView()
 	for _, want := range []string{"resume", "branch", "quit"} {
@@ -690,12 +703,12 @@ func TestHelpToggle(t *testing.T) {
 			t.Fatalf("full help missing %q:\n%s", want, full)
 		}
 	}
-
-	back, _ := got.Update(tea.KeyPressMsg(tea.Key{Code: '?'}))
-	if asModel(t, back).help.ShowAll {
+	if asModel(t, first(got.Update(tea.KeyPressMsg(tea.Key{Code: '?'})))).help.ShowAll {
 		t.Fatal("? did not collapse help again")
 	}
 }
+
+func first(model tea.Model, _ tea.Cmd) tea.Model { return model }
 
 func TestThemeRebuildOnBackgroundColor(t *testing.T) {
 	m := sizedModel([]session.Row{{Provider: session.ProviderCodex, ID: "x", LastAt: time.Now(), File: "/tmp/x.jsonl"}})
@@ -769,25 +782,42 @@ func TestShortHelpFitsAndKeepsAllKeysHint(t *testing.T) {
 		m.width = width
 		m.resizeList()
 		bar := m.helpView()
-		if got := lipgloss.Width(bar); got > width || !strings.Contains(bar, "all keys") {
+		if got := lipgloss.Width(bar); got > width || !strings.Contains(bar, " keys") {
 			t.Fatalf("width %d help bar (%d cells) = %q", width, got, bar)
 		}
 	}
 }
 
-// TestDetailShowsActionsOnShortTerminal: a 24-row terminal only fits part of
-// the panel, and that part must include the conversation and both actions.
-func TestDetailShowsActionsOnShortTerminal(t *testing.T) {
+// TestKeysBoxShowsEveryKey: on an 80x24 terminal every key is listed in the
+// keys box with live values, the session box holds no key hints or storage,
+// and nothing overflows.
+func TestKeysBoxShowsEveryKey(t *testing.T) {
 	withFakeCommands(t, "codex", "claude")
 	rows := []session.Row{{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "first ask", LastUser: "latest ask"}}
 	m := sizedModel(rows)
 	m.width, m.height = 80, 24
 	m.resizeList()
-	detail := m.detailView()
-	for _, want := range []string{"first ask", "latest ask", "enter → resume", "x → hand off to claude"} {
-		if !strings.Contains(detail, want) {
-			t.Fatalf("short-terminal detail missing %q:\n%s", want, detail)
+	view := ansi.Strip(m.browseView())
+	for _, want := range []string{"first ask", "latest ask", "enter resume", "x hand off → claude", "o target claude", "t turns all",
+		"n     branch", "C     compound", "d     delete", "i import", "/     search", "p     preview first", "space collapse",
+		"y mode normal", "r rescan", "? hide keys", "q quit"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("80x24 view missing %q:\n%s", want, view)
 		}
+	}
+	detail := ansi.Strip(m.detailView())
+	for _, unwanted := range []string{"storage", "enter →", "x →"} {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("session box still shows %q:\n%s", unwanted, detail)
+		}
+	}
+	for index, line := range strings.Split(m.browseView(), "\n") {
+		if w := lipgloss.Width(line); w > 80 {
+			t.Fatalf("line %d is %d cells wide: %q", index, w, line)
+		}
+	}
+	if got := lipgloss.Height(m.browseView()); got > 24 {
+		t.Fatalf("view is %d rows, want <= 24", got)
 	}
 }
 
@@ -986,6 +1016,8 @@ func TestDKeyArmsAndConfirmsDelete(t *testing.T) {
 func TestEscDoesNotQuit(t *testing.T) {
 	rows := []session.Row{{Provider: session.ProviderCodex, ID: "x", CWD: "/p/a", LastAt: time.Now(), File: "/t/x.jsonl", FirstUser: "hi"}}
 	m := sizedModel(rows)
+	m.width, m.height = 70, 20 // too small for the keys box, so "?" opens the overlay
+	m.resizeList()
 
 	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	if cmd != nil {
@@ -1109,7 +1141,7 @@ func TestCompoundChooserRejectsMissingAgent(t *testing.T) {
 }
 
 // TestHelpBarVisibleAt80x24 renders the full browse view at a small terminal
-// size with long workspace paths and asserts the help bar keeps its row.
+// size with long workspace paths and asserts the keys box keeps its rows.
 func TestHelpBarVisibleAt80x24(t *testing.T) {
 	long := "/home/user/projects/an-extremely-long-workspace-directory-name/nested/deeper/repo"
 	rows := []session.Row{
@@ -1131,9 +1163,9 @@ func TestHelpBarVisibleAt80x24(t *testing.T) {
 			t.Fatalf("line %d width = %d > 80 (would wrap and push the help bar off-screen): %q", i, w, line)
 		}
 	}
-	last := lines[len(lines)-1]
-	if !strings.Contains(last, "resume") {
-		t.Fatalf("last line is not the help bar: %q", last)
+	bottom := strings.Join(lines[len(lines)-keysPanelHeight:], "\n")
+	if !strings.Contains(bottom, "resume") || !strings.Contains(bottom, "quit") {
+		t.Fatalf("keys box is not at the bottom:\n%s", bottom)
 	}
 }
 

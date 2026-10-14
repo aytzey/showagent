@@ -299,6 +299,7 @@ type model struct {
 	compoundRow      *session.Row
 	compoundNotice   string
 	importFlow       *importWizard
+	keysHidden       bool
 	isDark           bool
 	width            int
 	height           int
@@ -539,7 +540,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
-		m.help.ShowAll = !m.help.ShowAll
+		// "?" hides the keys box for a taller list; where the box cannot fit,
+		// it opens the full help overlay instead.
+		if m.keysPanelFits() {
+			m.keysHidden = !m.keysHidden
+		} else {
+			m.help.ShowAll = !m.help.ShowAll
+		}
 		m.resizeList()
 		return m, nil
 	}
@@ -753,7 +760,7 @@ func (m *model) resizeList() {
 		return
 	}
 	m.help.SetWidth(m.width)
-	chrome := lipgloss.Height(m.headerView()) + columnHeaderHeight + m.detailHeight() + lipgloss.Height(m.helpView()) + bottomSafetyRows
+	chrome := lipgloss.Height(m.headerView()) + columnHeaderHeight + m.detailHeight() + lipgloss.Height(m.bottomView()) + bottomSafetyRows
 	listHeight := max(3, m.height-chrome)
 	m.list.SetSize(m.width, listHeight)
 }
@@ -939,9 +946,7 @@ func (m model) View() tea.View {
 }
 
 func (m model) browseView() string {
-	// Clamp before joining: JoinVertical pads every line to the widest one,
-	// so one overlong line would otherwise clip the whole screen.
-	helpBar := clampLineWidths(m.helpView(), m.width)
+	helpBar := m.bottomView()
 	if m.list.FilterState() == list.FilterApplied {
 		m.list.Title = m.render.theme.hint.Render(fmt.Sprintf("search: %s · esc clears", m.list.FilterValue()))
 	}
@@ -1055,6 +1060,9 @@ func (m model) helpView() string {
 	// Drop hints before the last one ("? all keys") until the bar fits: the
 	// help component overflows instead of truncating when "…" does not fit.
 	short := keys.ShortHelp()
+	if m.keysPanelFits() {
+		short[len(short)-1].SetHelp("?", "show keys")
+	}
 	unbounded := m.help
 	unbounded.SetWidth(0)
 	for len(short) > 2 && m.width > 0 && lipgloss.Width(unbounded.ShortHelpView(short)) > m.width {
@@ -1118,12 +1126,14 @@ func (m model) detailView() string {
 	}
 	th := m.render.theme
 	width := max(40, m.width)
-	// Style.Width covers border and padding too, so the text area is the
-	// block width minus the full frame; lines are truncated to exactly that
-	// so nothing can wrap and blow the height budget.
+	// Lines are truncated to the text area so nothing can wrap and blow the
+	// height budget.
 	frameW, _ := th.detail.GetFrameSize()
 	innerW := max(10, width-frameW)
 	valueW := max(8, innerW-detailLabelWidth)
+	box := func(title string, lines []string) string {
+		return titledBox(th.detailEdge, th.detailEdge, title, fitLines(lines, count, innerW), width)
+	}
 
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
@@ -1132,19 +1142,17 @@ func (m model) detailView() string {
 			if header.collapsed {
 				state = "collapsed"
 			}
-			lines := []string{
-				th.label.Render(padLabel("workspace")) + truncateMiddle(collapseHome(session.SafeDisplayText(header.path)), valueW),
+			return box("Workspace", []string{
+				th.label.Render(padLabel("path")) + truncateMiddle(collapseHome(session.SafeDisplayText(header.path)), valueW),
 				th.label.Render(padLabel("sessions")) + fmt.Sprintf("%d", header.count),
 				th.label.Render(padLabel("state")) + state,
-				th.hint.Render("enter or space → collapse or expand this workspace"),
-			}
-			return th.detail.Width(width).Render(fitLines(lines, count, innerW))
+			})
 		}
 		msg := "No session selected."
 		if m.list.IsFiltered() {
 			msg = "No session matches this search · press esc to clear."
 		}
-		return th.detail.Width(width).Render(fitLines([]string{th.muted.Render(msg)}, count, innerW))
+		return box("Session", []string{th.muted.Render(msg)})
 	}
 	row := selected.row
 
@@ -1153,38 +1161,55 @@ func (m model) detailView() string {
 		lines = append(lines, th.deleteBanner.Render("⚠ press d again to permanently delete this session · esc keeps it"))
 	}
 	if pending := m.selectedConversionPreview(row); pending != nil {
-		lines = append(lines, th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s · %s · %d turns",
+		lines = append(lines, th.label.Render(padLabel("handoff"))+fmt.Sprintf("%s → %s · %s · %d turns · original stays",
 			pending.preview.SourceProvider, pending.preview.TargetProvider, pending.preview.Scope, pending.preview.TransferTurns))
-		if len(pending.preview.Warnings) > 0 {
-			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
-		}
-		lines = append(lines, th.hint.Render("x again → create the "+string(pending.preview.TargetProvider)+" session (original stays) · esc cancel · o target · t scope"))
 		// What gets dropped must be readable before confirming, even in the
-		// 4-row panel, so it comes before the last message and wraps.
+		// 2-row panel, so it comes right after the summary and wraps.
 		label := padLabel("drops")
 		for _, part := range strings.Split(ansi.Wordwrap(strings.Join(pending.preview.Dropped, ", "), valueW, ""), "\n") {
 			lines = append(lines, th.label.Render(label)+part)
 			label = padLabel("")
 		}
+		if len(pending.preview.Warnings) > 0 {
+			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
+		}
 		lines = append(lines, th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW))
-		return th.detail.Width(width).Render(fitLines(lines, count, innerW))
+		return box("Hand-off preview · x again to create", lines)
 	}
 
-	// Ordered by importance: short terminals show only the first lines, so the
-	// conversation and the two main actions come before storage details.
-	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
+	// Ordered by importance: short terminals show only the first lines.
+	if !session.ProviderCommandAvailable(row.Provider) {
+		lines = append(lines, th.deleteBanner.Render(fmt.Sprintf("%s CLI not found in PATH · install it, or hand the session off", row.Provider)))
+	}
 	lines = append(lines,
 		th.label.Render(padLabel("first"))+truncateCells(emptyFallback(session.SafeDisplayText(row.FirstUser)), valueW),
 		th.label.Render(padLabel("latest"))+truncateCells(emptyFallback(session.SafeDisplayText(bestLast(row))), valueW),
-		th.hint.Render(m.resumeHint(row)),
-		th.hint.Render(m.handoffHint(row)),
+	)
+	if m.dangerous {
+		lines = append(lines, th.label.Render(padLabel("mode"))+th.yoloChip.Render("YOLO")+" "+yoloEffect(row.Provider))
+	}
+	recipe := session.RecipeFor(row, session.ResumeOptions{Dangerous: m.dangerous})
+	lines = append(lines,
 		th.label.Render(padLabel("workspace"))+truncateMiddle(collapseHome(session.SafeDisplayText(row.CWD)), valueW),
 		th.label.Render(padLabel("updated"))+localTime(row.LastAt)+th.muted.Render(" ("+relativeTime(row.LastAt)+")"),
 		th.label.Render(padLabel("session"))+m.providerWord(row.Provider)+" "+session.SafeDisplayText(row.ID),
 		th.label.Render(padLabel("command"))+truncateCells(session.SafeDisplayText(recipe.CommandString), valueW),
-		th.label.Render(padLabel("storage"))+truncateMiddle(collapseHome(session.SafeDisplayText(recipe.StorageLocation)), valueW),
 	)
-	return th.detail.Width(width).Render(fitLines(lines, count, innerW))
+	return box("Session", lines)
+}
+
+// titledBox draws a rounded box of the given total width with title set
+// into its top border.
+func titledBox(edge, titleStyle lipgloss.Style, title, body string, width int) string {
+	label := " " + title + " "
+	fill := max(0, width-3-lipgloss.Width(label))
+	top := edge.Render("╭─") + titleStyle.Render(label) + edge.Render(strings.Repeat("─", fill)+"╮")
+	frame := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), false, true, true, true).
+		BorderForeground(edge.GetForeground()).
+		Padding(0, 1).
+		Width(width)
+	return top + "\n" + frame.Render(body)
 }
 
 // fitLines pads or cuts lines to exactly count rows of at most width cells, so
@@ -1211,28 +1236,17 @@ func (m model) providerWord(p session.Provider) string {
 	return providerBadge(m.render.theme, string(p), len(string(p))+2)
 }
 
-func (m model) resumeHint(row session.Row) string {
-	if !session.ProviderCommandAvailable(row.Provider) {
-		return fmt.Sprintf("%s CLI not found in PATH · install it or x → hand off", row.Provider)
+// yoloEffect states what yolo mode actually changes for provider, without
+// claiming a bypass the provider's CLI does not have.
+func yoloEffect(provider session.Provider) string {
+	switch provider {
+	case session.ProviderClaude:
+		return "skips permission prompts"
+	case session.ProviderJCode, session.ProviderPi:
+		return fmt.Sprintf("no extra %s flag", provider)
+	default:
+		return "bypasses approvals & sandbox"
 	}
-	if !m.dangerous {
-		return fmt.Sprintf("enter → resume with %s (normal) · y → yolo", row.Provider)
-	}
-	if row.Provider == session.ProviderClaude {
-		return fmt.Sprintf("enter → resume with %s · yolo: skips permission prompts · y → normal", row.Provider)
-	}
-	if row.Provider == session.ProviderJCode || row.Provider == session.ProviderPi {
-		return fmt.Sprintf("enter → resume with %s · yolo: no extra %s flag · y → normal", row.Provider, row.Provider)
-	}
-	return fmt.Sprintf("enter → resume with %s · yolo: bypasses approvals & sandbox · y → normal", row.Provider)
-}
-
-func (m model) handoffHint(row session.Row) string {
-	target := m.handoffTargetFor(row)
-	if target == "" {
-		return "x → no other agent CLI on PATH to hand off to · n → branch a copy"
-	}
-	return fmt.Sprintf("x → hand off to %s (%s turns) · o other agent · t turns · n branch a copy", target, m.handoff.Label())
 }
 
 func (m model) detailLineCount() int {
@@ -1242,11 +1256,11 @@ func (m model) detailLineCount() int {
 	case m.height < 14:
 		return 0
 	case m.height < 20:
-		return 4
+		return 2
 	case m.height < 28:
-		return 6
+		return 4
 	default:
-		return 9
+		return 6
 	}
 }
 
