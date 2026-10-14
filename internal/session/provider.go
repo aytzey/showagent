@@ -44,6 +44,7 @@ var registry = []ProviderImpl{
 	claudeProvider{},
 	jcodeProvider{},
 	opencodeProvider{},
+	opencodeProvider{mimo: true},
 	geminiProvider{},
 	piProvider{},
 }

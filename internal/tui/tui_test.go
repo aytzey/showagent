@@ -1138,6 +1138,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
@@ -1147,7 +1148,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join(root, "codex", "sessions"),
 		filepath.Join(root, "claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "MIMOCODE_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
 		"press r to rescan",
 	} {
 		if !strings.Contains(view, want) {

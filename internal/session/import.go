@@ -129,7 +129,7 @@ func ImportCapabilities(provider Provider) ImportCapability {
 
 	// OpenCode's create writer also goes through its CLI. The remaining local
 	// writers can create sessions without launching their provider executable.
-	capability.RequiresCLI = provider == ProviderOpenCode
+	capability.RequiresCLI = provider == ProviderOpenCode || provider == ProviderMiMo
 	capability.Reason = fmt.Sprintf("%s has no verified native append-context API that avoids starting a model turn", DisplayName(provider))
 	return capability
 }
@@ -265,7 +265,7 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 }
 
 func importNeedsProviderCommand(plan ImportPlan) bool {
-	return plan.Mode == ImportCreate && plan.Provider == ProviderOpenCode
+	return plan.Mode == ImportCreate && (plan.Provider == ProviderOpenCode || plan.Provider == ProviderMiMo)
 }
 
 func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
@@ -281,7 +281,7 @@ func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, err
 			// The local file writers only report failure before their atomic
 			// rename commits a native session. OpenCode delegates to an external
 			// CLI, whose failure may follow a successful database write.
-			if plan.Provider != ProviderOpenCode {
+			if plan.Provider != ProviderOpenCode && plan.Provider != ProviderMiMo {
 				err = fmt.Errorf("%w: %w", errImportNotStarted, err)
 			}
 			return ImportReceipt{}, fmt.Errorf("create %s session from import: %w", DisplayName(plan.Provider), err)

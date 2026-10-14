@@ -282,7 +282,7 @@ func printNoSessions(stderr io.Writer) int {
 		}
 		_, _ = fmt.Fprintln(stderr, line)
 	}
-	_, _ = fmt.Fprintln(stderr, "start a conversation with a supported agent (codex, claude, gemini, opencode, jcode, pi), then run showagent again")
+	_, _ = fmt.Fprintln(stderr, "start a conversation with a supported agent (codex, claude, gemini, opencode, mimocode, jcode, pi), then run showagent again")
 	return 1
 }
 
@@ -563,7 +563,7 @@ func usageError(stderr io.Writer, message string) int {
 }
 
 func printHelp(w io.Writer) {
-	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, jcode, and Pi sessions.
+	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, MiMoCode, jcode, and Pi sessions.
 
 Usage:
   showagent                          open the interactive session picker
@@ -616,6 +616,8 @@ Session locations:
   jcode     ~/.jcode/sessions             (override with JCODE_HOME)
   opencode  ~/.local/share/opencode       (override with OPENCODE_DATA_HOME;
                                            read via the opencode CLI)
+  mimocode  ~/.local/share/mimocode       (override with MIMOCODE_HOME;
+                                           read via the mimo CLI)
   gemini    ~/.gemini/tmp                 (override with GEMINI_CLI_HOME)
   pi        ~/.pi/agent/sessions          (override with PI_CODING_AGENT_DIR or
                                            PI_CODING_AGENT_SESSION_DIR)

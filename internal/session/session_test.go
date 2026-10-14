@@ -15,6 +15,7 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", claudeHome)
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
@@ -1007,14 +1008,15 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("CLAUDE_HOME", filepath.Join(root, "claude"))
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
+	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 7 {
-		t.Fatalf("targets = %d, want 7", len(targets))
+	if len(targets) != 8 {
+		t.Fatalf("targets = %d, want 8", len(targets))
 	}
 	want := []ScanTarget{
 		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "sessions"), EnvVar: "CODEX_HOME"},
@@ -1022,6 +1024,7 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 		{Provider: ProviderClaude, Path: filepath.Join(root, "claude", "projects"), EnvVar: "CLAUDE_HOME"},
 		{Provider: ProviderJCode, Path: filepath.Join(root, "jcode", "sessions"), EnvVar: "JCODE_HOME"},
 		{Provider: ProviderOpenCode, Path: filepath.Join(root, "empty-opencode"), EnvVar: "OPENCODE_DATA_HOME"},
+		{Provider: ProviderMiMo, Path: filepath.Join(root, "empty-mimocode", "data"), EnvVar: "MIMOCODE_HOME"},
 		{Provider: ProviderGemini, Path: filepath.Join(root, "empty-gemini", ".gemini", "tmp"), EnvVar: "GEMINI_CLI_HOME"},
 		{Provider: ProviderPi, Path: filepath.Join(root, "pi", "sessions"), EnvVar: "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
 	}
