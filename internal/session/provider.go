@@ -47,6 +47,7 @@ var registry = []ProviderImpl{
 	opencodeProvider{mimo: true},
 	geminiProvider{},
 	piProvider{},
+	antigravityProvider{},
 }
 
 func providerFor(name Provider) (ProviderImpl, bool) {
@@ -94,6 +95,18 @@ func DisplayName(provider Provider) string {
 		return impl.DisplayName()
 	}
 	return string(provider)
+}
+
+// WritesThroughCLI reports whether provider creates converted or imported
+// sessions by running its own CLI, which must then be on PATH. A failure of
+// such a writer may follow a successful write inside the provider's store.
+func WritesThroughCLI(provider Provider) bool {
+	switch provider {
+	case ProviderOpenCode, ProviderMiMo, ProviderAntigravity:
+		return true
+	default:
+		return false
+	}
 }
 
 // CompoundAgents lists the providers able to run a compound pass (resume a

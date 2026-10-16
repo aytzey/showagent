@@ -35,6 +35,7 @@ func setFixtureHomes(t *testing.T) (codexHome, claudeHome string) {
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 

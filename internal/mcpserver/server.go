@@ -66,7 +66,7 @@ func New(version string, options ...Options) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_sessions",
-		Description: "List local AI coding-agent sessions (Codex, Claude Code, Gemini CLI, OpenCode, MiMoCode, jcode, Pi) newest first. " +
+		Description: "List local AI coding-agent sessions (Codex, Claude Code, Gemini CLI, Antigravity, OpenCode, MiMoCode, jcode, Pi) newest first. " +
 			"Filter by provider, workspace path substring, or free-text query over workspace and first/last user message. " +
 			"Use this to find past work on a topic before pulling a session in with get_transcript or convert_session.",
 		Annotations: readOnly,
@@ -98,7 +98,8 @@ func New(version string, options ...Options) *mcp.Server {
 			Name: "convert_session",
 			Description: "Rewrite a session into another agent's native format so that agent can resume it — e.g. continue a Codex conversation in Claude Code. " +
 				"Writes a brand-new session (the original is never modified) and returns its id, file, and resume command. " +
-				"Nothing is executed; run the returned command yourself to continue there.",
+				"No agent is resumed for you; run the returned command yourself to continue there. " +
+				"Converting to antigravity runs the local agy CLI, which spends one short model turn creating the conversation.",
 			Annotations: additive,
 		}, convertSession)
 	}
@@ -127,7 +128,7 @@ func Run(ctx context.Context, version string, options ...Options) error {
 }
 
 type listSessionsArgs struct {
-	Provider  string `json:"provider,omitempty" jsonschema:"only return sessions of this agent; one of the provider ids reported in results (codex, claude, gemini, opencode, mimocode, jcode, pi)"`
+	Provider  string `json:"provider,omitempty" jsonschema:"only return sessions of this agent; one of the provider ids reported in results (codex, claude, gemini, antigravity, opencode, mimocode, jcode, pi)"`
 	Workspace string `json:"workspace,omitempty" jsonschema:"case-insensitive substring the session's workspace path must contain"`
 	Query     string `json:"query,omitempty" jsonschema:"case-insensitive free text matched against the workspace path and the first/last user message"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"maximum sessions to return, newest first (default 25, max 100)"`
@@ -308,7 +309,7 @@ func branchSession(_ context.Context, _ *mcp.CallToolRequest, args sessionIDArgs
 
 type convertSessionArgs struct {
 	ID     string `json:"id" jsonschema:"session id from list_sessions, or 'latest' for the most recent session"`
-	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, opencode, mimocode, jcode, or pi"`
+	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, antigravity, opencode, mimocode, jcode, or pi"`
 }
 
 func convertSession(_ context.Context, _ *mcp.CallToolRequest, args convertSessionArgs) (*mcp.CallToolResult, newSessionResult, error) {

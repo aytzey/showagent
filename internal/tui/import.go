@@ -709,7 +709,7 @@ func (m model) importCreateView() []string {
 		w.cwdInput.View(),
 		m.render.theme.muted.Render("The agent works here; conversation data stays in its native session storage."),
 	}
-	if (provider == session.ProviderOpenCode || provider == session.ProviderMiMo) && !session.ProviderCommandAvailable(provider) {
+	if session.WritesThroughCLI(provider) && !session.ProviderCommandAvailable(provider) {
 		lines = append(lines, m.render.theme.muted.Render("Creating this provider's session requires its CLI in PATH."))
 	}
 	return append(lines, "", m.render.theme.hint.Render("enter review destination · tab agent · alt+← back · esc cancel"))

@@ -563,7 +563,7 @@ func usageError(stderr io.Writer, message string) int {
 }
 
 func printHelp(w io.Writer) {
-	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, OpenCode, MiMoCode, jcode, and Pi sessions.
+	_, _ = fmt.Fprintf(w, `showagent — browse, resume, branch, and hand off local Codex, Claude Code, Gemini CLI, Antigravity, OpenCode, MiMoCode, jcode, and Pi sessions.
 
 Usage:
   showagent                          open the interactive session picker
@@ -621,6 +621,9 @@ Session locations:
   gemini    ~/.gemini/tmp                 (override with GEMINI_CLI_HOME)
   pi        ~/.pi/agent/sessions          (override with PI_CODING_AGENT_DIR or
                                            PI_CODING_AGENT_SESSION_DIR)
+  antigravity ~/.gemini/antigravity-cli   (override with ANTIGRAVITY_HOME; agy CLI
+                                           conversations, plus Antigravity IDE
+                                           conversations as hand-off sources)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
 `, strings.Join(session.ProviderNames(), ", "))

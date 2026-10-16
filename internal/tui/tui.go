@@ -1240,7 +1240,7 @@ func (m model) providerWord(p session.Provider) string {
 // claiming a bypass the provider's CLI does not have.
 func yoloEffect(provider session.Provider) string {
 	switch provider {
-	case session.ProviderClaude:
+	case session.ProviderClaude, session.ProviderAntigravity:
 		return "skips permission prompts"
 	case session.ProviderJCode, session.ProviderPi:
 		return fmt.Sprintf("no extra %s flag", provider)
