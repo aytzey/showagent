@@ -552,6 +552,15 @@ func TestImportTextDryRunDoesNotWriteSession(t *testing.T) {
 	}
 }
 
+func TestImportWarningDisclosesAntigravityModelTurn(t *testing.T) {
+	if got := importWarning(session.ImportCreate, session.ProviderAntigravity); !strings.Contains(got, "model turn") {
+		t.Fatalf("antigravity import warning = %q", got)
+	}
+	if got := importWarning(session.ImportCreate, session.ProviderClaude); strings.Contains(got, "model turn") {
+		t.Fatalf("claude import warning = %q", got)
+	}
+}
+
 func TestImportTextCreatesNativeSession(t *testing.T) {
 	setFixtureHomes(t)
 	workspace := t.TempDir()

@@ -494,3 +494,22 @@ func TestConvertRoundTripsThroughAntigravity(t *testing.T) {
 		t.Fatalf("command = %q", name)
 	}
 }
+
+func TestAntigravityPreviewDisclosesModelTurn(t *testing.T) {
+	antigravityFixtureHome(t)
+	source := codexSourceRow(t, t.TempDir())
+	preview, err := PreviewConversion(source, ProviderAntigravity, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(preview.Warnings, "; "), "model turn") {
+		t.Fatalf("preview warnings = %#v, want the agy model-turn disclosure", preview.Warnings)
+	}
+	local, err := PreviewConversion(source, ProviderClaude, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(local.Warnings, "; "), "model turn") {
+		t.Fatalf("local target must not claim a model turn: %#v", local.Warnings)
+	}
+}

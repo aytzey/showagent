@@ -109,6 +109,17 @@ func WritesThroughCLI(provider Provider) bool {
 	}
 }
 
+// ModelTurnNotice is the disclosure for writers that cannot create a session
+// without a model call, or "" when writing provider's sessions stays local.
+// Previews show it before anything is sent, so it stays short enough for the
+// picker's boxes.
+func ModelTurnNotice(provider Provider) string {
+	if provider == ProviderAntigravity {
+		return "agy sends the conversation to its model (one model turn)"
+	}
+	return ""
+}
+
 // CompoundAgents lists the providers able to run a compound pass (resume a
 // session with an injected prompt), in registry order.
 func CompoundAgents() []Provider {

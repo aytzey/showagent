@@ -74,6 +74,9 @@ func PreviewConversion(row Row, target Provider, options HandoffOptions) (Conver
 	if strings.TrimSpace(row.resumeCWD()) == "" || strings.HasPrefix(strings.TrimSpace(row.resumeCWD()), "(") {
 		preview.Warnings = append(preview.Warnings, "source workspace is unknown; some target providers may refuse conversion")
 	}
+	if notice := ModelTurnNotice(target); notice != "" {
+		preview.Warnings = append(preview.Warnings, notice)
+	}
 	if WritesThroughCLI(target) && !ProviderCommandAvailable(target) {
 		preview.Warnings = append(preview.Warnings, providerCommand(target)+" CLI is not on PATH; writing the conversion will fail until it is installed")
 	}

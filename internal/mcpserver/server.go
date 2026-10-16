@@ -61,8 +61,11 @@ func New(version string, options ...Options) *mcp.Server {
 
 	falseHint := false
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &falseHint}
-	// branch/convert only ever add new files; originals are never touched.
-	additive := &mcp.ToolAnnotations{DestructiveHint: &falseHint, OpenWorldHint: &falseHint}
+	// branch/convert only ever add new sessions; originals are never touched.
+	// They are open-world because an Antigravity target creates its session
+	// through agy, which sends the conversation to its model provider.
+	trueHint := true
+	additive := &mcp.ToolAnnotations{DestructiveHint: &falseHint, OpenWorldHint: &trueHint}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_sessions",
@@ -90,7 +93,8 @@ func New(version string, options ...Options) *mcp.Server {
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "branch_session",
 			Description: "Fork a session: write its transferable user/assistant turns as a new native session of the same agent, leaving the original untouched. " +
-				"Returns the new session id, its file, and the exact shell command that resumes the copy (never executed by this server).",
+				"Returns the new session id, its file, and the exact shell command that resumes the copy (never executed by this server). " +
+				"Branching an antigravity session runs the local agy CLI, which spends one short model turn creating the copy.",
 			Annotations: additive,
 		}, branchSession)
 

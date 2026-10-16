@@ -280,7 +280,11 @@ func importWarning(mode session.ImportMode, provider session.Provider) string {
 	if mode == session.ImportAppendContext && provider == session.ProviderCodex {
 		return "Saved to this session's context. Imported messages may not appear as chat bubbles in Codex."
 	}
-	return "Text only. Attachments, tool state, permissions, and files are not imported."
+	warning := "Text only. Attachments, tool state, permissions, and files are not imported."
+	if notice := session.ModelTurnNotice(provider); notice != "" {
+		warning += " Unlike local targets, " + notice + "."
+	}
+	return warning
 }
 
 func importPreviewBoundary(message importer.Message) string {

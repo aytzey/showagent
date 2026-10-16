@@ -392,9 +392,13 @@ also carry GitHub build provenance — verify with
 Conversion extracts the user and assistant turns from the source transcript
 and writes a brand-new session in the target agent's native format (for
 OpenCode and MiMoCode via their `import` command, for Antigravity via `agy`
-itself), so the target's own resume command picks it up. Code blocks, newlines, and indentation are preserved. The original session
-is never modified, and files are private (`0600`) and written atomically — a
-crash cannot leave a half-written session in another tool's store.
+itself), so the target's own resume command picks it up. Code blocks,
+newlines, and indentation are preserved, and the original session is never
+modified. For file-backed targets, showagent writes the new file itself:
+private (`0600`) and atomically, so a crash cannot leave a half-written
+session in another tool's store. CLI-backed targets (OpenCode, MiMoCode,
+Antigravity) write through their own CLI, so their storage guarantees are
+that CLI's.
 
 Trust is explicit: in the TUI, the first `x` shows the hand-off preview and the
 second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
