@@ -28,6 +28,7 @@ consumer Google account. Sample conversations only; no project content.
 | Discovery of `agy` conversations | Passed | Interactive and print-mode conversations listed with their workspace (read from `jetbox_summaries_proto.pb`), first/latest prompt and time; `<USER_REQUEST>` wrappers and injected metadata stripped from previews |
 | Claude Code → Antigravity conversion | Passed | 4-turn session (fenced Go code, Unicode) converted through `agy` print mode in 15 s; the conversation acknowledged the history without tool calls |
 | Antigravity model continuation | Passed | `agy --conversation <id> -p` answered `OSPREY-4417 \| Türkçe önbellek`, two facts present only in the Claude source |
+| Codex → Antigravity model continuation | Passed | A Codex session converted the same way; the `agy` conversation answered the codename stated only in Codex |
 | Antigravity → Claude Code model continuation | Passed | An `agy` conversation converted to Claude Code; `claude -p --resume` recalled the codeword that existed only in the `agy` conversation |
 | Large hand-off over stdin | Passed | A 162 KB stream-json message was accepted (65k input tokens) |
 | Compound pass | Passed | `agy --conversation <id> --prompt-interactive <prompt>` reopened the conversation and submitted the prompt |

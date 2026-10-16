@@ -586,12 +586,26 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 }
 
 func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), opencodeTimeout)
+	output, err := runProviderCLI(opencodeTimeout, binary, dir, nil, args...)
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// runProviderCLI runs a provider CLI in dir (when set) with optional stdin
+// and a timeout. It returns whatever stdout was captured even when the
+// command fails, so callers can read a structured error the CLI printed.
+func runProviderCLI(timeout time.Duration, binary, dir string, stdin []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	command := exec.CommandContext(ctx, binary, args...)
 	if dir != "" {
 		command.Dir = dir
+	}
+	if stdin != nil {
+		command.Stdin = bytes.NewReader(stdin)
 	}
 
 	stdoutPipe, err := command.StdoutPipe()
@@ -632,7 +646,7 @@ func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
-		return nil, fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
+		return stdout.Bytes(), fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
 	}
 	return stdout.Bytes(), nil
 }

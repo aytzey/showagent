@@ -2,13 +2,11 @@ package session
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -525,17 +523,17 @@ func writeAntigravityConverted(source Row, turns []Turn) (Row, error) {
 		return Row{}, fmt.Errorf("hand-off is larger than %d MiB; convert fewer turns", scanBufferMax/(1024*1024))
 	}
 
-	output, err := runAntigravityCLI(dir, append(line, '\n'),
+	output, runErr := runProviderCLI(antigravityConvertTimeout, "agy", dir, append(line, '\n'),
 		"--input-format", "stream-json", "--output-format", "stream-json",
 		"--disable-slash-commands", "--print=")
-	id, resultErr := antigravityResult(output)
-	if resultErr != nil {
-		if err != nil {
-			return Row{}, err
-		}
-		return Row{}, resultErr
+	// agy exits non-zero on a failed turn but still reports why in its result
+	// event, which is the clearer error; fall back to the exit status only when
+	// no result arrived at all.
+	id, err := antigravityResult(output)
+	if errors.Is(err, errNoAntigravityResult) && runErr != nil {
+		return Row{}, runErr
 	}
-	if err != nil && id == "" {
+	if err != nil {
 		return Row{}, err
 	}
 
@@ -581,6 +579,8 @@ func antigravityHandoffPrompt(source Row, turns []Turn) string {
 	return prompt.String()
 }
 
+var errNoAntigravityResult = errors.New("agy finished without reporting a conversation")
+
 // antigravityResult reads the terminal result event of agy's stream-json
 // output: the conversation id, or the error agy reported.
 func antigravityResult(output []byte) (string, error) {
@@ -604,36 +604,13 @@ func antigravityResult(output []byte) (string, error) {
 			}
 			return "", fmt.Errorf("agy could not create the conversation: %s", detail)
 		}
-		if !sessionIDPattern.MatchString(result.ConversationID) {
+		// The id becomes a path component, so it must be exactly a UUID.
+		if sessionIDPattern.FindString(result.ConversationID) != result.ConversationID || result.ConversationID == "" {
 			return "", fmt.Errorf("agy reported an unexpected conversation id %q", result.ConversationID)
 		}
 		return result.ConversationID, nil
 	}
-	return "", errors.New("agy finished without reporting a conversation")
-}
-
-// runAntigravityCLI runs agy in dir with input on stdin and returns its
-// stdout, bounded like the other provider CLIs.
-func runAntigravityCLI(dir string, input []byte, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), antigravityConvertTimeout)
-	defer cancel()
-
-	command := exec.CommandContext(ctx, "agy", args...)
-	command.Dir = dir
-	command.Stdin = bytes.NewReader(input)
-	var stdout, stderr cappedBuffer
-	stdout.max = maxOpenCodeOutput
-	stderr.max = maxOpenCodeError
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		return stdout.Bytes(), fmt.Errorf("agy %s: %w: %s", strings.Join(args, " "), err, detail)
-	}
-	return stdout.Bytes(), nil
+	return "", errNoAntigravityResult
 }
 
 func fileExists(path string) bool {

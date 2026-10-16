@@ -309,6 +309,11 @@ func withFakeAgy(t *testing.T, home, id, resultJSON string) string {
 	t.Helper()
 	bin := t.TempDir()
 	record := filepath.Join(bin, "record")
+	// Like agy, exit non-zero when the turn failed.
+	exitCode := "0"
+	if strings.Contains(resultJSON, `"ERROR"`) {
+		exitCode = "1"
+	}
 	transcript := filepath.Join(home, "antigravity-cli", "brain", id, ".system_generated", "logs", "transcript_full.jsonl")
 	script := `#!/bin/sh
 export PATH=/usr/bin:/bin
@@ -319,6 +324,7 @@ mkdir -p "` + filepath.Dir(transcript) + `"
 printf '%s\n' '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-10-01T09:00:00Z","content":"<USER_REQUEST>\nhand-off\n</USER_REQUEST>"}' '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-01T09:00:01Z","content":"ok"}' > "` + transcript + `"
 echo '{"event":"init","conversation_id":"` + id + `"}'
 echo '` + resultJSON + `'
+exit ` + exitCode + `
 `
 	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -415,9 +421,11 @@ func TestConvertIntoAntigravityReportsAgyErrors(t *testing.T) {
 		t.Fatalf("missing result err = %v", err)
 	}
 
-	withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"../../etc","status":"SUCCESS"}}`)
-	if _, err := writeAntigravityConverted(Row{CWD: workspace}, turns); err == nil || !strings.Contains(err.Error(), "unexpected conversation id") {
-		t.Fatalf("bad id err = %v", err)
+	for _, bad := range []string{"../../etc", "../" + id, id + "/x"} {
+		withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"`+bad+`","status":"SUCCESS"}}`)
+		if _, err := writeAntigravityConverted(Row{CWD: workspace}, turns); err == nil || !strings.Contains(err.Error(), "unexpected conversation id") {
+			t.Fatalf("bad id %q err = %v", bad, err)
+		}
 	}
 
 	if _, err := writeAntigravityConverted(Row{CWD: "(unknown cwd)"}, turns); err == nil || !strings.Contains(err.Error(), "known workspace") {
