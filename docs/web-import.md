@@ -2,7 +2,7 @@
 
 showagent can turn an accessible ChatGPT or Claude share into a native coding-agent session. You can also paste or pipe conversation text, which keeps private conversations private.
 
-An import carries the visible user and assistant text. It does not download attachments, restore files, copy tool calls, transfer permissions, or start a model response. The one exception is `--to antigravity`: Antigravity sessions are created by your own `agy` CLI, which sends the imported conversation to its model provider and runs one acknowledgement turn. The preview says so before anything is sent.
+An import carries the visible user and assistant text. It does not download attachments, restore files, copy tool calls, transfer permissions, or start a model response.
 
 ## Preview and create a session
 
@@ -98,7 +98,6 @@ goes back without capturing letters from the path.
 
 ## Privacy and limits
 
-- Importing into Antigravity sends the conversation to `agy` and its model provider for one acknowledgement turn; every other target writes locally without a model call.
 - Pasted/file input is processed locally. Link input connects directly to the supported share host; there is no scraping proxy or showagent account.
 - Share URLs can carry access tokens. showagent does not put the URL into the imported transcript or normal success output.
 - Import receipts live in the user state directory (override with `SHOWAGENT_STATE_DIR`) and contain hashes, counts, target identity, and native revisions, but no transcript text, source URL, or project path.

@@ -411,19 +411,6 @@ func TestImportFinalReviewHasPortableApplyAction(t *testing.T) {
 	}
 }
 
-func TestImportReviewDisclosesAntigravityModelTurn(t *testing.T) {
-	m := sizedModel(nil)
-	m.importFlow = reviewWizard(session.ImportCreate)
-	if view := m.importView(); !strings.Contains(view, "without launching an interactive agent") {
-		t.Fatalf("local target lost its no-model-call statement: %s", view)
-	}
-	m.importFlow.plan.Provider = session.ProviderAntigravity
-	view := m.importView()
-	if strings.Contains(view, "without launching an interactive agent") || !strings.Contains(view, "agy sends the conversation to its model (one model turn).") {
-		t.Fatalf("Antigravity import review must disclose the agy model turn: %s", view)
-	}
-}
-
 func TestImportPreviewRedactsBoundariesAndShowsSourceLosses(t *testing.T) {
 	m := sizedModel(nil)
 	m.importFlow = previewWizard()

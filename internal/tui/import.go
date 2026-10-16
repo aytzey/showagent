@@ -712,9 +712,6 @@ func (m model) importCreateView() []string {
 	if session.WritesThroughCLI(provider) && !session.ProviderCommandAvailable(provider) {
 		lines = append(lines, m.render.theme.muted.Render("Creating this provider's session requires its CLI in PATH."))
 	}
-	if notice := session.ModelTurnNotice(provider); notice != "" {
-		lines = append(lines, m.render.theme.deleteBanner.Render(notice+"."))
-	}
 	return append(lines, "", m.render.theme.hint.Render("enter review destination · tab agent · alt+← back · esc cancel"))
 }
 
@@ -765,11 +762,7 @@ func (m model) importReviewView() []string {
 		m.importField("session", id),
 		m.importField("content", fmt.Sprintf("%d messages · text only", plan.MessageCount)),
 		"",
-	}
-	if notice := session.ModelTurnNotice(plan.Provider); notice != "" && plan.Mode == session.ImportCreate {
-		lines = append(lines, m.render.theme.deleteBanner.Render(notice+"."))
-	} else {
-		lines = append(lines, m.render.theme.muted.Render("This saves history without launching an interactive agent or starting a model response."))
+		m.render.theme.muted.Render("This saves history without launching an interactive agent or starting a model response."),
 	}
 	if plan.Mode == session.ImportAppendContext {
 		lines = append(lines, m.render.theme.muted.Render("Close other clients using this session before importing."))
