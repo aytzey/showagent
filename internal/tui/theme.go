@@ -61,12 +61,13 @@ type badgeColors struct {
 // providerAccents assigns each known provider its brand-ish accent. Providers
 // missing here (future registry additions) fall back to theme.chip.
 var providerAccents = map[session.Provider]badgeColors{
-	session.ProviderCodex:    {lightBg: "#0969DA", darkBg: "#1F6FEB", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
-	session.ProviderClaude:   {lightBg: "#8250DF", darkBg: "#D2A8FF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
-	session.ProviderJCode:    {lightBg: "#1A7F37", darkBg: "#238636", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
-	session.ProviderOpenCode: {lightBg: "#1B7C8C", darkBg: "#39C5CF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
-	session.ProviderMiMo:     {lightBg: "#C95718", darkBg: "#FF8A45", lightFg: "#FFFFFF", darkFg: "#0D1117"},
-	session.ProviderGemini:   {lightBg: "#B04A17", darkBg: "#F0883E", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderCodex:       {lightBg: "#0969DA", darkBg: "#1F6FEB", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
+	session.ProviderClaude:      {lightBg: "#8250DF", darkBg: "#D2A8FF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderJCode:       {lightBg: "#1A7F37", darkBg: "#238636", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
+	session.ProviderOpenCode:    {lightBg: "#1B7C8C", darkBg: "#39C5CF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderMiMo:        {lightBg: "#C95718", darkBg: "#FF8A45", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderGemini:      {lightBg: "#B04A17", darkBg: "#F0883E", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderAntigravity: {lightBg: "#BF3989", darkBg: "#F778BA", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 }
 
 // providerBadges builds one badge style per registered provider, so every

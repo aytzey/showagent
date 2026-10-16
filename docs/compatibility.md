@@ -1,7 +1,7 @@
 # Compatibility evidence
 
-showagent implements adapters for Codex, Claude Code, Gemini CLI, OpenCode,
-MiMoCode, jcode, and Pi. An implemented adapter is not a promise that every released
+showagent implements adapters for Codex, Claude Code, Gemini CLI, Antigravity,
+OpenCode, MiMoCode, jcode, and Pi. An implemented adapter is not a promise that every released
 CLI version, platform, and transfer direction has passed a native-resume
 test. This page distinguishes the checks we can report.
 
@@ -16,6 +16,41 @@ test. This page distinguishes the checks we can report.
 | Model continuation | A target model uses a fact supplied only in the source conversation | Complete tool/runtime-state portability or compatibility with other versions |
 
 ## Recorded checks
+
+### Local Antigravity CLI build, 2026-10-16
+
+On Linux, an unreleased showagent build from the `feat/antigravity` branch
+was checked against Antigravity CLI (`agy`) **1.4.0**, signed in with a
+consumer Google account. Sample conversations only; no project content.
+
+| Check | Result | Scope |
+|---|---|---|
+| Discovery of `agy` conversations | Passed | Interactive and print-mode conversations listed with their workspace (read from `jetbox_summaries_proto.pb`), first/latest prompt and time; `<USER_REQUEST>` wrappers and injected metadata stripped from previews |
+| Native resume | Passed | `agy --conversation <id> -p` reopened a listed conversation and recalled its earlier content |
+| Antigravity → Claude Code model continuation | Passed | An `agy` conversation converted to Claude Code; `claude -p --resume` recalled the codeword that existed only in the `agy` conversation |
+| Compound pass | Passed | `agy --conversation <id> --prompt-interactive <prompt>` reopened the conversation and submitted the prompt |
+| Antigravity IDE conversations | Fixtures only | The local IDE data predates the transcript mirror; IDE rows are covered by source tests, not by a real IDE install |
+| Converting into Antigravity | Withheld | See below |
+
+Antigravity's step databases (`conversations/<id>.db`) and its SQLite summary
+store were never opened. Delete stays with `agy`'s own `/resume` picker.
+
+Converting *into* Antigravity was prototyped and withheld. `agy` can only
+create a conversation by running a model turn (`agy -p`, here over stream-json
+stdin). The prototype passed model-continuation checks from Claude Code and
+Codex. In that turn, though, `write_to_file` ran without approval, even
+for a path outside the workspace, when the handed-off text asked for it; only
+shell commands were auto-denied. `--mode plan` did not prevent the write. A
+deny-all `PreToolUse` hook or a tool-less custom agent did block every tool.
+But the hook only loads from the workspace's `.agents/` directory, and the
+conversation keeps the custom agent on every later resume. So neither is
+usable without editing the user's project or leaving the conversation without
+tools. showagent therefore offers Antigravity as a hand-off source until `agy`
+provides an import path that does not need a model turn.
+
+The same build also found that a symlinked `~/.claude/projects` (used on this
+machine to share stores) had hidden every Claude Code session from discovery;
+the walk now follows a symlinked store root.
 
 ### Local MiMoCode build, 2026-09-26
 

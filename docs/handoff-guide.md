@@ -103,9 +103,9 @@ Only targets with a CLI on `PATH` appear in the picker.
 | | Any single session record over 16 MiB, such as a tool result with inline screenshots |
 
 For file-backed agents, showagent writes a new private file atomically.
-OpenCode imports use its own CLI. Neither conversion nor branching modifies
-the original session. Branching applies the same transferable-message
-projection in the source agent; it is not a byte-for-byte session backup.
+OpenCode and MiMoCode create the session through their own CLI. Neither conversion nor branching modifies the original session.
+Branching applies the same transferable-message projection in the source
+agent; it is not a byte-for-byte session backup.
 
 Conversion writes the transferable conversation text to another local agent
 store. Unlike the redacted `transcript` export, it is not a secret-redacted
@@ -121,11 +121,28 @@ ID with the same preview/write sequence:
 showagent convert SOURCE_SESSION_ID --to codex --scope all --dry-run
 ```
 
-Other target identifiers are `gemini`, `opencode`, `jcode`, and `pi`.
-File-backed targets can be prepared by the CLI before their agent is
-installed; resuming still requires that agent. OpenCode requires its CLI
-even when writing a converted session, because the import goes through
-OpenCode itself.
+Other target identifiers are `gemini`, `opencode`, `mimocode`, `jcode`,
+and `pi`. File-backed targets can be prepared by the CLI
+before their agent is installed; resuming still requires that agent.
+OpenCode and MiMoCode require their CLI even when writing a converted
+session, because the import goes through the agent itself.
+
+### Antigravity
+
+Antigravity is a hand-off source. Sessions from the `agy` terminal agent
+appear in the picker with their workspace, and `enter` reopens one with
+`agy --conversation <id>`. Antigravity IDE conversations appear as hand-off
+sources. Convert either kind into Claude Code, Codex, Gemini CLI, or any
+other supported target:
+
+```sh
+showagent convert ANTIGRAVITY_CONVERSATION_ID --to claude --dry-run
+```
+
+Converting *into* Antigravity is not available yet. `agy` has no way to
+create a conversation without running a model turn, and in that turn the
+model can write files if the handed-off text asks it to. Delete Antigravity
+conversations from `agy`'s own `/resume` picker (`f4`).
 
 ## If something does not work
 

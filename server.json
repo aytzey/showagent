@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.aytzey/showagent",
   "title": "showagent",
-  "description": "Search, resume and convert AI coding sessions (Claude Code, Codex, Gemini, OpenCode, Pi) over MCP.",
+  "description": "Search, resume and hand off coding-agent sessions: Claude Code, Codex, Gemini, Antigravity and more.",
   "repository": {
     "url": "https://github.com/aytzey/showagent",
     "source": "github"

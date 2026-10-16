@@ -17,6 +17,12 @@ import (
 func TestImportCapabilitiesExposeCreateAndProviderSpecificAppend(t *testing.T) {
 	for _, provider := range ProviderOrder() {
 		capability := ImportCapabilities(provider)
+		if !AcceptsConversion(provider) {
+			if capability.CanCreate || capability.CanAppendContext {
+				t.Fatalf("source-only %s capability = %#v", provider, capability)
+			}
+			continue
+		}
 		if !capability.CanCreate {
 			t.Fatalf("%s create capability = false", provider)
 		}

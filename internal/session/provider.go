@@ -47,6 +47,7 @@ var registry = []ProviderImpl{
 	opencodeProvider{mimo: true},
 	geminiProvider{},
 	piProvider{},
+	antigravityProvider{},
 }
 
 func providerFor(name Provider) (ProviderImpl, bool) {
@@ -87,6 +88,18 @@ func ProviderNames() []string {
 	return names
 }
 
+// ConversionTargetNames returns the provider ids that accept conversions, in
+// registry order, for help text and target listings.
+func ConversionTargetNames() []string {
+	var names []string
+	for _, impl := range registry {
+		if AcceptsConversion(impl.Name()) {
+			names = append(names, string(impl.Name()))
+		}
+	}
+	return names
+}
+
 // DisplayName is the human-facing name for provider ("Codex"). Unknown
 // providers fall back to their raw name.
 func DisplayName(provider Provider) string {
@@ -96,6 +109,43 @@ func DisplayName(provider Provider) string {
 	return string(provider)
 }
 
+// WritesThroughCLI reports whether provider creates converted or imported
+// sessions by running its own CLI, which must then be on PATH. A failure of
+// such a writer may follow a successful write inside the provider's store.
+func WritesThroughCLI(provider Provider) bool {
+	switch provider {
+	case ProviderOpenCode, ProviderMiMo:
+		return true
+	default:
+		return false
+	}
+}
+
+// sourceOnlyProvider is implemented by providers whose sessions showagent can
+// list, resume, and hand off, but cannot create; the error says why.
+type sourceOnlyProvider interface {
+	sourceOnlyReason() error
+}
+
+// AcceptsConversion reports whether showagent can write new sessions for
+// provider, as a conversion, branch, or import target.
+func AcceptsConversion(provider Provider) bool {
+	return conversionTargetError(provider) == nil
+}
+
+// conversionTargetError explains why provider cannot be written, or returns
+// nil when it can.
+func conversionTargetError(provider Provider) error {
+	impl, ok := providerFor(provider)
+	if !ok {
+		return fmt.Errorf("unsupported target provider %q", provider)
+	}
+	if sourceOnly, ok := impl.(sourceOnlyProvider); ok {
+		return sourceOnly.sourceOnlyReason()
+	}
+	return nil
+}
+
 // CompoundAgents lists the providers able to run a compound pass (resume a
 // session with an injected prompt), in registry order.
 func CompoundAgents() []Provider {
@@ -103,6 +153,21 @@ func CompoundAgents() []Provider {
 	for _, impl := range registry {
 		if impl.CompoundArgs(Row{Provider: impl.Name(), ID: "probe"}, ResumeOptions{}, "probe") != nil {
 			agents = append(agents, impl.Name())
+		}
+	}
+	return agents
+}
+
+// CompoundAgentsFor lists the compound-capable providers that can run a pass
+// on row: its own provider when row is natively resumable, plus every other
+// one that can receive the conversion the pass starts with.
+func CompoundAgentsFor(row Row) []Provider {
+	var agents []Provider
+	for _, agent := range CompoundAgents() {
+		// Its own agent runs the pass natively, which a hand-off-only row
+		// cannot do; any other agent needs the conversion to be writable.
+		if (agent == row.Provider && !row.HandoffOnly) || (agent != row.Provider && AcceptsConversion(agent)) {
+			agents = append(agents, agent)
 		}
 	}
 	return agents

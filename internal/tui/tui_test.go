@@ -329,6 +329,32 @@ func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
 	}
 }
 
+// TestAntigravityIsNotAHandoffTarget: Antigravity sessions can be handed to
+// other agents, but no session is offered a conversion into Antigravity.
+func TestAntigravityIsNotAHandoffTarget(t *testing.T) {
+	withFakeCommands(t, "agy", "claude")
+	m := sizedModel(nil)
+	claudeRow := session.Row{Provider: session.ProviderClaude, ID: "c"}
+	agyRow := session.Row{Provider: session.ProviderAntigravity, ID: "a"}
+	for _, candidate := range m.handoffCandidates(claudeRow) {
+		if candidate == session.ProviderAntigravity {
+			t.Fatal("antigravity offered as a conversion target")
+		}
+	}
+	if got := m.handoffCandidates(agyRow); len(got) != 1 || got[0] != session.ProviderClaude {
+		t.Fatalf("antigravity hand-off candidates = %v, want [claude]", got)
+	}
+	// The compound chooser follows the same rule for the captured row.
+	m.compoundRow = &claudeRow
+	if strings.Contains(m.compoundView(), "Antigravity") {
+		t.Fatalf("compound chooser offers Antigravity for a Claude session:\n%s", m.compoundView())
+	}
+	m.compoundRow = &agyRow
+	if !strings.Contains(m.compoundView(), "Antigravity") {
+		t.Fatalf("compound chooser lost Antigravity for its own session:\n%s", m.compoundView())
+	}
+}
+
 func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	row := session.Row{
 		Provider:  session.ProviderClaude,
@@ -1232,6 +1258,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
@@ -1240,7 +1267,7 @@ func TestEmptyViewListsScannedDirs(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join(root, "codex", "sessions"),
 		filepath.Join(root, "claude", "projects"),
-		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "MIMOCODE_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
+		"CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "OPENCODE_DATA_HOME", "MIMOCODE_HOME", "GEMINI_CLI_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "ANTIGRAVITY_HOME",
 		"press r to rescan",
 	} {
 		if !strings.Contains(view, want) {

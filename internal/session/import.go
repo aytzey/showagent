@@ -113,11 +113,11 @@ type ImportReceipt struct {
 }
 
 // ImportCapabilities returns conservative provider support. Every registered
-// provider already has a native new-session writer. Only Codex currently has a
-// proven no-model-turn append adapter.
+// provider that accepts conversions has a native new-session writer. Only
+// Codex currently has a proven no-model-turn append adapter.
 func ImportCapabilities(provider Provider) ImportCapability {
-	if _, ok := providerFor(provider); !ok {
-		return ImportCapability{Reason: fmt.Sprintf("unsupported provider %q", provider)}
+	if err := conversionTargetError(provider); err != nil {
+		return ImportCapability{Reason: err.Error()}
 	}
 
 	capability := ImportCapability{CanCreate: true}
@@ -127,9 +127,9 @@ func ImportCapabilities(provider Provider) ImportCapability {
 		return capability
 	}
 
-	// OpenCode's create writer also goes through its CLI. The remaining local
-	// writers can create sessions without launching their provider executable.
-	capability.RequiresCLI = provider == ProviderOpenCode || provider == ProviderMiMo
+	// OpenCode and MiMoCode create sessions through their own CLI. The
+	// remaining local writers do not launch their provider executable.
+	capability.RequiresCLI = WritesThroughCLI(provider)
 	capability.Reason = fmt.Sprintf("%s has no verified native append-context API that avoids starting a model turn", DisplayName(provider))
 	return capability
 }
@@ -265,7 +265,7 @@ func ApplyImport(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
 }
 
 func importNeedsProviderCommand(plan ImportPlan) bool {
-	return plan.Mode == ImportCreate && (plan.Provider == ProviderOpenCode || plan.Provider == ProviderMiMo)
+	return plan.Mode == ImportCreate && WritesThroughCLI(plan.Provider)
 }
 
 func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, error) {
@@ -279,9 +279,9 @@ func applyImportNative(ctx context.Context, plan ImportPlan) (ImportReceipt, err
 		row, err := impl.WriteConverted(Row{CWD: plan.CWD, LaunchCWD: plan.CWD}, turns)
 		if err != nil {
 			// The local file writers only report failure before their atomic
-			// rename commits a native session. OpenCode delegates to an external
-			// CLI, whose failure may follow a successful database write.
-			if plan.Provider != ProviderOpenCode && plan.Provider != ProviderMiMo {
+			// rename commits a native session. CLI-backed writers delegate to an
+			// external CLI, whose failure may follow a successful store write.
+			if !WritesThroughCLI(plan.Provider) {
 				err = fmt.Errorf("%w: %w", errImportNotStarted, err)
 			}
 			return ImportReceipt{}, fmt.Errorf("create %s session from import: %w", DisplayName(plan.Provider), err)

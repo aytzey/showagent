@@ -139,6 +139,9 @@ func ValidateCompound(row Row, agent Provider) error {
 		if err := ValidateNativeActions(row); err != nil {
 			return err
 		}
+	} else if err := conversionTargetError(agent); err != nil {
+		// Another agent's session would have to be converted into agent first.
+		return err
 	}
 	return validateLaunch(agent, row.resumeCWD())
 }
@@ -641,10 +644,20 @@ func jsonlPaths(root string) []string {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return nil
 	}
+	// WalkDir does not descend into a root that is itself a symlink, which is
+	// how dotfile managers and shared stores often provide ~/.claude/projects.
+	// Walk the resolved directory but report paths under the configured root.
+	walkRoot := root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		walkRoot = resolved
+	}
 	var paths []string
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	_ = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
+		}
+		if relative, err := filepath.Rel(walkRoot, path); err == nil {
+			path = filepath.Join(root, relative)
 		}
 		paths = append(paths, path)
 		return nil

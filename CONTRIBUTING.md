@@ -6,7 +6,7 @@ convert operations, and destructive actions require explicit user intent.
 
 ## Development setup
 
-Requirements: Go 1.25.13 or newer.
+Requirements: Go 1.26.9 or newer (see `go.mod`).
 
 ```sh
 git clone https://github.com/aytzey/showagent.git
