@@ -200,11 +200,7 @@ func discoverAntigravity(home string) []Row {
 			if !entry.IsDir() || seen[entry.Name()] {
 				continue
 			}
-			path := antigravityTranscriptPath(filepath.Join(root, "brain", entry.Name()))
-			if path == "" {
-				continue
-			}
-			row, ok := parseAntigravity(path, entry.Name())
+			row, ok := parseAntigravity(filepath.Join(root, "brain", entry.Name()), entry.Name())
 			if !ok {
 				continue
 			}
@@ -224,115 +220,110 @@ func discoverAntigravity(home string) []Row {
 	return rows
 }
 
-// antigravityTranscriptPath picks the complete transcript when it has
-// conversation records, falling back to the truncated copy.
-func antigravityTranscriptPath(brainDir string) string {
-	logs := filepath.Join(brainDir, ".system_generated", "logs")
-	full := filepath.Join(logs, "transcript_full.jsonl")
-	short := filepath.Join(logs, "transcript.jsonl")
-	if turns, err := antigravityTranscript(full); err == nil && len(turns) > 0 {
-		return full
-	}
-	if fileExists(short) {
-		return short
-	}
-	if fileExists(full) {
-		return full
-	}
-	return ""
+// antigravityPreview is what discovery keeps from one streaming pass over a
+// transcript; tool output and other runtime records are never retained.
+type antigravityPreview struct {
+	firstUser string
+	lastUser  string
+	lastAt    time.Time
+	hasTurns  bool
 }
 
-func parseAntigravity(path string, id string) (Row, bool) {
-	records, err := loadAntigravityRecords(path)
-	if err != nil {
-		return Row{}, false
-	}
-
-	firstUser, lastUser := "", ""
-	resumable := false
-	var lastAt time.Time
-	for _, record := range records {
-		if at, ok := parseTimestamp(record.CreatedAt); ok && at.After(lastAt) {
-			lastAt = at
+func previewAntigravity(path string) (antigravityPreview, error) {
+	var preview antigravityPreview
+	err := scanAntigravityRecords(path, func(record antigravityRecord) {
+		if at, ok := parseTimestamp(record.CreatedAt); ok && at.After(preview.lastAt) {
+			preview.lastAt = at
 		}
 		switch antigravityTurnRole(record) {
 		case "user":
 			text := cleanPreviewText(antigravityUserText(record.Content))
 			if !usefulUserText(text) {
-				continue
+				return
 			}
-			resumable = true
-			if firstUser == "" {
-				firstUser = text
+			preview.hasTurns = true
+			if preview.firstUser == "" {
+				preview.firstUser = text
 			}
-			lastUser = text
+			preview.lastUser = text
 		case "assistant":
 			if strings.TrimSpace(record.Content) != "" {
-				resumable = true
+				preview.hasTurns = true
 			}
 		}
-	}
-	if !resumable {
-		return Row{}, false
-	}
-	if lastAt.IsZero() {
-		at, ok := fallbackMTime(path)
-		if !ok {
-			return Row{}, false
-		}
-		lastAt = at
-	}
-	return Row{
-		Provider:  ProviderAntigravity,
-		ID:        id,
-		LastAt:    lastAt,
-		File:      path,
-		FirstUser: firstUser,
-		LastUser:  lastUser,
-	}, true
+	})
+	return preview, err
 }
 
-func loadAntigravityRecords(path string) ([]antigravityRecord, error) {
+// parseAntigravity reads a conversation's brain directory. The complete
+// transcript wins when it has conversation records; the truncated copy is
+// the fallback. Each file is streamed once.
+func parseAntigravity(brainDir string, id string) (Row, bool) {
+	logs := filepath.Join(brainDir, ".system_generated", "logs")
+	for _, name := range []string{"transcript_full.jsonl", "transcript.jsonl"} {
+		path := filepath.Join(logs, name)
+		preview, err := previewAntigravity(path)
+		if err != nil || !preview.hasTurns {
+			continue
+		}
+		lastAt := preview.lastAt
+		if lastAt.IsZero() {
+			at, ok := fallbackMTime(path)
+			if !ok {
+				return Row{}, false
+			}
+			lastAt = at
+		}
+		return Row{
+			Provider:  ProviderAntigravity,
+			ID:        id,
+			LastAt:    lastAt,
+			File:      path,
+			FirstUser: preview.firstUser,
+			LastUser:  preview.lastUser,
+		}, true
+	}
+	return Row{}, false
+}
+
+// scanAntigravityRecords decodes a transcript one line at a time; malformed
+// lines are skipped like every other provider's readers do.
+func scanAntigravityRecords(path string, visit func(antigravityRecord)) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = file.Close() }()
 
-	var records []antigravityRecord
-	err = scanLines(file, func(line []byte) {
+	return scanLines(file, func(line []byte) {
 		var record antigravityRecord
-		if err := json.Unmarshal(line, &record); err != nil {
-			return
+		if json.Unmarshal(line, &record) == nil {
+			visit(record)
 		}
-		records = append(records, record)
 	})
-	return records, err
 }
 
 func antigravityTranscript(path string) ([]Turn, error) {
 	if path == "" {
 		return nil, errors.New("antigravity transcript file is unknown")
 	}
-	records, err := loadAntigravityRecords(path)
-	if err != nil {
-		return nil, err
-	}
 	var turns []Turn
-	for _, record := range records {
+	err := scanAntigravityRecords(path, func(record antigravityRecord) {
 		role := antigravityTurnRole(record)
 		if role == "" {
-			continue
+			return
 		}
 		text := record.Content
 		if role == "user" {
 			text = antigravityUserText(text)
 		}
 		text = cleanTranscriptText(text)
-		if !keepTranscriptTurn(role, text) {
-			continue
+		if keepTranscriptTurn(role, text) {
+			turns = append(turns, Turn{Role: role, Text: text})
 		}
-		turns = append(turns, Turn{Role: role, Text: text})
+	})
+	if err != nil {
+		return nil, err
 	}
 	return turns, nil
 }
