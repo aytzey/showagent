@@ -329,6 +329,51 @@ func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
 	}
 }
 
+// TestAntigravityBranchNeedsConfirmation: branching an Antigravity session
+// spends a model turn, so n first shows a preview and only a second n writes;
+// local agents still branch on the first press.
+func TestAntigravityBranchNeedsConfirmation(t *testing.T) {
+	row := session.Row{
+		Provider:  session.ProviderAntigravity,
+		ID:        "6f1d2c3b-0000-4000-8000-000000000040",
+		LastAt:    time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC),
+		CWD:       "/work/agy",
+		File:      "/tmp/transcript_full.jsonl",
+		FirstUser: "agy message",
+	}
+	first, cmd := sizedModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+	if cmd == nil || asModel(t, first).busy != "preview" {
+		t.Fatalf("first n must build a preview, busy = %q", asModel(t, first).busy)
+	}
+	previewed, _ := asModel(t, first).Update(conversionPreviewMsg{
+		row:     row,
+		target:  session.ProviderAntigravity,
+		branch:  true,
+		preview: session.ConversionPreview{SourceProvider: row.Provider, TargetProvider: row.Provider, Scope: "all", TransferTurns: 2, Warnings: []string{session.ModelTurnNotice(row.Provider)}},
+	})
+	pm := asModel(t, previewed)
+	if pm.pendingConvert == nil || !pm.pendingConvert.branch {
+		t.Fatalf("branch preview not armed: %#v", pm.pendingConvert)
+	}
+	if view := pm.detailView(); !strings.Contains(view, "Branch preview") || !strings.Contains(view, "model turn") {
+		t.Fatalf("branch preview must show the model-turn notice:\n%s", view)
+	}
+	// x must not confirm a preview that n armed.
+	if pressedX, _ := pm.Update(tea.KeyPressMsg(tea.Key{Code: 'x'})); asModel(t, pressedX).busy == "conversion" {
+		t.Fatal("x confirmed a branch preview")
+	}
+	confirmed, cmd := pm.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+	if cmd == nil || asModel(t, confirmed).busy != "branch" {
+		t.Fatalf("second n must branch, busy = %q", asModel(t, confirmed).busy)
+	}
+
+	local := session.Row{Provider: session.ProviderClaude, ID: "claude-1", LastAt: row.LastAt, File: "/tmp/c.jsonl", FirstUser: "claude message"}
+	immediate, cmd := sizedModel([]session.Row{local}).Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+	if cmd == nil || asModel(t, immediate).busy != "branch" {
+		t.Fatalf("local branch must start at once, busy = %q", asModel(t, immediate).busy)
+	}
+}
+
 func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	row := session.Row{
 		Provider:  session.ProviderClaude,

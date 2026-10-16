@@ -75,6 +75,7 @@ type conversionPreviewMsg struct {
 	target  session.Provider
 	options session.HandoffOptions
 	preview session.ConversionPreview
+	branch  bool
 	err     error
 }
 
@@ -83,6 +84,8 @@ type pendingConversion struct {
 	target  session.Provider
 	options session.HandoffOptions
 	preview session.ConversionPreview
+	// branch marks a preview armed by n; only n confirms it.
+	branch bool
 }
 
 type sessionsLoadedMsg struct {
@@ -586,8 +589,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Convert):
 		return m.startConvert()
 	case key.Matches(msg, m.keys.Branch):
-		m.pendingConvert = nil
-		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
+		return m.startBranch()
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
 	case key.Matches(msg, m.keys.Yolo):
@@ -691,6 +693,10 @@ func (m model) applyConversionPreview(msg conversionPreviewMsg) (tea.Model, tea.
 		target:  msg.target,
 		options: msg.options,
 		preview: msg.preview,
+		branch:  msg.branch,
+	}
+	if msg.branch {
+		return m, m.list.NewStatusMessage("preview ready · press n again to create the " + string(msg.target) + " branch")
 	}
 	return m, m.list.NewStatusMessage("preview ready · press x again to create the " + string(msg.target) + " session")
 }
@@ -713,12 +719,34 @@ func (m model) startConvert() (tea.Model, tea.Cmd) {
 		return m, m.list.NewStatusMessage("no hand-off target available")
 	}
 	if m.pendingConvert != nil &&
+		!m.pendingConvert.branch &&
 		m.pendingConvert.rowKey == rowKey(selected.row) &&
 		m.pendingConvert.target == target &&
 		m.pendingConvert.options == m.handoff {
 		return m.startMutation(m.convertRow(selected.row, target, m.handoff), "conversion", "converting to "+string(target)+"…")
 	}
 	return m.startMutation(m.previewConversion(selected.row, target, m.handoff), "preview", "building conversion preview…")
+}
+
+// startBranch copies the selected session within its own agent. Writers that
+// spend a model turn (Antigravity) first show the same preview a conversion
+// does, and a second n confirms; local writers branch at once.
+func (m model) startBranch() (tea.Model, tea.Cmd) {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	row := selected.row
+	pending := m.pendingConvert
+	m.pendingConvert = nil
+	if session.ModelTurnNotice(row.Provider) == "" ||
+		(pending != nil && pending.branch && pending.rowKey == rowKey(row)) {
+		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
+	}
+	return m.startMutation(func() tea.Msg {
+		preview, err := session.PreviewConversion(row, row.Provider, session.HandoffOptions{})
+		return conversionPreviewMsg{row: row, target: row.Provider, preview: preview, branch: true, err: err}
+	}, "preview", "building branch preview…")
 }
 
 func (m *model) setMode(mode previewMode) {
@@ -1174,6 +1202,9 @@ func (m model) detailView() string {
 			lines = append(lines, th.deleteBanner.Render(truncateCells(strings.Join(pending.preview.Warnings, "; "), innerW)))
 		}
 		lines = append(lines, th.label.Render(padLabel("last user"))+truncateCells(emptyFallback(session.SafeDisplayText(pending.preview.LastUser)), valueW))
+		if pending.branch {
+			return box("Branch preview · n again to create", lines)
+		}
 		return box("Hand-off preview · x again to create", lines)
 	}
 

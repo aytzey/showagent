@@ -228,7 +228,7 @@ and adding context to an existing one.
 | `o` | Cycle the convert target for the selected session |
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
 | `x` | Preview convert; press `x` again to write and select the new session |
-| `n` | Branch: copy the transferable conversation to a new session in the same agent |
+| `n` | Branch: copy the transferable conversation to a new session in the same agent (Antigravity shows a preview first; press `n` again) |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
