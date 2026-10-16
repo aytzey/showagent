@@ -77,7 +77,7 @@ URL. Repeating the same reviewed content for the same target becomes a verified
 no-op. If a previous native write may have completed but its receipt was not
 committed, showagent stops instead of blindly duplicating the messages.
 
-Existing-session import is provider-specific. showagent keeps the option unavailable for Claude Code, Gemini CLI, OpenCode, jcode, and Pi until their native interfaces can preserve the existing session safely. Creating a new session remains available for supported conversion targets.
+Existing-session import is provider-specific. showagent keeps the option unavailable for Claude Code, Gemini CLI, Antigravity, OpenCode, MiMoCode, jcode, and Pi until their native interfaces can preserve the existing session safely. Creating a new session remains available for supported conversion targets.
 
 Do not import into a session that another Codex client is actively changing. showagent detects changes between preview and apply and verifies the original file prefix after the native operation, but it cannot coordinate with every external Codex process.
 

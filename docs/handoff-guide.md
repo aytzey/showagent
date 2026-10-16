@@ -103,9 +103,10 @@ Only targets with a CLI on `PATH` appear in the picker.
 | | Any single session record over 16 MiB, such as a tool result with inline screenshots |
 
 For file-backed agents, showagent writes a new private file atomically.
-OpenCode imports use its own CLI. Neither conversion nor branching modifies
-the original session. Branching applies the same transferable-message
-projection in the source agent; it is not a byte-for-byte session backup.
+OpenCode, MiMoCode, and Antigravity create the session through their own
+CLI. Neither conversion nor branching modifies the original session.
+Branching applies the same transferable-message projection in the source
+agent; it is not a byte-for-byte session backup.
 
 Conversion writes the transferable conversation text to another local agent
 store. Unlike the redacted `transcript` export, it is not a secret-redacted
@@ -121,11 +122,27 @@ ID with the same preview/write sequence:
 showagent convert SOURCE_SESSION_ID --to codex --scope all --dry-run
 ```
 
-Other target identifiers are `gemini`, `opencode`, `jcode`, and `pi`.
-File-backed targets can be prepared by the CLI before their agent is
-installed; resuming still requires that agent. OpenCode requires its CLI
-even when writing a converted session, because the import goes through
-OpenCode itself.
+Other target identifiers are `gemini`, `antigravity`, `opencode`,
+`mimocode`, `jcode`, and `pi`. File-backed targets can be prepared by the CLI
+before their agent is installed; resuming still requires that agent.
+OpenCode and MiMoCode require their CLI even when writing a converted
+session, because the import goes through the agent itself.
+
+### Antigravity
+
+Antigravity conversations work in both directions:
+
+- **From Antigravity.** Sessions from the `agy` terminal agent appear in the
+  picker with their workspace; `enter` reopens one with
+  `agy --conversation <id>`. Antigravity IDE conversations appear as hand-off
+  sources: convert or branch them into any terminal agent, including `agy`.
+- **Into Antigravity.** `showagent convert SOURCE_SESSION_ID --to antigravity`
+  needs a signed-in `agy` on `PATH`. showagent sends the transferable
+  conversation to `agy` as one hand-off message and `agy` creates the
+  conversation in its own store, so this direction spends one short model
+  turn. The model is asked to acknowledge where the conversation left off
+  without calling tools. Resume it with the printed `agy --conversation`
+  command.
 
 ## If something does not work
 

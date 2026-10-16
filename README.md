@@ -1,14 +1,25 @@
 <!-- mcp-name: io.github.aytzey/showagent -->
 <h1 align="center">showagent</h1>
 
-<p align="center"><b>Switch coding agents. Bring the conversation.</b><br>
-Find a local session and carry its user and assistant messages into another agent's native session format.<br>
-Codex · Claude Code · Gemini CLI · OpenCode · MiMoCode · jcode · Pi</p>
+<p align="center"><b>Switch coding agents. Bring the conversation.</b></p>
+
+<p align="center">
+Out of Claude quota halfway through a fix? Want Codex to review what Gemini planned?<br>
+Started in Antigravity and want to finish in the terminal?<br>
+<b>showagent</b> finds every coding-agent session on your machine and continues it in another agent,<br>
+as that agent's own native session, in a few keystrokes.
+</p>
 
 <p align="center">
 <a href="https://github.com/aytzey/showagent/actions/workflows/ci.yml"><img src="https://github.com/aytzey/showagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/aytzey/showagent/releases/latest"><img src="https://img.shields.io/github/v/release/aytzey/showagent" alt="Release"></a>
+<a href="https://github.com/aytzey/showagent/releases"><img src="https://img.shields.io/github/downloads/aytzey/showagent/total" alt="Downloads"></a>
+<a href="https://github.com/aytzey/showagent/stargazers"><img src="https://img.shields.io/github/stars/aytzey/showagent?style=flat" alt="Stars"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
+</p>
+
+<p align="center">
+<b>Claude Code</b> · <b>Codex</b> · <b>Gemini CLI</b> · <b>Antigravity</b> <sup>new</sup> · <b>OpenCode</b> · <b>MiMoCode</b> · <b>Pi</b> · <b>jcode</b>
 </p>
 
 ![showagent walkthrough using sample sessions and simulated agent output](docs/demo.gif)
@@ -17,11 +28,70 @@ Codex · Claude Code · Gemini CLI · OpenCode · MiMoCode · jcode · Pi</p>
 binary; the target CLI is a labeled demo stub. See
 [compatibility evidence](docs/compatibility.md) for what has been tested.*
 
-Started debugging in Codex and want Claude's take? Find the old session,
-preview the handoff, then create a new Claude Code session in the same workspace.
-Your original session stays intact. Conversion carries transferable user and
-assistant messages; tool calls/results, approval state, attachments, and other
-agent runtime state are not carried over.
+```sh
+curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
+showagent
+```
+
+## Why showagent
+
+Every coding agent keeps its history in its own private format. Switching
+agents usually means starting over and re-explaining the task. showagent
+reads every supported store, puts all of your sessions in one picker, and
+moves a conversation between agents without leaving the terminal.
+
+- **Any agent to any agent.** Eight agents, one picker. Hand a session from
+  Claude Code to Codex, from Codex to Gemini CLI, from Antigravity to Claude
+  Code, or back again.
+- **Native sessions, not copy-paste.** The target agent gets a real session
+  in its own store, so `claude --resume`, `codex resume`, `gemini --resume`,
+  `agy --conversation`, and the rest reopen it like any other session.
+  (Antigravity receives the earlier turns as one hand-off message; see the
+  [agent notes](#supported-agents).)
+- **Preview before anything is written.** The first `x` shows the workspace,
+  how many turns move, and what is dropped. Only the second `x` writes, and the
+  original session is never modified.
+- **Find any past session.** Group by workspace and fuzzy-search agent,
+  session ID, paths, and first/latest prompts across every agent at once.
+- **Your agent can use it too.** `showagent mcp` lets an MCP client search
+  and read other agents' history, and request a hand-off.
+- **Bring web chats in.** Import a public ChatGPT or Claude share link, a
+  transcript file, or pasted text as a native coding-agent session.
+- **Local only.** No hosted service, telemetry, or account. See the
+  [privacy FAQ](#faq).
+
+### Typical hand-offs
+
+| You are in | You want | Press |
+|---|---|---|
+| Claude Code, out of quota mid-task | Keep going in Codex or Antigravity | `o` to pick the target, `x` `x` to convert, `enter` to open it |
+| Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `x`, `enter` |
+| Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `x`, `enter` |
+| Any agent | A clean branch to try another direction | `n` |
+| Any agent | Reopen a session from last week, in any agent | `/` to search, `enter` |
+
+## Quick start
+
+You need an existing local session, the target agent's CLI on `PATH`, and its
+normal sign-in completed. Keep the original workspace available.
+
+```sh
+showagent
+```
+
+1. Press `/` and search for the workspace or a phrase in the session's first
+   or latest user prompt. Press `enter` to finish searching, then select the
+   session you want to continue.
+2. Press `o` until the target is `claude` (or another installed agent).
+3. Press `x` to review the workspace, message scope, and state that will be
+   dropped. Press `x` again to write and select the new session.
+4. Press `enter` to open that new session in the target CLI.
+
+Prefer commands? The [Codex → Claude handoff guide](docs/handoff-guide.md)
+walks through selecting an explicit session ID, previewing, converting, and
+resuming it. It also explains the reverse direction and what conversion preserves.
+
+If showagent saved you a re-explanation, a ⭐ helps other people find it.
 
 ## Install
 
@@ -45,49 +115,6 @@ Homebrew and Go installation remain available under
 [other installation options](#other-installation-options).
 [Distribution details](docs/distribution.md) explain version differences between channels.
 
-## Quick start
-
-You need an existing local session, the target agent's CLI on `PATH`, and its
-normal sign-in/setup completed. Keep the original workspace available.
-
-```sh
-showagent
-```
-
-1. Press `/` and search for the workspace or a phrase in the session's first
-   or latest user prompt. Press `enter` to finish searching, then select the
-   session you want to continue.
-2. Press `o` until the target is `claude` (or another installed agent).
-3. Press `x` to review the workspace, message scope, and state that will be
-   dropped. Press `x` again to write and select the new session.
-4. Press `enter` to open that new session in the target CLI.
-
-Prefer commands? The [Codex → Claude handoff guide](docs/handoff-guide.md)
-walks through selecting an explicit session ID, previewing, converting, and
-resuming it. It also explains the reverse direction and what conversion preserves.
-
-Star showagent to keep it handy for your next agent switch.
-
-## Why
-
-Each coding agent keeps its own local session store. showagent reads the
-supported stores and brings their sessions into one terminal picker:
-
-- **Find a past session** — group by workspace and search agent, session
-  ID, paths, and first/latest user prompts. This is not full-transcript search.
-- **Resume or branch** — reopen a session in its own CLI, or copy its
-  transferable conversation into a new native session to try another direction.
-- **Switch agents** — preview what will carry over, then write a new session
-  for the target agent. File-backed copies are private and written atomically;
-  OpenCode and MiMoCode imports go through their own CLIs. Originals are preserved.
-- **Bring web chats into your coding workflow** — import a public ChatGPT or
-  Claude share link, a transcript file, or pasted text into a native local
-  session. You can also add imported text to the context of an exact Codex
-  session without starting a model turn.
-- **Keep your history local** — no hosted service, telemetry, or showagent
-  account. The optional updater uses the network; an MCP client may send
-  requested transcript content to its model provider. See the [privacy FAQ](#faq).
-
 ## Supported agents
 
 | Agent | CLI | Sessions read from | Env override | Convert from | Convert to |
@@ -95,6 +122,7 @@ supported stores and brings their sessions into one terminal picker:
 | Codex | `codex` | `~/.codex/sessions/**/*.jsonl` | `CODEX_HOME` | ✅ | ✅ |
 | Claude Code | `claude` | `~/.claude/projects/**/*.jsonl` | `CLAUDE_HOME` | ✅ | ✅ |
 | Gemini CLI | `gemini` | `~/.gemini/tmp/<project>/chats/` | `GEMINI_CLI_HOME` | ✅ | ✅ |
+| Antigravity | `agy` | `~/.gemini/antigravity-cli/` (CLI), `~/.gemini/antigravity-ide/` (IDE) | `ANTIGRAVITY_HOME` | ✅ | ✅ |
 | OpenCode | `opencode` | `opencode.db`, via the `opencode` CLI | `OPENCODE_DATA_HOME` | ✅ | ✅ |
 | MiMoCode | `mimo` | `mimocode.db`, via the `mimo` CLI | `MIMOCODE_HOME` | ✅ | ✅ |
 | jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
@@ -105,13 +133,23 @@ Notes:
 - The table describes implemented adapters, not a claim that every provider
   version and conversion direction has passed a real CLI test. See the
   [compatibility record](docs/compatibility.md).
-- OpenCode and MiMoCode store sessions in separate SQLite databases. Their
-  discover, export, import, and delete operations go through the respective
-  `opencode` and `mimo` CLIs; showagent never writes into either database directly.
-  They only appear when their CLI is installed.
+- **Antigravity** has two surfaces. Conversations from the `agy` terminal
+  agent are listed with their workspace and reopen with
+  `agy --conversation <id>`. Conversations from the Antigravity IDE are listed
+  as hand-off sources: convert or branch them into a terminal agent, including
+  `agy` itself. showagent reads the plain-text transcript Antigravity keeps
+  next to each conversation and never opens Antigravity's private databases.
+  Converting *into* Antigravity goes through your own `agy` CLI: it starts a
+  new conversation from the hand-off transcript and asks the model for a
+  one-line acknowledgement, so this direction uses one short model turn.
+- OpenCode and MiMoCode store sessions in a SQLite database, so every
+  operation (discover, export, import, delete) goes through their own CLI;
+  showagent never writes into the database directly. OpenCode, MiMoCode and
+  jcode only appear when their CLI is installed.
 - The picker only offers hand-off targets whose CLI is on `PATH`.
-  Scripted conversion to file-backed agents can still prepare a session before
-  their CLI is installed; OpenCode and MiMoCode require their CLIs for import.
+  Scripted conversion to file-backed agents can still
+  prepare a session before their CLI is installed; OpenCode, MiMoCode, and
+  Antigravity always require their CLI because the target writes the session itself.
 - jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
   `jcode` binary is on `PATH`, showagent never shows it.
 - Pi sessions are versioned JSONL trees. showagent follows Pi's active leaf
@@ -133,7 +171,7 @@ Notes:
 # Homebrew (Linux/macOS)
 brew install aytzey/tap/showagent
 
-# Go 1.25.13+
+# Go 1.26.9+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -341,7 +379,9 @@ public ChatGPT or Claude share URL you explicitly provide; it does not use
 browser cookies, private-chat URLs, or arbitrary hosts. The optional release
 updater and startup update check also use HTTP (disable the update check with
 `SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
-Codex/Claude/Pi CLIs, which may download the requested plugin. Message previews
+Codex/Claude/Pi CLIs, which may download the requested plugin. Converting
+*into* Antigravity runs your own `agy` CLI, which sends the hand-off to its
+model provider for one acknowledgement turn. Message previews
 also redact password-like strings and API keys before rendering (covered by
 tests in [`internal/session/session_test.go`](internal/session/session_test.go)).
 Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
@@ -351,8 +391,8 @@ also carry GitHub build provenance — verify with
 **How does conversion work?**
 Conversion extracts the user and assistant turns from the source transcript
 and writes a brand-new session in the target agent's native format (for
-OpenCode, via `opencode import`), so the target's own resume command picks it
-up. Code blocks, newlines, and indentation are preserved. The original session
+OpenCode and MiMoCode via their `import` command, for Antigravity via `agy`
+itself), so the target's own resume command picks it up. Code blocks, newlines, and indentation are preserved. The original session
 is never modified, and files are private (`0600`) and written atomically — a
 crash cannot leave a half-written session in another tool's store.
 
@@ -369,7 +409,9 @@ the scope to the latest N turns before converting.
 Codex sessions are deleted through `codex delete --force`; OpenCode through
 `opencode session delete` (which cascades inside its database). Claude Code
 removes the JSONL plus its matching index entry, jcode removes the JSON plus
-backup/journal sidecars, and Gemini and Pi remove their session files. Delete
+backup/journal sidecars, and Gemini and Pi remove their session files.
+Antigravity conversations are not deleted by showagent; delete them from
+`agy`'s own `/resume` picker so its databases stay consistent. Delete
 always takes two presses, and moving the cursor disarms it.
 
 **Windows?**
@@ -387,9 +429,10 @@ in-place after you start a new conversation.
 A provider implements the interface in
 [`internal/session/provider.go`](internal/session/provider.go), including
 discovery, resume arguments, transcript extraction, and conversion.
-[`gemini.go`](internal/session/gemini.go) (file-based store) and
-[`opencode.go`](internal/session/opencode.go) (CLI-based store) are the two
-templates. Register it in the `registry` slice and the TUI picks up badges,
+[`gemini.go`](internal/session/gemini.go) (file-based store),
+[`opencode.go`](internal/session/opencode.go) (CLI-based store), and
+[`antigravity.go`](internal/session/antigravity.go) (read from files, write
+through the agent's CLI) are the templates. Register it in the `registry` slice and the TUI picks up badges,
 filter keys, and convert targets automatically. Add a matching env override
 so its tests stay hermetic. Issues and PRs welcome.
 
@@ -402,7 +445,7 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-The minimum supported toolchain is Go 1.25.13; CI also runs race tests,
+The minimum supported toolchain is Go 1.26.9 (see `go.mod`); CI also runs race tests,
 golangci-lint, `govulncheck`, and every published cross-compile target.
 
 The illustrated demo uses [vhs](https://github.com/charmbracelet/vhs),
@@ -412,6 +455,15 @@ test. Recording and isolation instructions are in [`demo/README.md`](demo/README
 Security issues and sensitive-data exposure should be reported privately; see
 [`SECURITY.md`](SECURITY.md). Contributions are covered by
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Star history
+
+<a href="https://star-history.com/#aytzey/showagent&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=aytzey/showagent&type=Date&theme=dark">
+    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=aytzey/showagent&type=Date">
+  </picture>
+</a>
 
 ## License
 
