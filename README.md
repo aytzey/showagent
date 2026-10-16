@@ -65,8 +65,8 @@ moves a conversation between agents without leaving the terminal.
 | Claude Code, out of quota mid-task | Keep going in Codex or Gemini CLI | `o` to pick the target, `x` `x` to convert, `enter` to open it |
 | Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `x`, `enter` |
 | Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `x`, `enter` |
-| Any agent | A clean branch to try another direction | `n` |
-| Any agent | Reopen a session from last week, in any agent | `/` to search, `enter` |
+| Any agent except Antigravity | A clean branch to try another direction | `n` |
+| Any agent | Reopen a session from last week in the agent that wrote it | `/` to search, `enter` (Antigravity IDE conversations are hand-off only) |
 
 ## Quick start
 
@@ -227,7 +227,7 @@ and adding context to an existing one.
 | `o` | Cycle the convert target for the selected session |
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
 | `x` | Preview convert; press `x` again to write and select the new session |
-| `n` | Branch: copy the transferable conversation to a new session in the same agent |
+| `n` | Branch: copy the transferable conversation to a new session in the same agent (not available for Antigravity) |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
