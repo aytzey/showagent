@@ -145,3 +145,16 @@ func CompoundAgents() []Provider {
 	}
 	return agents
 }
+
+// CompoundAgentsFor lists the compound-capable providers that can run a pass
+// on row: its own provider, plus every other one that can receive the
+// conversion the pass starts with.
+func CompoundAgentsFor(row Row) []Provider {
+	var agents []Provider
+	for _, agent := range CompoundAgents() {
+		if agent == row.Provider || AcceptsConversion(agent) {
+			agents = append(agents, agent)
+		}
+	}
+	return agents
+}

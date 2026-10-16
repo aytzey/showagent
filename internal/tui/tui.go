@@ -472,7 +472,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Digits follow the registry order of compound-capable providers.
 	if m.compoundChoosing {
 		keyStr := msg.String()
-		if agents := session.CompoundAgents(); len(keyStr) == 1 && keyStr[0] >= '1' && keyStr[0] <= '9' {
+		if agents := m.compoundAgents(); len(keyStr) == 1 && keyStr[0] >= '1' && keyStr[0] <= '9' {
 			if index := int(keyStr[0] - '1'); index < len(agents) {
 				return m.startCompound(agents[index])
 			}
@@ -1319,6 +1319,15 @@ func (m model) emptyView() string {
 	return clampLineWidths(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body), m.width)
 }
 
+// compoundAgents lists the chooser's options for the captured row, so digits
+// and labels never offer an agent that cannot run the pass.
+func (m model) compoundAgents() []session.Provider {
+	if m.compoundRow == nil {
+		return session.CompoundAgents()
+	}
+	return session.CompoundAgentsFor(*m.compoundRow)
+}
+
 func (m model) compoundView() string {
 	th := m.render.theme
 	target := "the selected session"
@@ -1339,7 +1348,7 @@ func (m model) compoundView() string {
 		th.muted.Render("pool the learnings for this project across agents."),
 		"",
 	}
-	for index, agent := range session.CompoundAgents() {
+	for index, agent := range m.compoundAgents() {
 		lines = append(lines, option(fmt.Sprintf("%d", index+1), session.DisplayName(agent), agent))
 	}
 	lines = append(lines, "", th.hint.Render("press a number to choose · esc cancel · mode: "+resumeModeLabel(m.dangerous)))

@@ -344,6 +344,15 @@ func TestAntigravityIsNotAHandoffTarget(t *testing.T) {
 	if got := m.handoffCandidates(agyRow); len(got) != 1 || got[0] != session.ProviderClaude {
 		t.Fatalf("antigravity hand-off candidates = %v, want [claude]", got)
 	}
+	// The compound chooser follows the same rule for the captured row.
+	m.compoundRow = &claudeRow
+	if strings.Contains(m.compoundView(), "Antigravity") {
+		t.Fatalf("compound chooser offers Antigravity for a Claude session:\n%s", m.compoundView())
+	}
+	m.compoundRow = &agyRow
+	if !strings.Contains(m.compoundView(), "Antigravity") {
+		t.Fatalf("compound chooser lost Antigravity for its own session:\n%s", m.compoundView())
+	}
 }
 
 func TestBusyMutationBlocksSecondAction(t *testing.T) {

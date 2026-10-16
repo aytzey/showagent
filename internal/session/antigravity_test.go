@@ -368,6 +368,14 @@ func TestAntigravityIsAHandoffSourceOnly(t *testing.T) {
 	if err := ValidateCompound(source, ProviderAntigravity); !errors.Is(err, errAntigravityTarget) {
 		t.Fatalf("compound into antigravity err = %v", err)
 	}
+	for _, agent := range CompoundAgentsFor(source) {
+		if agent == ProviderAntigravity {
+			t.Fatal("antigravity offered for a compound pass on a codex session")
+		}
+	}
+	if agents := CompoundAgentsFor(agyRow); len(agents) != len(CompoundAgents()) {
+		t.Fatalf("antigravity session compound agents = %v, want every compound agent", agents)
+	}
 	if got := strings.Join(agyRow.ResumeCommand(ResumeOptions{}), " "); got != "agy --conversation "+id {
 		t.Fatalf("resume = %q", got)
 	}
