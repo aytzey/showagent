@@ -17,6 +17,7 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "empty-pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 
@@ -51,6 +52,35 @@ func TestDiscoverFindsCodexAndClaudeSessions(t *testing.T) {
 	}
 	if rows[1].LastUser != "last codex message password [redacted]" {
 		t.Fatalf("unexpected redacted codex last message: %q", rows[1].LastUser)
+	}
+}
+
+// TestDiscoverFollowsSymlinkedStoreRoot: dotfile managers and shared stores
+// often make ~/.claude/projects a symlink; its sessions must still be found
+// and reported under the configured path.
+func TestDiscoverFollowsSymlinkedStoreRoot(t *testing.T) {
+	root := t.TempDir()
+	setEmptyHomes(t, root)
+	claudeHome := filepath.Join(root, "claude")
+	t.Setenv("CLAUDE_HOME", claudeHome)
+	shared := filepath.Join(root, "shared", "projects")
+	writeFile(t, filepath.Join(shared, "-work-claude", "cccccccc-1111-2222-3333-dddddddddddd.jsonl"), `
+{"type":"user","message":{"role":"user","content":"linked claude message"},"uuid":"1","timestamp":"2026-06-02T10:00:00Z","cwd":"/work/claude","sessionId":"cccccccc-1111-2222-3333-dddddddddddd"}
+`)
+	if err := os.MkdirAll(claudeHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(claudeHome, "projects")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	rows := Discover()
+	if len(rows) != 1 || rows[0].FirstUser != "linked claude message" {
+		t.Fatalf("rows = %#v", rows)
+	}
+	want := filepath.Join(claudeHome, "projects", "-work-claude", "cccccccc-1111-2222-3333-dddddddddddd.jsonl")
+	if rows[0].File != want {
+		t.Fatalf("file = %q, want the configured path %q", rows[0].File, want)
 	}
 }
 
@@ -512,6 +542,7 @@ func TestConvertCodexToClaudeCreatesSessionFile(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 
 	sourcePath := filepath.Join(root, "source-codex.jsonl")
 	writeFile(t, sourcePath, `
@@ -588,6 +619,7 @@ func TestConvertClaudeToCodexRespectsScope(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "empty-jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 
 	sourcePath := filepath.Join(root, "source-claude.jsonl")
 	writeFile(t, sourcePath, `
@@ -640,6 +672,7 @@ func TestConvertJCodeToCodexRespectsScope(t *testing.T) {
 	t.Setenv("JCODE_HOME", filepath.Join(root, "jcode"))
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	withFakeCommand(t, "jcode")
 
 	sourcePath := filepath.Join(root, "jcode", "sessions", "session_showagent_1_deadbeef.json")
@@ -681,6 +714,7 @@ func TestConvertCodexToJCodeCreatesSessionFile(t *testing.T) {
 	t.Setenv("JCODE_HOME", jcodeHome)
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	withFakeCommand(t, "jcode")
 	writeFile(t, filepath.Join(jcodeHome, "config.toml"), `[provider]
 default_provider = "claude"
@@ -1010,13 +1044,14 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_HOME", filepath.Join(root, "empty-opencode"))
 	t.Setenv("MIMOCODE_HOME", filepath.Join(root, "empty-mimocode"))
 	t.Setenv("GEMINI_CLI_HOME", filepath.Join(root, "empty-gemini"))
+	t.Setenv("ANTIGRAVITY_HOME", filepath.Join(root, "empty-antigravity"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(root, "pi"))
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
 
 	targets := ScanTargets()
-	if len(targets) != 8 {
-		t.Fatalf("targets = %d, want 8", len(targets))
+	if len(targets) != 9 {
+		t.Fatalf("targets = %d, want 9", len(targets))
 	}
 	want := []ScanTarget{
 		{Provider: ProviderCodex, Path: filepath.Join(root, "codex", "sessions"), EnvVar: "CODEX_HOME"},
@@ -1027,6 +1062,7 @@ func TestScanTargetsReportEnvOverrides(t *testing.T) {
 		{Provider: ProviderMiMo, Path: filepath.Join(root, "empty-mimocode", "data"), EnvVar: "MIMOCODE_HOME"},
 		{Provider: ProviderGemini, Path: filepath.Join(root, "empty-gemini", ".gemini", "tmp"), EnvVar: "GEMINI_CLI_HOME"},
 		{Provider: ProviderPi, Path: filepath.Join(root, "pi", "sessions"), EnvVar: "PI_CODING_AGENT_SESSION_DIR or PI_CODING_AGENT_DIR"},
+		{Provider: ProviderAntigravity, Path: filepath.Join(root, "empty-antigravity", "antigravity-cli", "brain"), EnvVar: "ANTIGRAVITY_HOME"},
 	}
 	for index, target := range targets {
 		expected := want[index]
