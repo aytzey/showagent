@@ -26,16 +26,27 @@ consumer Google account. Sample conversations only; no project content.
 | Check | Result | Scope |
 |---|---|---|
 | Discovery of `agy` conversations | Passed | Interactive and print-mode conversations listed with their workspace (read from `jetbox_summaries_proto.pb`), first/latest prompt and time; `<USER_REQUEST>` wrappers and injected metadata stripped from previews |
-| Claude Code → Antigravity conversion | Passed | 4-turn session (fenced Go code, Unicode) converted through `agy` print mode in 15 s; the conversation acknowledged the history without tool calls |
-| Antigravity model continuation | Passed | `agy --conversation <id> -p` answered `OSPREY-4417 \| Türkçe önbellek`, two facts present only in the Claude source |
-| Codex → Antigravity model continuation | Passed | A Codex session converted the same way; the `agy` conversation answered the codename stated only in Codex |
+| Native resume | Passed | `agy --conversation <id> -p` reopened a listed conversation and recalled its earlier content |
 | Antigravity → Claude Code model continuation | Passed | An `agy` conversation converted to Claude Code; `claude -p --resume` recalled the codeword that existed only in the `agy` conversation |
-| Large hand-off over stdin | Passed | A 162 KB stream-json message was accepted (65k input tokens) |
 | Compound pass | Passed | `agy --conversation <id> --prompt-interactive <prompt>` reopened the conversation and submitted the prompt |
 | Antigravity IDE conversations | Fixtures only | The local IDE data predates the transcript mirror; IDE rows are covered by source tests, not by a real IDE install |
+| Converting into Antigravity | Withheld | See below |
 
 Antigravity's step databases (`conversations/<id>.db`) and its SQLite summary
 store were never opened. Delete stays with `agy`'s own `/resume` picker.
+
+Converting *into* Antigravity was prototyped and withheld. `agy` can only
+create a conversation by running a model turn (`agy -p`, here over stream-json
+stdin). The prototype passed model-continuation checks from Claude Code and
+Codex. In that turn, though, `write_to_file` ran without approval, even
+for a path outside the workspace, when the handed-off text asked for it; only
+shell commands were auto-denied. `--mode plan` did not prevent the write. A
+deny-all `PreToolUse` hook or a tool-less custom agent did block every tool.
+But the hook only loads from the workspace's `.agents/` directory, and the
+conversation keeps the custom agent on every later resume. So neither is
+usable without editing the user's project or leaving the conversation without
+tools. showagent therefore offers Antigravity as a hand-off source until `agy`
+provides an import path that does not need a model turn.
 
 The same build also found that a symlinked `~/.claude/projects` (used on this
 machine to share stores) had hidden every Claude Code session from discovery;

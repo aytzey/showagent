@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,11 +48,7 @@ import (
 // reopen them by id. Their workspace is known only when agy has cached a
 // summary of them (cache/conversation_metadata.json).
 //
-// Converting into Antigravity goes through the user's own agy CLI: print mode
-// with --input-format stream-json reads one hand-off message from stdin, agy
-// writes the new conversation into its store itself, and its result event
-// reports the conversation id. This costs one short model turn, which is
-// asked to acknowledge the history without calling tools.
+// Antigravity is a hand-off source only; see errAntigravityTarget.
 //
 // ANTIGRAVITY_HOME relocates the directory holding all three surfaces
 // (default ~/.gemini), which keeps tests hermetic.
@@ -65,10 +60,9 @@ const (
 	antigravityLegacyIDEDir = "antigravity"
 )
 
-// antigravityUserRequest extracts the typed prompt from a USER_INPUT record;
-// Antigravity wraps it in <USER_REQUEST> and may append injected metadata
-// blocks after it.
-var antigravityUserRequest = regexp.MustCompile(`(?s)<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>`)
+// antigravityInjectedBlock matches the start of a metadata block Antigravity
+// appends after the user's request, such as <ADDITIONAL_METADATA>.
+var antigravityInjectedBlock = regexp.MustCompile(`^<[A-Z][A-Z0-9_]*>`)
 
 // antigravityProvider adapts the Antigravity CLI and IDE stores to the
 // provider registry.
@@ -159,11 +153,34 @@ func antigravityTurnRole(record antigravityRecord) string {
 
 // antigravityUserText returns the prompt the user typed, without the
 // <USER_REQUEST> wrapper or the metadata blocks Antigravity injects after it.
+// The wrapper ends at the last closing tag followed only by injected blocks,
+// so a prompt that itself quotes </USER_REQUEST> keeps all of its text.
 func antigravityUserText(content string) string {
-	if match := antigravityUserRequest.FindStringSubmatch(content); len(match) == 2 {
-		return match[1]
+	const open, closing = "<USER_REQUEST>", "</USER_REQUEST>"
+	body, ok := strings.CutPrefix(strings.TrimLeft(content, " \t\r\n"), open)
+	if !ok {
+		return content
 	}
-	return content
+	end := -1
+	for offset := 0; ; {
+		index := strings.Index(body[offset:], closing)
+		if index < 0 {
+			break
+		}
+		index += offset
+		rest := strings.TrimLeft(body[index+len(closing):], " \t\r\n")
+		if rest == "" || antigravityInjectedBlock.MatchString(rest) {
+			end = index
+		}
+		offset = index + len(closing)
+	}
+	if end < 0 {
+		return content
+	}
+	text := strings.TrimPrefix(body[:end], "\r\n")
+	text = strings.TrimPrefix(text, "\n")
+	text = strings.TrimSuffix(text, "\n")
+	return strings.TrimSuffix(text, "\r")
 }
 
 func discoverAntigravity(home string) []Row {
@@ -496,122 +513,20 @@ func deleteAntigravity(row Row) error {
 	return fmt.Errorf("showagent does not delete Antigravity conversations; delete %s from agy's /resume picker", row.ID)
 }
 
-// antigravityConvertTimeout bounds the agy turn that seeds a converted
-// conversation, so a hung CLI cannot wedge a conversion forever.
-const antigravityConvertTimeout = 10 * time.Minute
+// errAntigravityTarget explains why Antigravity is a hand-off source only.
+// agy offers no way to create a conversation without a model turn, and in
+// print mode that turn can write files when the handed-off text asks it to;
+// every per-run way to disable tools either edits the workspace or binds the
+// conversation to a tool-less agent for good (checked against agy 1.4.0).
+var errAntigravityTarget = errors.New("showagent cannot create Antigravity conversations yet: agy has no import path that avoids a model turn able to run tools; hand Antigravity sessions to another agent instead")
 
-// writeAntigravityConverted hands the transcript to the user's agy CLI, which
-// creates a native conversation in the source workspace from one hand-off
-// message and reports its id.
-func writeAntigravityConverted(source Row, turns []Turn) (Row, error) {
-	dir, err := launchDir(source.CWD)
-	if err != nil {
-		return Row{}, fmt.Errorf("agy conversion needs the session workspace: %w", err)
-	}
-	if dir == "" {
-		return Row{}, errors.New("agy conversion needs a known workspace directory")
-	}
-
-	line, err := json.Marshal(map[string]any{
-		"event":   "user",
-		"message": map[string]any{"content": antigravityHandoffPrompt(source, turns)},
-	})
-	if err != nil {
-		return Row{}, err
-	}
-	if len(line) >= scanBufferMax {
-		return Row{}, fmt.Errorf("hand-off is larger than %d MiB; convert fewer turns", scanBufferMax/(1024*1024))
-	}
-
-	output, runErr := runProviderCLI(antigravityConvertTimeout, "agy", dir, append(line, '\n'),
-		"--input-format", "stream-json", "--output-format", "stream-json",
-		"--disable-slash-commands", "--print=")
-	// agy exits non-zero on a failed turn but still reports why in its result
-	// event, which is the clearer error; fall back to the exit status only when
-	// no result arrived at all.
-	id, err := antigravityResult(output)
-	if errors.Is(err, errNoAntigravityResult) && runErr != nil {
-		return Row{}, runErr
-	}
-	if err != nil {
-		return Row{}, err
-	}
-
-	cliHome := filepath.Join(defaultAntigravityHome(), antigravityCLIDir)
-	file := antigravityTranscriptPath(filepath.Join(cliHome, "brain", id))
-	if file == "" {
-		file = filepath.Join(cliHome, "conversations", id+".db")
-	}
-	firstUser, lastUser := userPreviewFromTurns(turns)
-	return Row{
-		Provider:  ProviderAntigravity,
-		ID:        id,
-		LastAt:    time.Now(),
-		CWD:       source.CWD,
-		LaunchCWD: source.CWD,
-		File:      file,
-		FirstUser: firstUser,
-		LastUser:  lastUser,
-	}, nil
+func writeAntigravityConverted(Row, []Turn) (Row, error) {
+	return Row{}, errAntigravityTarget
 }
 
-// antigravityHandoffPrompt frames the earlier conversation as history for
-// the new agy conversation and asks for an acknowledgement only.
-func antigravityHandoffPrompt(source Row, turns []Turn) string {
-	var prompt strings.Builder
-	origin := DisplayName(source.Provider)
-	if origin == "" {
-		origin = "another coding agent"
-	}
-	fmt.Fprintf(&prompt, "This conversation continues one that started in %s and was handed over by showagent.", origin)
-	if workspace := strings.TrimSpace(source.CWD); workspace != "" && !strings.HasPrefix(workspace, "(") {
-		fmt.Fprintf(&prompt, " Workspace: %s.", workspace)
-	}
-	prompt.WriteString(" The earlier user and assistant messages are below, oldest first. ")
-	prompt.WriteString("Treat them as the history of this conversation; tool calls and their results were not carried over.\n\n")
-	prompt.WriteString("For this reply only: do not call any tools and do not change any files. ")
-	prompt.WriteString("Reply in one or two sentences with where the conversation left off, then wait for my next message.\n\n")
-	prompt.WriteString("<conversation_history>\n")
-	for _, turn := range turns {
-		fmt.Fprintf(&prompt, "<message role=%q>\n%s\n</message>\n", turn.Role, turn.Text)
-	}
-	prompt.WriteString("</conversation_history>")
-	return prompt.String()
-}
-
-var errNoAntigravityResult = errors.New("agy finished without reporting a conversation")
-
-// antigravityResult reads the terminal result event of agy's stream-json
-// output: the conversation id, or the error agy reported.
-func antigravityResult(output []byte) (string, error) {
-	for _, line := range bytes.Split(output, []byte{'\n'}) {
-		var event struct {
-			Event  string `json:"event"`
-			Result struct {
-				ConversationID string `json:"conversation_id"`
-				Status         string `json:"status"`
-				Error          string `json:"error"`
-			} `json:"result"`
-		}
-		if json.Unmarshal(bytes.TrimSpace(line), &event) != nil || event.Event != "result" {
-			continue
-		}
-		result := event.Result
-		if result.Status != "SUCCESS" {
-			detail := result.Error
-			if detail == "" {
-				detail = "status " + result.Status
-			}
-			return "", fmt.Errorf("agy could not create the conversation: %s", detail)
-		}
-		// The id becomes a path component, so it must be exactly a UUID.
-		if sessionIDPattern.FindString(result.ConversationID) != result.ConversationID || result.ConversationID == "" {
-			return "", fmt.Errorf("agy reported an unexpected conversation id %q", result.ConversationID)
-		}
-		return result.ConversationID, nil
-	}
-	return "", errNoAntigravityResult
-}
+// sourceOnlyReason marks Antigravity as readable and resumable, but not a
+// target for conversion, branching, or import.
+func (antigravityProvider) sourceOnlyReason() error { return errAntigravityTarget }
 
 func fileExists(path string) bool {
 	info, err := os.Stat(path)

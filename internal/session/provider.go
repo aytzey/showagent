@@ -102,11 +102,36 @@ func DisplayName(provider Provider) string {
 // such a writer may follow a successful write inside the provider's store.
 func WritesThroughCLI(provider Provider) bool {
 	switch provider {
-	case ProviderOpenCode, ProviderMiMo, ProviderAntigravity:
+	case ProviderOpenCode, ProviderMiMo:
 		return true
 	default:
 		return false
 	}
+}
+
+// sourceOnlyProvider is implemented by providers whose sessions showagent can
+// list, resume, and hand off, but cannot create; the error says why.
+type sourceOnlyProvider interface {
+	sourceOnlyReason() error
+}
+
+// AcceptsConversion reports whether showagent can write new sessions for
+// provider, as a conversion, branch, or import target.
+func AcceptsConversion(provider Provider) bool {
+	return conversionTargetError(provider) == nil
+}
+
+// conversionTargetError explains why provider cannot be written, or returns
+// nil when it can.
+func conversionTargetError(provider Provider) error {
+	impl, ok := providerFor(provider)
+	if !ok {
+		return fmt.Errorf("unsupported target provider %q", provider)
+	}
+	if sourceOnly, ok := impl.(sourceOnlyProvider); ok {
+		return sourceOnly.sourceOnlyReason()
+	}
+	return nil
 }
 
 // CompoundAgents lists the providers able to run a compound pass (resume a

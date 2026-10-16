@@ -40,14 +40,12 @@ agents usually means starting over and re-explaining the task. showagent
 reads every supported store, puts all of your sessions in one picker, and
 moves a conversation between agents without leaving the terminal.
 
-- **Any agent to any agent.** Eight agents, one picker. Hand a session from
-  Claude Code to Codex, from Codex to Gemini CLI, from Antigravity to Claude
-  Code, or back again.
+- **Move conversations between agents.** Eight agents, one picker. Hand a
+  session from Claude Code to Codex, from Codex to Gemini CLI and back, or
+  carry an Antigravity conversation into any of them.
 - **Native sessions, not copy-paste.** The target agent gets a real session
   in its own store, so `claude --resume`, `codex resume`, `gemini --resume`,
-  `agy --conversation`, and the rest reopen it like any other session.
-  (Antigravity receives the earlier turns as one hand-off message; see the
-  [agent notes](#supported-agents).)
+  and the rest reopen it like any other session.
 - **Preview before anything is written.** The first `x` shows the workspace,
   how many turns move, and what is dropped. Only the second `x` writes, and the
   original session is never modified.
@@ -64,7 +62,7 @@ moves a conversation between agents without leaving the terminal.
 
 | You are in | You want | Press |
 |---|---|---|
-| Claude Code, out of quota mid-task | Keep going in Codex or Antigravity | `o` to pick the target, `x` `x` to convert, `enter` to open it |
+| Claude Code, out of quota mid-task | Keep going in Codex or Gemini CLI | `o` to pick the target, `x` `x` to convert, `enter` to open it |
 | Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `x`, `enter` |
 | Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `x`, `enter` |
 | Any agent | A clean branch to try another direction | `n` |
@@ -122,7 +120,7 @@ Homebrew and Go installation remain available under
 | Codex | `codex` | `~/.codex/sessions/**/*.jsonl` | `CODEX_HOME` | ✅ | ✅ |
 | Claude Code | `claude` | `~/.claude/projects/**/*.jsonl` | `CLAUDE_HOME` | ✅ | ✅ |
 | Gemini CLI | `gemini` | `~/.gemini/tmp/<project>/chats/` | `GEMINI_CLI_HOME` | ✅ | ✅ |
-| Antigravity | `agy` | `~/.gemini/antigravity-cli/` (CLI), `~/.gemini/antigravity-ide/` (IDE) | `ANTIGRAVITY_HOME` | ✅ | ✅ |
+| Antigravity | `agy` | `~/.gemini/antigravity-cli/` (CLI), `~/.gemini/antigravity-ide/` (IDE) | `ANTIGRAVITY_HOME` | ✅ | — |
 | OpenCode | `opencode` | `opencode.db`, via the `opencode` CLI | `OPENCODE_DATA_HOME` | ✅ | ✅ |
 | MiMoCode | `mimo` | `mimocode.db`, via the `mimo` CLI | `MIMOCODE_HOME` | ✅ | ✅ |
 | jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
@@ -136,20 +134,21 @@ Notes:
 - **Antigravity** has two surfaces. Conversations from the `agy` terminal
   agent are listed with their workspace and reopen with
   `agy --conversation <id>`. Conversations from the Antigravity IDE are listed
-  as hand-off sources: convert or branch them into a terminal agent, including
-  `agy` itself. showagent reads the plain-text transcript Antigravity keeps
-  next to each conversation and never opens Antigravity's private databases.
-  Converting *into* Antigravity goes through your own `agy` CLI: it starts a
-  new conversation from the hand-off transcript and asks the model for a
-  one-line acknowledgement, so this direction uses one short model turn.
+  as hand-off sources: convert them into any other supported agent.
+  showagent reads the plain-text transcript Antigravity keeps next to each
+  conversation and never opens Antigravity's private databases.
+  Converting *into* Antigravity is not available yet: `agy` has no way to
+  create a conversation without a model turn, and in that turn the model can
+  write files if the handed-off text asks it to. showagent will add this
+  direction when `agy` offers a safe import path.
 - OpenCode and MiMoCode store sessions in a SQLite database, so every
   operation (discover, export, import, delete) goes through their own CLI;
   showagent never writes into the database directly. OpenCode, MiMoCode and
   jcode only appear when their CLI is installed.
 - The picker only offers hand-off targets whose CLI is on `PATH`.
   Scripted conversion to file-backed agents can still
-  prepare a session before their CLI is installed; OpenCode, MiMoCode, and
-  Antigravity always require their CLI because the target writes the session itself.
+  prepare a session before their CLI is installed; OpenCode and MiMoCode
+  always require their CLI because the import goes through the agent itself.
 - jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
   `jcode` binary is on `PATH`, showagent never shows it.
 - Pi sessions are versioned JSONL trees. showagent follows Pi's active leaf
@@ -379,9 +378,7 @@ public ChatGPT or Claude share URL you explicitly provide; it does not use
 browser cookies, private-chat URLs, or arbitrary hosts. The optional release
 updater and startup update check also use HTTP (disable the update check with
 `SHOWAGENT_NO_UPDATE_CHECK=1`). `showagent setup` invokes the installed
-Codex/Claude/Pi CLIs, which may download the requested plugin. Converting
-*into* Antigravity runs your own `agy` CLI, which sends the hand-off to its
-model provider for one acknowledgement turn. Message previews
+Codex/Claude/Pi CLIs, which may download the requested plugin. Message previews
 also redact password-like strings and API keys before rendering (covered by
 tests in [`internal/session/session_test.go`](internal/session/session_test.go)).
 Release archives ship with a `SHA256SUMS` file, and releases after v0.7.0
@@ -391,10 +388,11 @@ also carry GitHub build provenance — verify with
 **How does conversion work?**
 Conversion extracts the user and assistant turns from the source transcript
 and writes a brand-new session in the target agent's native format (for
-OpenCode and MiMoCode via their `import` command, for Antigravity via `agy`
-itself), so the target's own resume command picks it up. Code blocks, newlines, and indentation are preserved. The original session
-is never modified, and files are private (`0600`) and written atomically — a
-crash cannot leave a half-written session in another tool's store.
+OpenCode and MiMoCode via their `import` command), so the target's own resume
+command picks it up. Code blocks, newlines, and indentation are preserved, and
+the original session is never modified. For file-backed targets, showagent
+writes the new file itself: private (`0600`) and atomically, so a crash cannot
+leave a half-written session in another tool's store.
 
 Trust is explicit: in the TUI, the first `x` shows the hand-off preview and the
 second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
@@ -431,8 +429,8 @@ A provider implements the interface in
 discovery, resume arguments, transcript extraction, and conversion.
 [`gemini.go`](internal/session/gemini.go) (file-based store),
 [`opencode.go`](internal/session/opencode.go) (CLI-based store), and
-[`antigravity.go`](internal/session/antigravity.go) (read from files, write
-through the agent's CLI) are the templates. Register it in the `registry` slice and the TUI picks up badges,
+[`antigravity.go`](internal/session/antigravity.go) (a hand-off source only)
+are the templates. Register it in the `registry` slice and the TUI picks up badges,
 filter keys, and convert targets automatically. Add a matching env override
 so its tests stay hermetic. Issues and PRs welcome.
 

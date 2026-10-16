@@ -1537,12 +1537,12 @@ func (m model) handoffTargetFor(row session.Row) session.Provider {
 }
 
 // handoffCandidates lists the providers row can convert to. A provider only
-// qualifies when its CLI is on PATH: converting to a tool that cannot resume
-// the result would strand the session.
+// qualifies when showagent can write its sessions and its CLI is on PATH:
+// converting to a tool that cannot resume the result would strand the session.
 func (m model) handoffCandidates(row session.Row) []session.Provider {
 	var candidates []session.Provider
 	for _, provider := range session.ProviderOrder() {
-		if provider == row.Provider {
+		if provider == row.Provider || !session.AcceptsConversion(provider) {
 			continue
 		}
 		if session.ProviderCommandAvailable(provider) {

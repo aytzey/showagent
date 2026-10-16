@@ -35,6 +35,9 @@ func (o HandoffOptions) apply(turns []Turn) []Turn {
 }
 
 func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {
+	if err := conversionTargetError(target); err != nil {
+		return Row{}, err
+	}
 	turns, err := Transcript(row)
 	if err != nil {
 		return Row{}, err

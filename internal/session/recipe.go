@@ -38,8 +38,8 @@ type ResumeRecipe struct {
 // PreviewConversion extracts the transferable transcript and summarizes the
 // hand-off without writing anything into the target agent's session store.
 func PreviewConversion(row Row, target Provider, options HandoffOptions) (ConversionPreview, error) {
-	if _, ok := providerFor(target); !ok {
-		return ConversionPreview{}, fmt.Errorf("unsupported target provider %q", target)
+	if err := conversionTargetError(target); err != nil {
+		return ConversionPreview{}, err
 	}
 
 	turns, err := Transcript(row)

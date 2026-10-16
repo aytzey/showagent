@@ -139,6 +139,9 @@ func ValidateCompound(row Row, agent Provider) error {
 		if err := ValidateNativeActions(row); err != nil {
 			return err
 		}
+	} else if err := conversionTargetError(agent); err != nil {
+		// Another agent's session would have to be converted into agent first.
+		return err
 	}
 	return validateLaunch(agent, row.resumeCWD())
 }

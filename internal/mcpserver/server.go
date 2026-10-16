@@ -98,8 +98,7 @@ func New(version string, options ...Options) *mcp.Server {
 			Name: "convert_session",
 			Description: "Rewrite a session into another agent's native format so that agent can resume it — e.g. continue a Codex conversation in Claude Code. " +
 				"Writes a brand-new session (the original is never modified) and returns its id, file, and resume command. " +
-				"No agent is resumed for you; run the returned command yourself to continue there. " +
-				"Converting to antigravity runs the local agy CLI, which spends one short model turn creating the conversation.",
+				"Nothing is executed; run the returned command yourself to continue there.",
 			Annotations: additive,
 		}, convertSession)
 	}
@@ -309,7 +308,7 @@ func branchSession(_ context.Context, _ *mcp.CallToolRequest, args sessionIDArgs
 
 type convertSessionArgs struct {
 	ID     string `json:"id" jsonschema:"session id from list_sessions, or 'latest' for the most recent session"`
-	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, antigravity, opencode, mimocode, jcode, or pi"`
+	Target string `json:"target" jsonschema:"provider to convert the session to: codex, claude, gemini, opencode, mimocode, jcode, or pi (antigravity sessions can be converted from, not to)"`
 }
 
 func convertSession(_ context.Context, _ *mcp.CallToolRequest, args convertSessionArgs) (*mcp.CallToolResult, newSessionResult, error) {

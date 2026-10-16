@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,21 @@ func TestAntigravityTranscriptKeepsConversationOnly(t *testing.T) {
 	for index := range want {
 		if turns[index] != want[index] {
 			t.Fatalf("turn %d = %#v, want %#v", index, turns[index], want[index])
+		}
+	}
+}
+
+func TestAntigravityUserTextKeepsQuotedDelimiters(t *testing.T) {
+	for content, want := range map[string]string{
+		"<USER_REQUEST>\nplain\n</USER_REQUEST>":                                                                                   "plain",
+		"<USER_REQUEST>\nplain\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nt\n</ADDITIONAL_METADATA>":                                 "plain",
+		"<USER_REQUEST>\nwhy does </USER_REQUEST> end early?\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nx\n</USER_SETTINGS_CHANGE>": "why does </USER_REQUEST> end early?",
+		"<USER_REQUEST>\n  indented first line\n</USER_REQUEST>":                                                                   "  indented first line",
+		"no wrapper at all":            "no wrapper at all",
+		"<USER_REQUEST>\nunterminated": "<USER_REQUEST>\nunterminated",
+	} {
+		if got := antigravityUserText(content); got != want {
+			t.Fatalf("antigravityUserText(%q) = %q, want %q", content, got, want)
 		}
 	}
 }
@@ -303,136 +319,63 @@ func TestAntigravitySummaryIndexRejectsMalformedInput(t *testing.T) {
 	}
 }
 
-// withFakeAgy installs an agy stub that records its argv and stdin, writes a
-// transcript for the conversation it reports, and answers with resultJSON.
-func withFakeAgy(t *testing.T, home, id, resultJSON string) string {
-	t.Helper()
-	bin := t.TempDir()
-	record := filepath.Join(bin, "record")
-	// Like agy, exit non-zero when the turn failed.
-	exitCode := "0"
-	if strings.Contains(resultJSON, `"ERROR"`) {
-		exitCode = "1"
-	}
-	transcript := filepath.Join(home, "antigravity-cli", "brain", id, ".system_generated", "logs", "transcript_full.jsonl")
-	script := `#!/bin/sh
-export PATH=/usr/bin:/bin
-pwd > "` + record + `.cwd"
-echo "$@" > "` + record + `.args"
-cat > "` + record + `.stdin"
-mkdir -p "` + filepath.Dir(transcript) + `"
-printf '%s\n' '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-10-01T09:00:00Z","content":"<USER_REQUEST>\nhand-off\n</USER_REQUEST>"}' '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-01T09:00:01Z","content":"ok"}' > "` + transcript + `"
-echo '{"event":"init","conversation_id":"` + id + `"}'
-echo '` + resultJSON + `'
-exit ` + exitCode + `
-`
-	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin)
-	return record
-}
-
-func TestConvertIntoAntigravityRunsAgy(t *testing.T) {
+func TestAntigravityIsAHandoffSourceOnly(t *testing.T) {
 	home := antigravityFixtureHome(t)
 	workspace := t.TempDir()
-	const id = "6f1d2c3b-0000-4000-8000-000000000020"
-	record := withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"`+id+`","status":"SUCCESS","response":"ok"}}`)
-
-	source := Row{Provider: ProviderCodex, ID: "codex-1", CWD: workspace, LaunchCWD: workspace}
-	turns := []Turn{
-		{Role: "user", Text: "fix it\n\n```go\n\tx := 1\n```"},
-		{Role: "assistant", Text: "Türkçe answer"},
-		{Role: "user", Text: "ship it"},
-	}
-	row, err := writeAntigravityConverted(source, turns)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFile := filepath.Join(home, "antigravity-cli", "brain", id, ".system_generated", "logs", "transcript_full.jsonl")
-	if row.Provider != ProviderAntigravity || row.ID != id || row.CWD != workspace || row.File != wantFile {
-		t.Fatalf("row = %#v", row)
-	}
-	if row.FirstUser != "fix it ```go x := 1 ```" && !strings.HasPrefix(row.FirstUser, "fix it") {
-		t.Fatalf("first user = %q", row.FirstUser)
-	}
-	if row.LastUser != "ship it" {
-		t.Fatalf("last user = %q", row.LastUser)
-	}
-
-	args, _ := os.ReadFile(record + ".args")
-	if got := strings.TrimSpace(string(args)); got != "--input-format stream-json --output-format stream-json --disable-slash-commands --print=" {
-		t.Fatalf("agy args = %q", got)
-	}
-	cwd, _ := os.ReadFile(record + ".cwd")
-	if resolved, _ := filepath.EvalSymlinks(workspace); strings.TrimSpace(string(cwd)) != resolved && strings.TrimSpace(string(cwd)) != workspace {
-		t.Fatalf("agy ran in %q, want %q", cwd, workspace)
-	}
-	stdin, _ := os.ReadFile(record + ".stdin")
-	lines := strings.Split(strings.TrimRight(string(stdin), "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("stdin must be exactly one NDJSON message, got %q", stdin)
-	}
-	var message struct {
-		Event   string `json:"event"`
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(lines[0]), &message); err != nil || message.Event != "user" {
-		t.Fatalf("stdin message = %q, %v", lines[0], err)
-	}
-	for _, want := range []string{
-		"started in Codex",
-		"Workspace: " + workspace,
-		"do not call any tools",
-		"<message role=\"user\">\nfix it\n\n```go\n\tx := 1\n```\n</message>",
-		"<message role=\"assistant\">\nTürkçe answer\n</message>",
-		"<message role=\"user\">\nship it\n</message>\n</conversation_history>",
-	} {
-		if !strings.Contains(message.Message.Content, want) {
-			t.Fatalf("hand-off prompt missing %q:\n%s", want, message.Message.Content)
-		}
-	}
-
-	// The new conversation is immediately discoverable and resumable.
+	const id = "6f1d2c3b-0000-4000-8000-000000000030"
+	writeAntigravityTranscript(t, home, "antigravity-cli", id, "transcript_full.jsonl",
+		antigravityLine(t, 0, "USER_EXPLICIT", "USER_INPUT", "2026-10-01T09:00:00Z", "<USER_REQUEST>\ncarry this over\n</USER_REQUEST>"),
+		antigravityLine(t, 1, "MODEL", "PLANNER_RESPONSE", "2026-10-01T09:00:01Z", "carried"))
 	writeFile(t, filepath.Join(home, "antigravity-cli", "conversations", id+".db"), "sqlite")
-	for _, discovered := range Discover() {
-		if discovered.ID == id && !discovered.HandoffOnly {
-			return
-		}
+	writeFile(t, filepath.Join(home, "antigravity-cli", "cache", "last_conversations.json"), `{"`+workspace+`":"`+id+`"}`)
+	// No agy on PATH: nothing here may try to run it.
+	t.Setenv("PATH", t.TempDir())
+
+	rows := Discover()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v", rows)
 	}
-	t.Fatal("converted conversation is not discoverable")
-}
+	agyRow := rows[0]
 
-func TestConvertIntoAntigravityReportsAgyErrors(t *testing.T) {
-	home := antigravityFixtureHome(t)
-	workspace := t.TempDir()
-	const id = "6f1d2c3b-0000-4000-8000-000000000021"
-	turns := []Turn{{Role: "user", Text: "q"}, {Role: "assistant", Text: "a"}}
-
-	withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"`+id+`","status":"ERROR","error":"quota exhausted"}}`)
-	if _, err := writeAntigravityConverted(Row{CWD: workspace}, turns); err == nil || !strings.Contains(err.Error(), "quota exhausted") {
-		t.Fatalf("error result err = %v", err)
+	// Out of Antigravity works like any other source.
+	t.Setenv("CLAUDE_HOME", filepath.Join(t.TempDir(), ".claude"))
+	claude, err := Convert(agyRow, ProviderClaude, HandoffOptions{})
+	if err != nil || claude.Provider != ProviderClaude || claude.CWD != workspace {
+		t.Fatalf("antigravity -> claude = %#v, %v", claude, err)
 	}
-
-	withFakeAgy(t, home, id, `not json`)
-	if _, err := writeAntigravityConverted(Row{CWD: workspace}, turns); err == nil || !strings.Contains(err.Error(), "without reporting a conversation") {
-		t.Fatalf("missing result err = %v", err)
+	turns, err := Transcript(claude)
+	if err != nil || len(turns) != 2 || turns[0].Text != "carry this over" || turns[1].Text != "carried" {
+		t.Fatalf("converted transcript = %#v, %v", turns, err)
 	}
 
-	for _, bad := range []string{"../../etc", "../" + id, id + "/x"} {
-		withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"`+bad+`","status":"SUCCESS"}}`)
-		if _, err := writeAntigravityConverted(Row{CWD: workspace}, turns); err == nil || !strings.Contains(err.Error(), "unexpected conversation id") {
-			t.Fatalf("bad id %q err = %v", bad, err)
-		}
+	// Into Antigravity is refused everywhere, before anything is read or run.
+	source := codexSourceRow(t, t.TempDir())
+	if AcceptsConversion(ProviderAntigravity) || !AcceptsConversion(ProviderClaude) {
+		t.Fatal("conversion targets misreported")
 	}
-
-	if _, err := writeAntigravityConverted(Row{CWD: "(unknown cwd)"}, turns); err == nil || !strings.Contains(err.Error(), "known workspace") {
-		t.Fatalf("unknown workspace err = %v", err)
+	if _, err := Convert(source, ProviderAntigravity, HandoffOptions{}); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("convert into antigravity err = %v", err)
 	}
-	if _, err := writeAntigravityConverted(Row{CWD: filepath.Join(workspace, "gone")}, turns); err == nil || !strings.Contains(err.Error(), "workspace not found") {
-		t.Fatalf("missing workspace err = %v", err)
+	if _, err := PreviewConversion(source, ProviderAntigravity, HandoffOptions{}); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("preview into antigravity err = %v", err)
+	}
+	if _, err := Branch(agyRow); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("branch antigravity err = %v", err)
+	}
+	if capability := ImportCapabilities(ProviderAntigravity); capability.CanCreate || capability.CanAppendContext || capability.Reason == "" {
+		t.Fatalf("antigravity import capability = %#v", capability)
+	}
+	if err := ValidateCompound(source, ProviderAntigravity); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("compound into antigravity err = %v", err)
+	}
+	if got := strings.Join(agyRow.ResumeCommand(ResumeOptions{}), " "); got != "agy --conversation "+id {
+		t.Fatalf("resume = %q", got)
+	}
+	if name := (antigravityProvider{}).CommandName(); name != "agy" {
+		t.Fatalf("command = %q", name)
+	}
+	if _, err := (antigravityProvider{}).WriteConverted(source, turns); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("direct write err = %v", err)
 	}
 }
 
@@ -440,9 +383,6 @@ func TestAntigravityDeleteIsLeftToAgy(t *testing.T) {
 	err := antigravityProvider{}.Delete(Row{Provider: ProviderAntigravity, ID: "id"})
 	if err == nil || !strings.Contains(err.Error(), "/resume") {
 		t.Fatalf("delete err = %v", err)
-	}
-	if !WritesThroughCLI(ProviderAntigravity) || WritesThroughCLI(ProviderClaude) {
-		t.Fatal("Antigravity conversion must be reported as CLI-backed")
 	}
 }
 
@@ -458,39 +398,5 @@ func TestFileURIPath(t *testing.T) {
 		if got := fileURIPath(input); got != want {
 			t.Fatalf("fileURIPath(%q) = %q, want %q", input, got, want)
 		}
-	}
-}
-
-func TestConvertRoundTripsThroughAntigravity(t *testing.T) {
-	home := antigravityFixtureHome(t)
-	workspace := t.TempDir()
-	const id = "6f1d2c3b-0000-4000-8000-000000000030"
-	withFakeAgy(t, home, id, `{"event":"result","result":{"conversation_id":"`+id+`","status":"SUCCESS"}}`)
-
-	source := codexSourceRow(t, t.TempDir())
-	source.CWD = workspace
-	converted, err := Convert(source, ProviderAntigravity, HandoffOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if converted.Provider != ProviderAntigravity || converted.ID != id {
-		t.Fatalf("converted = %#v", converted)
-	}
-	// Reading it back goes through the transcript agy wrote.
-	turns, err := Transcript(converted)
-	if err != nil || len(turns) != 2 || turns[0].Text != "hand-off" || turns[1].Text != "ok" {
-		t.Fatalf("transcript = %#v, %v", turns, err)
-	}
-	// And it can be handed onward, here to Claude.
-	t.Setenv("CLAUDE_HOME", filepath.Join(t.TempDir(), ".claude"))
-	claude, err := Convert(converted, ProviderClaude, HandoffOptions{})
-	if err != nil || claude.Provider != ProviderClaude {
-		t.Fatalf("antigravity -> claude = %#v, %v", claude, err)
-	}
-	if got := strings.Join(converted.ResumeCommand(ResumeOptions{}), " "); got != "agy --conversation "+id {
-		t.Fatalf("resume = %q", got)
-	}
-	if name := (antigravityProvider{}).CommandName(); name != "agy" {
-		t.Fatalf("command = %q", name)
 	}
 }

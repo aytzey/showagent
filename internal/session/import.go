@@ -113,11 +113,11 @@ type ImportReceipt struct {
 }
 
 // ImportCapabilities returns conservative provider support. Every registered
-// provider already has a native new-session writer. Only Codex currently has a
-// proven no-model-turn append adapter.
+// provider that accepts conversions has a native new-session writer. Only
+// Codex currently has a proven no-model-turn append adapter.
 func ImportCapabilities(provider Provider) ImportCapability {
-	if _, ok := providerFor(provider); !ok {
-		return ImportCapability{Reason: fmt.Sprintf("unsupported provider %q", provider)}
+	if err := conversionTargetError(provider); err != nil {
+		return ImportCapability{Reason: err.Error()}
 	}
 
 	capability := ImportCapability{CanCreate: true}
@@ -127,8 +127,8 @@ func ImportCapabilities(provider Provider) ImportCapability {
 		return capability
 	}
 
-	// OpenCode, MiMoCode and Antigravity create sessions through their own
-	// CLI. The remaining local writers do not launch their provider executable.
+	// OpenCode and MiMoCode create sessions through their own CLI. The
+	// remaining local writers do not launch their provider executable.
 	capability.RequiresCLI = WritesThroughCLI(provider)
 	capability.Reason = fmt.Sprintf("%s has no verified native append-context API that avoids starting a model turn", DisplayName(provider))
 	return capability

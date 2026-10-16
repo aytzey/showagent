@@ -329,6 +329,23 @@ func TestSessionMutationClearsFilterAndSelectsNewRow(t *testing.T) {
 	}
 }
 
+// TestAntigravityIsNotAHandoffTarget: Antigravity sessions can be handed to
+// other agents, but no session is offered a conversion into Antigravity.
+func TestAntigravityIsNotAHandoffTarget(t *testing.T) {
+	withFakeCommands(t, "agy", "claude")
+	m := sizedModel(nil)
+	claudeRow := session.Row{Provider: session.ProviderClaude, ID: "c"}
+	agyRow := session.Row{Provider: session.ProviderAntigravity, ID: "a"}
+	for _, candidate := range m.handoffCandidates(claudeRow) {
+		if candidate == session.ProviderAntigravity {
+			t.Fatal("antigravity offered as a conversion target")
+		}
+	}
+	if got := m.handoffCandidates(agyRow); len(got) != 1 || got[0] != session.ProviderClaude {
+		t.Fatalf("antigravity hand-off candidates = %v, want [claude]", got)
+	}
+}
+
 func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	row := session.Row{
 		Provider:  session.ProviderClaude,
