@@ -626,7 +626,7 @@ Session locations:
                                            conversations as hand-off sources)
 
 When stdout is not a terminal, 'showagent' prints the plain table (same as 'showagent list').
-`, strings.Join(session.ProviderNames(), ", "))
+`, strings.Join(session.ConversionTargetNames(), ", "))
 }
 
 // versionString prefers the release-stamped version and falls back to Go

@@ -376,6 +376,18 @@ func TestAntigravityIsAHandoffSourceOnly(t *testing.T) {
 	if agents := CompoundAgentsFor(agyRow); len(agents) != len(CompoundAgents()) {
 		t.Fatalf("antigravity session compound agents = %v, want every compound agent", agents)
 	}
+	handoffOnly := agyRow
+	handoffOnly.HandoffOnly = true
+	for _, agent := range CompoundAgentsFor(handoffOnly) {
+		if agent == ProviderAntigravity {
+			t.Fatal("a hand-off-only Antigravity row was offered a native compound pass")
+		}
+	}
+	for _, name := range ConversionTargetNames() {
+		if name == string(ProviderAntigravity) {
+			t.Fatal("antigravity listed as a conversion target")
+		}
+	}
 	if got := strings.Join(agyRow.ResumeCommand(ResumeOptions{}), " "); got != "agy --conversation "+id {
 		t.Fatalf("resume = %q", got)
 	}

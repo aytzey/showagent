@@ -88,6 +88,18 @@ func ProviderNames() []string {
 	return names
 }
 
+// ConversionTargetNames returns the provider ids that accept conversions, in
+// registry order, for help text and target listings.
+func ConversionTargetNames() []string {
+	var names []string
+	for _, impl := range registry {
+		if AcceptsConversion(impl.Name()) {
+			names = append(names, string(impl.Name()))
+		}
+	}
+	return names
+}
+
 // DisplayName is the human-facing name for provider ("Codex"). Unknown
 // providers fall back to their raw name.
 func DisplayName(provider Provider) string {
@@ -147,12 +159,14 @@ func CompoundAgents() []Provider {
 }
 
 // CompoundAgentsFor lists the compound-capable providers that can run a pass
-// on row: its own provider, plus every other one that can receive the
-// conversion the pass starts with.
+// on row: its own provider when row is natively resumable, plus every other
+// one that can receive the conversion the pass starts with.
 func CompoundAgentsFor(row Row) []Provider {
 	var agents []Provider
 	for _, agent := range CompoundAgents() {
-		if agent == row.Provider || AcceptsConversion(agent) {
+		// Its own agent runs the pass natively, which a hand-off-only row
+		// cannot do; any other agent needs the conversion to be writable.
+		if (agent == row.Provider && !row.HandoffOnly) || (agent != row.Provider && AcceptsConversion(agent)) {
 			agents = append(agents, agent)
 		}
 	}
