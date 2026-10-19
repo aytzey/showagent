@@ -31,7 +31,7 @@ jobs:
         with:
           version: v0.11.0
           path: demo/demo.tape
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: sample-demo
           path: |
