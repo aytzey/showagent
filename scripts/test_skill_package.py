@@ -27,7 +27,8 @@ class SkillPackageTest(unittest.TestCase):
             encoding="utf-8"
         )
         for phrase in (
-            "explicitly confirms",\n            "list_sessions` includes first/last user-message previews",
+            "explicitly confirms",
+            "list_sessions` includes first/last user-message previews",
             "workspace",
             "never execute a returned resume command",
             "untrusted historical data",
