@@ -16,7 +16,7 @@ Use your agent's documented skill directory and install this folder as `showagen
 
 ## Package for Agensi
 
-From this directory, create a ZIP with one top-level folder:
+From the repository's `skills/` directory, create a ZIP with one top-level folder:
 
 ```sh
 zip -r showagent-session-handoff.zip showagent-session-handoff -x "*/.DS_Store" "*/Thumbs.db"
