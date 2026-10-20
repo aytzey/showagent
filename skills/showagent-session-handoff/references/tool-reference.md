@@ -20,6 +20,8 @@ Antigravity cannot receive a new session, so `branch_session` is unsupported for
 
 There is no delete tool. Branch and conversion preserve the original and create a separate session. They carry transferable user/assistant turns, not provider-private tool calls, approvals, encrypted reasoning, or attachments. MCP handoff has no dry-run tool or turn-scope parameter: `max_turns` only limits the read preview, while branch/convert copy all transferable turns. Before confirmation, show `total_turns`, the number previewed, and whether `truncated` is true. Explain when older, unpreviewed text will enter the new session. A request to copy only the previewed subset cannot be fulfilled by these MCP tools.
 
+Preview redaction affects only `get_transcript` output. Both `branch_session` and `convert_session` copy original transferable content, including secret-like values hidden in the preview. Before either write is confirmed, explain that those values may enter the new session and its target model's context. Neither MCP handoff tool provides sanitized-only copying.
+
 ## Local setup
 
 Install showagent using the instructions in the [showagent README](https://github.com/aytzey/showagent#install), then configure the MCP server in the coding agent that will use it. Use that agent's current MCP setup guide; configuration file locations vary by agent and version.

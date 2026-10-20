@@ -41,6 +41,8 @@ class SkillPackageTest(unittest.TestCase):
             "inspect its live mcp tool description",
             "earlier, unpreviewed turns will also be copied",
             "never branch an `antigravity` session",
+            "including secret-like values hidden in the preview",
+            "before requesting confirmation for either tool",
         ):
             self.assertIn(phrase, skill)
         for tool in (
