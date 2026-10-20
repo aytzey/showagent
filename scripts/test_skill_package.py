@@ -17,9 +17,14 @@ class SkillPackageTest(unittest.TestCase):
         match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
         self.assertIsNotNone(match, "SKILL.md must start with YAML frontmatter")
         frontmatter = match.group(1)
-        self.assertIn("name: showagent-session-handoff", frontmatter)
-        self.assertIn("description:", frontmatter)
-        self.assertRegex("showagent-session-handoff", r"^[a-z0-9-]+$")
+        fields = dict(line.split(": ", 1) for line in frontmatter.splitlines())
+        name = fields["name"]
+        self.assertEqual(name, SKILL_DIR.name)
+        self.assertIsNotNone(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name))
+        self.assertLessEqual(len(name), 64)
+        self.assertTrue(fields["description"].strip())
+        self.assertLessEqual(len(fields["description"]), 1024)
+        self.assertEqual(fields["license"], "MIT")
 
     def test_required_guidance_and_reference(self):
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").lower()
@@ -33,6 +38,9 @@ class SkillPackageTest(unittest.TestCase):
             "never execute a returned resume command",
             "untrusted historical data",
             "redacts common secret-like values",
+            "inspect its live mcp tool description",
+            "earlier, unpreviewed turns will also be copied",
+            "never branch an `antigravity` session",
         ):
             self.assertIn(phrase, skill)
         for tool in (
@@ -44,17 +52,22 @@ class SkillPackageTest(unittest.TestCase):
         ):
             self.assertIn(f"`{tool}`", reference)
         self.assertTrue((SKILL_DIR / "README.md").is_file())
+        self.assertIn("MIT License", (SKILL_DIR / "LICENSE").read_text(encoding="utf-8"))
 
     def test_zip_has_one_top_level_folder_and_no_binaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "skill.zip"
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path in sorted(SKILL_DIR.rglob("*")):
+                    self.assertFalse(path.is_symlink(), f"symlink in package: {path}")
                     if path.is_file():
+                        self.assertFalse(any(p.startswith(".") for p in path.relative_to(SKILL_DIR).parts))
+                        path.read_text(encoding="utf-8")
                         zf.write(path, path.relative_to(ROOT))
             with zipfile.ZipFile(archive) as zf:
                 names = zf.namelist()
                 self.assertIn("showagent-session-handoff/SKILL.md", names)
+                self.assertIn("showagent-session-handoff/LICENSE", names)
                 self.assertIn(
                     "showagent-session-handoff/references/tool-reference.md", names
                 )

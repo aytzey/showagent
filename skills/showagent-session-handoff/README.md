@@ -22,8 +22,8 @@ From the repository's `skills/` directory, create a ZIP with one top-level folde
 zip -r showagent-session-handoff.zip showagent-session-handoff -x "*/.DS_Store" "*/Thumbs.db"
 ```
 
-The archive should contain `showagent-session-handoff/SKILL.md` and the package's README and reference file. Run the repository package test before uploading.
+The archive should contain `showagent-session-handoff/SKILL.md` and the package's README and reference file. Run `python3 -B -m unittest discover -s scripts -p 'test_skill_package.py'` from the repository root before uploading. The package includes its MIT license.
 
 ## License
 
-The package text is released under the repository's MIT license. The showagent name and marks remain subject to their applicable rights.
+The package text is released under the MIT license included in `LICENSE`. The showagent name and marks remain subject to their applicable rights.

@@ -14,7 +14,11 @@ The MCP server runs locally over stdio. It has no hosted account, telemetry, or 
 
 Valid provider IDs include `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `mimocode`, `jcode`, and `pi`. `antigravity` sessions can be converted from, but not into. Conversion to OpenCode or MiMoCode requires that provider's CLI because showagent uses the CLI to import.
 
-There is no delete tool. Branch and conversion preserve the original and create a separate session. They carry transferable user/assistant turns, not provider-private tool calls, approvals, encrypted reasoning, or attachments. MCP handoff has no dry-run tool: the skill's safe preview is a bounded transcript review plus a clear confirmation before the write.
+Antigravity cannot receive a new session, so `branch_session` is unsupported for every Antigravity session. Antigravity IDE sessions also cannot be natively resumed; the read-only `resume_command` tool returns an error for those sessions. A successful resume command is required before offering native resume.
+
+`get_transcript` reports `total_turns`, `truncated`, and `secrets_redacted`. Before reading, verify the live tool description says the server redacts secret-like values; a server started with `--allow-secrets` instead advertises verbatim output. Do not rely on the response flag to prevent an unsafe read.
+
+There is no delete tool. Branch and conversion preserve the original and create a separate session. They carry transferable user/assistant turns, not provider-private tool calls, approvals, encrypted reasoning, or attachments. MCP handoff has no dry-run tool or turn-scope parameter: `max_turns` only limits the read preview, while branch/convert copy all transferable turns. Before confirmation, show `total_turns`, the number previewed, and whether `truncated` is true. Explain when older, unpreviewed text will enter the new session. A request to copy only the previewed subset cannot be fulfilled by these MCP tools.
 
 ## Local setup
 
