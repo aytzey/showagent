@@ -170,7 +170,7 @@ Notes:
 # Homebrew (Linux/macOS)
 brew install aytzey/tap/showagent
 
-# Go 1.26.9+
+# Go 1.26.10+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -443,7 +443,7 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-The minimum supported toolchain is Go 1.26.9 (see `go.mod`); CI also runs race tests,
+The minimum supported toolchain is Go 1.26.10 (see `go.mod`); CI also runs race tests,
 golangci-lint, `govulncheck`, and every published cross-compile target.
 
 The illustrated demo uses [vhs](https://github.com/charmbracelet/vhs),
