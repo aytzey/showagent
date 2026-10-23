@@ -1,6 +1,6 @@
 module github.com/aytzey/showagent
 
-go 1.26.9
+go 1.26.10
 
 require (
 	charm.land/bubbles/v2 v2.2.1
