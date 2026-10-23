@@ -537,6 +537,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	_ = os.Setenv("XDG_CACHE_HOME", cache)
+	// Conversions record the one-time star hint marker; keep it off the real home.
+	_ = os.Setenv("SHOWAGENT_STATE_DIR", cache)
 	refreshInBackground = func(refresh func()) { refresh() }
 	code := m.Run()
 	_ = os.RemoveAll(cache)
