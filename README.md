@@ -24,14 +24,15 @@ as that agent's own native session, in a few keystrokes.
 
 ![showagent walkthrough using sample sessions and simulated agent output](docs/demo.gif)
 
-*Sample sessions; simulated CLI output. The handoff uses the real showagent
-binary; the target CLI is a labeled demo stub. See
-[compatibility evidence](docs/compatibility.md) for what has been tested.*
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
+# or: brew install aytzey/tap/showagent
 showagent
 ```
+
+<sub>The demo runs the real showagent binary on sample sessions; the target CLI
+is a labeled stub. See [compatibility evidence](docs/compatibility.md) for what
+has been tested with real agents.</sub>
 
 ## Why showagent
 

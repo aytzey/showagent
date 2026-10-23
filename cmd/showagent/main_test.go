@@ -517,9 +517,15 @@ func TestConvertWritesTargetAndPrintsRecipe(t *testing.T) {
 			t.Fatalf("conversion output missing %q:\n%s", want, stdout)
 		}
 	}
+	if !strings.Contains(stderr, session.StarHint) || strings.Contains(stdout, session.StarHint) {
+		t.Fatalf("first conversion should print the star hint on stderr only; stderr=%q", stderr)
+	}
 	matches, err := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_HOME"), "projects", "*", "*.jsonl"))
 	if err != nil || len(matches) != 2 {
 		t.Fatalf("converted claude files = %v, %v; want original + copy", matches, err)
+	}
+	if _, _, again := runCLI(t, "convert", codexID, "--to", "claude", "--scope", "last:1"); strings.Contains(again, session.StarHint) {
+		t.Fatalf("star hint printed twice: %q", again)
 	}
 }
 

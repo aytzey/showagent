@@ -653,6 +653,9 @@ func (m model) applyMutation(msg sessionMutationMsg) (tea.Model, tea.Cmd) {
 	status := "converted to " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
 	if msg.kind == mutationBranch {
 		status = "branched " + string(msg.row.Provider) + " · " + session.SafeDisplayText(recipe.CommandString)
+	} else if session.FirstConversion() {
+		// The detail pane still shows the resume command.
+		status = "converted to " + string(msg.row.Provider) + " · " + session.StarHint
 	}
 	return m, tea.Batch(cmd, m.list.NewStatusMessage(status))
 }

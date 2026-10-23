@@ -388,6 +388,9 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n\n", row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
 	printResumeRecipe(stdout, session.RecipeFor(converted, resumeOptions))
+	if session.FirstConversion() {
+		_, _ = fmt.Fprintln(stderr, "\n"+session.StarHint)
+	}
 	return 0
 }
 

@@ -335,24 +335,34 @@ func importReceiptKey(plan ImportPlan) string {
 }
 
 func importReceiptDirectory() (string, error) {
+	directory, err := stateDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "imports"), nil
+}
+
+// stateDirectory holds showagent's own small state files (import receipts,
+// the one-time star hint marker).
+func stateDirectory() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SHOWAGENT_STATE_DIR")); override != "" {
 		absolute, err := filepath.Abs(override)
 		if err != nil {
 			return "", fmt.Errorf("resolve SHOWAGENT_STATE_DIR: %w", err)
 		}
-		return filepath.Join(absolute, "imports"), nil
+		return absolute, nil
 	}
 	if runtime.GOOS == "windows" {
 		if local := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); local != "" {
-			return filepath.Join(local, "showagent", "imports"), nil
+			return filepath.Join(local, "showagent"), nil
 		}
 	}
 	if state := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); state != "" {
-		return filepath.Join(state, "showagent", "imports"), nil
+		return filepath.Join(state, "showagent"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("locate import receipt directory: %w", err)
+		return "", fmt.Errorf("locate showagent state directory: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "showagent", "imports"), nil
+	return filepath.Join(home, ".local", "state", "showagent"), nil
 }
