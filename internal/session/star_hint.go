@@ -23,5 +23,8 @@ func FirstConversion() bool {
 	if err != nil {
 		return false
 	}
-	return file.Close() == nil
+	// The marker now exists, so this is the one time; an empty file has nothing
+	// to lose if Close reports an error.
+	_ = file.Close()
+	return true
 }
