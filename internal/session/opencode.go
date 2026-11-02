@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -58,20 +57,18 @@ const (
 // (packages/core/src/session/sql.ts: session/message/part tables; message
 // and part ids are ascending, so MIN/MAX order by id is chronological).
 // Synthetic and ignored text parts are injected context, not user prompts.
-// shortcut: MiMo previews stop at 200 characters to stay under its CLI output
-// flush limit; paginate the query if the session count makes JSON exceed it.
 const opencodeSessionQuery = `SELECT s.id AS id, s.directory AS directory, s.title AS title, s.time_created AS created, s.time_updated AS updated,
- (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id LIMIT 1) AS first_user,
- (SELECT substr(json_extract(p.data,'$.text'),1,200) FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id DESC LIMIT 1) AS last_user
+ (SELECT json_extract(p.data,'$.text') FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id LIMIT 1) AS first_user,
+ (SELECT json_extract(p.data,'$.text') FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = s.id AND json_extract(m.data,'$.role') = 'user' AND json_extract(p.data,'$.type') = 'text' AND COALESCE(json_extract(p.data,'$.synthetic'),0) = 0 AND COALESCE(json_extract(p.data,'$.ignored'),0) = 0 ORDER BY p.id DESC LIMIT 1) AS last_user
  FROM session s WHERE s.parent_id IS NULL AND s.time_archived IS NULL ORDER BY s.time_updated DESC`
 
-// sessionQuery bounds previews only for MiMo; OpenCode keeps whole prompts so
-// search, list --json and MCP filtering still see every word.
+// MiMo copies every Claude Code session into its own store (external_import);
+// import_source lets discovery drop copies whose original showagent lists.
 func (p opencodeProvider) sessionQuery() string {
 	if p.mimo {
-		return opencodeSessionQuery
+		return strings.Replace(opencodeSessionQuery, "s.time_updated AS updated,", "s.time_updated AS updated, (SELECT e.source_path FROM external_import e WHERE e.session_id = s.id LIMIT 1) AS import_source,", 1)
 	}
-	return strings.ReplaceAll(opencodeSessionQuery, "substr(json_extract(p.data,'$.text'),1,200)", "json_extract(p.data,'$.text')")
+	return opencodeSessionQuery
 }
 
 // opencodeProvider adapts the OpenCode CLI to the provider registry.
@@ -205,6 +202,8 @@ type opencodeSessionEntry struct {
 	Updated   int64  `json:"updated"`
 	FirstUser string `json:"first_user"`
 	LastUser  string `json:"last_user"`
+	// ImportSource is the Claude Code transcript a MiMo session was copied from.
+	ImportSource string `json:"import_source"`
 }
 
 func discoverOpenCode(p opencodeProvider) []Row {
@@ -213,6 +212,10 @@ func discoverOpenCode(p opencodeProvider) []Row {
 	}
 
 	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
+	if err != nil && p.mimo {
+		// MiMo builds without external_import have no copies to hide.
+		output, err = runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
+	}
 	if err != nil {
 		// Deliberate skip, matching the other providers: discovery shows what
 		// it can parse and never fails the whole listing.
@@ -226,7 +229,8 @@ func discoverOpenCode(p opencodeProvider) []Row {
 
 	rows := make([]Row, 0, len(entries))
 	for _, entry := range entries {
-		if entry.ID == "" {
+		// The original is listed as a claude row; keep only copies that outlived it.
+		if entry.ID == "" || fileExists(entry.ImportSource) {
 			continue
 		}
 		lastAt := entry.Updated
@@ -576,11 +580,9 @@ func opencodeID(prefix string, descending bool, at time.Time) (string, error) {
 // working directory ("" inherits showagent's). Every call is bounded by
 // opencodeTimeout so a wedged CLI cannot hang the picker.
 //
-// stdout and stderr are drained in their own goroutines via explicit pipes,
-// because discovery outputs can run into multiple megabytes (each session's
-// first/last user-message previews are included in the JSON). Setting
-// command.Stdout/Stderr to an io.Writer and letting exec.Run() drain the
-// pipes itself loses the tail of large outputs — see issue #10.
+// stdout goes to a temp file, not a pipe: MiMoCode exits before flushing a
+// pipe past ~72 KiB, which silently cut session lists once they grew, while a
+// regular file receives every byte (see also issue #10).
 func runOpenCode(dir string, args ...string) ([]byte, error) {
 	return runOpenCodeCLI("opencode", dir, args...)
 }
@@ -593,11 +595,16 @@ func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 	if dir != "" {
 		command.Dir = dir
 	}
+	// MiMo re-imports every Claude Code session on each CLI start; reads must not write its store.
+	command.Env = append(os.Environ(), "MIMOCODE_DISABLE_CLAUDE_IMPORT=1")
 
-	stdoutPipe, err := command.StdoutPipe()
+	stdoutFile, err := os.CreateTemp("", "showagent-opencode-*.out")
 	if err != nil {
-		return nil, fmt.Errorf("%s %s stdout pipe: %w", binary, strings.Join(args, " "), err)
+		return nil, fmt.Errorf("%s %s stdout file: %w", binary, strings.Join(args, " "), err)
 	}
+	defer os.Remove(stdoutFile.Name())
+	defer stdoutFile.Close()
+	command.Stdout = stdoutFile
 	stderrPipe, err := command.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("%s %s stderr pipe: %w", binary, strings.Join(args, " "), err)
@@ -607,34 +614,26 @@ func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%s %s: %w", binary, strings.Join(args, " "), err)
 	}
 
-	var stdout cappedBuffer
-	stdout.max = maxOpenCodeOutput
 	var stderr cappedBuffer
 	stderr.max = maxOpenCodeError
-	var drain sync.WaitGroup
-	drain.Add(2)
-	go func() {
-		defer drain.Done()
-		_, _ = io.Copy(&stdout, stdoutPipe)
-	}()
-	go func() {
-		defer drain.Done()
-		_, _ = io.Copy(&stderr, stderrPipe)
-	}()
-	drain.Wait()
+	_, _ = io.Copy(&stderr, stderrPipe)
 	waitErr := command.Wait()
 
-	if stdout.Len() > maxOpenCodeOutput {
+	if info, err := stdoutFile.Stat(); err == nil && info.Size() > maxOpenCodeOutput {
 		return nil, fmt.Errorf("%s %s: command output exceeds %d bytes", binary, strings.Join(args, " "), maxOpenCodeOutput)
+	}
+	stdout, err := os.ReadFile(stdoutFile.Name())
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: read stdout: %w", binary, strings.Join(args, " "), err)
 	}
 	if waitErr != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
+			detail = strings.TrimSpace(string(stdout))
 		}
 		return nil, fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
 	}
-	return stdout.Bytes(), nil
+	return stdout, nil
 }
 
 type cappedBuffer struct {

@@ -384,14 +384,19 @@ func TestMiMoDiscoverAndHandoff(t *testing.T) {
 	fixture := t.TempDir()
 	t.Setenv("MIMOCODE_HOME", fixture)
 	writeFile(t, filepath.Join(fixture, "data", "mimocode.db"), "fixture")
-	writeFile(t, filepath.Join(fixture, "sessions.json"), `[{"id":"ses_aaaaaaaaaaaaAAAAAAAAAAAAAA","directory":"/work/mimo","title":"MiMo session","created":1751500800000,"updated":1751504400000,"first_user":"hello","last_user":"hello"}]`)
+	claudeOriginal := filepath.Join(root, "claude-original.jsonl")
+	writeFile(t, claudeOriginal, "{}")
+	writeFile(t, filepath.Join(fixture, "sessions.json"), `[{"id":"ses_aaaaaaaaaaaaAAAAAAAAAAAAAA","directory":"/work/mimo","title":"MiMo session","created":1751500800000,"updated":1751504400000,"first_user":"hello","last_user":"hello"},
+{"id":"ses_bbbbbbbbbbbbBBBBBBBBBBBBBB","directory":"/work/mimo","title":"copy","created":1751500800000,"updated":1751500900000,"first_user":"copied","import_source":"`+claudeOriginal+`"},
+{"id":"ses_ccccccccccccCCCCCCCCCCCCCC","directory":"/work/mimo","title":"orphan","created":1751500800000,"updated":1751500800000,"first_user":"outlived","import_source":"`+filepath.Join(root, "deleted.jsonl")+`"}]`)
 	withFakeOpenCode(t, fixture)
 	bin := os.Getenv("PATH")
 	if err := os.Symlink(filepath.Join(bin, "opencode"), filepath.Join(bin, "mimo")); err != nil {
 		t.Fatal(err)
 	}
 	rows := Discover()
-	if len(rows) != 1 || rows[0].Provider != ProviderMiMo {
+	// The Claude Code copy whose original still exists is hidden; the orphan stays.
+	if len(rows) != 2 || rows[0].ID != "ses_aaaaaaaaaaaaAAAAAAAAAAAAAA" || rows[1].ID != "ses_ccccccccccccCCCCCCCCCCCCCC" || rows[0].Provider != ProviderMiMo {
 		t.Fatalf("MiMo discovery = %#v", rows)
 	}
 	if got := strings.Join(rows[0].ResumeCommand(ResumeOptions{}), " "); got != "mimo --session "+rows[0].ID {
@@ -519,6 +524,8 @@ func TestRunOpenCodeDrainsLargeOutput(t *testing.T) {
 	script := fmt.Sprintf(`#!/bin/sh
 export PATH=/usr/bin:/bin
 if [ "$1" = "db" ]; then
+  # MiMoCode emulation: a piped stdout loses everything past 72 KiB.
+  if [ -p /dev/stdout ]; then head -c 73728 /dev/zero | tr '\0' 'a'; exit 0; fi
   head -c %d /dev/zero | tr '\0' 'a'
   printf '%%s' %q
 fi
@@ -541,11 +548,11 @@ fi
 	}
 }
 
-func TestOnlyMiMoBoundsPreviewText(t *testing.T) {
-	if query := (opencodeProvider{}).sessionQuery(); strings.Contains(query, "substr(") || !strings.Contains(query, "json_extract(p.data,'$.text') FROM part") {
-		t.Fatalf("OpenCode previews must keep whole prompts:\n%s", query)
+func TestOnlyMiMoHidesClaudeImportCopies(t *testing.T) {
+	if query := (opencodeProvider{}).sessionQuery(); strings.Contains(query, "external_import") {
+		t.Fatalf("OpenCode has no external_import table:\n%s", query)
 	}
-	if query := (opencodeProvider{mimo: true}).sessionQuery(); strings.Count(query, "substr(json_extract(p.data,'$.text'),1,200)") != 2 {
-		t.Fatalf("MiMo previews must stay bounded:\n%s", query)
+	if query := (opencodeProvider{mimo: true}).sessionQuery(); !strings.Contains(query, "FROM external_import e WHERE e.session_id = s.id LIMIT 1) AS import_source,") {
+		t.Fatalf("MiMo must hide its Claude Code import copies:\n%s", query)
 	}
 }
