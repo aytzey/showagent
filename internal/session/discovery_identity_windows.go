@@ -3,9 +3,9 @@
 package session
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -24,10 +24,13 @@ func discoveryFileIdentity(path string, _ os.FileInfo) string {
 	if windows.GetFileInformationByHandle(handle, &identity) != nil {
 		return ""
 	}
-	// FILE_BASIC_INFO has four 64-bit timestamps; ChangeTime is the fourth.
-	var basic [40]byte
-	if windows.GetFileInformationByHandleEx(handle, windows.FileBasicInfo, &basic[0], uint32(len(basic))) != nil {
+	// FILE_BASIC_INFO requires native eight-byte alignment.
+	var basic struct {
+		CreationTime, LastAccessTime, LastWriteTime, ChangeTime int64
+		FileAttributes                                          uint32
+	}
+	if windows.GetFileInformationByHandleEx(handle, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))) != nil {
 		return ""
 	}
-	return fmt.Sprintf("%d:%d:%d:%d", identity.VolumeSerialNumber, identity.FileIndexHigh, identity.FileIndexLow, binary.LittleEndian.Uint64(basic[24:32]))
+	return fmt.Sprintf("%d:%d:%d:%d", identity.VolumeSerialNumber, identity.FileIndexHigh, identity.FileIndexLow, basic.ChangeTime)
 }
