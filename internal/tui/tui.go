@@ -3,8 +3,10 @@ package tui
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -93,6 +95,33 @@ type providerSessionsMsg struct {
 	rows session.ProviderSessions
 	more <-chan session.ProviderSessions
 	done bool
+}
+
+type discoveryController struct {
+	mu      sync.Mutex
+	current *session.Discovery
+	closed  bool
+}
+
+func (c *discoveryController) next() tea.Msg {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return providerSessionsMsg{done: true}
+	}
+	c.current.Stop()
+	c.current = session.StartDiscovery()
+	results := c.current.Results
+	c.mu.Unlock()
+	return nextProviderCmd(results)()
+}
+
+func (c *discoveryController) close() {
+	c.mu.Lock()
+	c.closed = true
+	current := c.current
+	c.mu.Unlock()
+	current.Stop()
 }
 
 var handoffScopes = []session.HandoffOptions{
@@ -300,6 +329,7 @@ type model struct {
 	busy             string
 	loading          bool
 	discovering      bool
+	discovery        *discoveryController
 	rescanning       bool
 	rescanRow        *session.Row
 	compoundChoosing bool
@@ -313,15 +343,15 @@ type model struct {
 }
 
 func newModel(rows []session.Row) model {
-	return buildModel(rows, firstMessage, false)
+	return buildModel(rows, false)
 }
 
-func newLoadingModel(mode previewMode) model {
-	return buildModel(nil, mode, true)
+func newLoadingModel() model {
+	return buildModel(nil, true)
 }
 
-func buildModel(rows []session.Row, mode previewMode, loading bool) model {
-	render := &renderState{mode: mode, theme: newTheme(true)}
+func buildModel(rows []session.Row, loading bool) model {
+	render := &renderState{mode: firstMessage, theme: newTheme(true)}
 	providers := defaultProviderFilter(rows)
 	collapsedGroups := map[string]bool{}
 	items := groupedItems(filterRows(rows, providers), collapsedGroups)
@@ -366,9 +396,10 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 		allRows:         rows,
 		providers:       providers,
 		collapsedGroups: collapsedGroups,
-		mode:            mode,
+		mode:            firstMessage,
 		loading:         loading,
 		discovering:     loading,
+		discovery:       &discoveryController{},
 		isDark:          true,
 	}
 }
@@ -376,16 +407,12 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tea.RequestBackgroundColor}
 	if m.loading {
-		cmds = append(cmds, m.spinner.Tick, loadSessionsCmd())
+		cmds = append(cmds, m.spinner.Tick, loadSessionsCmd(m.discovery))
 	}
 	return tea.Batch(cmds...)
 }
 
-func loadSessionsCmd() tea.Cmd {
-	return func() tea.Msg {
-		return nextProviderCmd(session.DiscoverProviders())()
-	}
-}
+func loadSessionsCmd(controller *discoveryController) tea.Cmd { return controller.next }
 
 func nextProviderCmd(results <-chan session.ProviderSessions) tea.Cmd {
 	return func() tea.Msg {
@@ -643,7 +670,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			row := selected.row
 			m.rescanRow = &row
 		}
-		return m, tea.Batch(m.spinner.Tick, loadSessionsCmd(), m.list.NewStatusMessage("rescanning session stores…"))
+		return m, tea.Batch(m.spinner.Tick, loadSessionsCmd(m.discovery), m.list.NewStatusMessage("rescanning session stores…"))
 	case key.Matches(msg, m.keys.Providers):
 		return m.toggleProviderIndex(msg.String())
 	}
@@ -876,10 +903,9 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-// toggleProviderIndex maps a digit key onto the discovered provider order:
-// "1" toggles the first discovered provider, "2" the second, and so on.
+// Provider keys use fixed registry slots, including while sources are loading.
 func (m model) toggleProviderIndex(digit string) (tea.Model, tea.Cmd) {
-	order := discoveredProviders(m.allRows)
+	order := session.ProviderOrder()
 	index := int(digit[0] - '1')
 	if index < 0 || index >= len(order) {
 		return m, m.list.NewStatusMessage("no provider on key " + digit)
@@ -887,8 +913,7 @@ func (m model) toggleProviderIndex(digit string) (tea.Model, tea.Cmd) {
 	return m, m.toggleProvider(order[index])
 }
 
-// discoveredProviders lists the providers that actually have sessions, in the
-// stable ProviderOrder, so digit filter keys keep a predictable meaning.
+// discoveredProviders lists only providers with sessions, in registry order.
 func discoveredProviders(rows []session.Row) []session.Provider {
 	var providers []session.Provider
 	for _, provider := range session.ProviderOrder() {
@@ -1100,8 +1125,8 @@ func (m model) statsParts() []string {
 func (m model) providerChips() string {
 	th := m.render.theme
 	chips := make([]string, 0, len(m.providers))
-	for index, provider := range discoveredProviders(m.allRows) {
-		label := fmt.Sprintf("%d %s", index+1, provider)
+	for _, provider := range discoveredProviders(m.allRows) {
+		label := fmt.Sprintf("%d %s", slices.Index(session.ProviderOrder(), provider)+1, provider)
 		if m.providers[provider] {
 			chips = append(chips, th.badgeFor(provider).Padding(0, 1).Render(label))
 		} else {
@@ -1167,8 +1192,8 @@ func (m model) providerFilterHelp() (label, desc string, ok bool) {
 	}
 	labels := make([]string, 0, len(order))
 	states := make([]string, 0, len(order))
-	for index, provider := range order {
-		labels = append(labels, fmt.Sprintf("%d", index+1))
+	for _, provider := range order {
+		labels = append(labels, fmt.Sprintf("%d", slices.Index(session.ProviderOrder(), provider)+1))
 		state := "off"
 		if m.providers[provider] {
 			state = "on"
@@ -1437,10 +1462,11 @@ func Pick(rows []session.Row) (*Selection, error) {
 // Run launches the interactive picker, discovering sessions asynchronously with
 // a loading spinner so startup never blocks on a blank screen.
 func Run() (*Selection, error) {
-	return runProgram(newLoadingModel(firstMessage))
+	return runProgram(newLoadingModel())
 }
 
 func runProgram(m model) (*Selection, error) {
+	defer m.discovery.close()
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return nil, err

@@ -1,6 +1,9 @@
 package session
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +19,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	_ = os.Setenv("XDG_CACHE_HOME", cache)
+	discoveryCacheDir = func() (string, error) {
+		if root := os.Getenv("XDG_CACHE_HOME"); root != "" {
+			return root, nil
+		}
+		return cache, nil
+	}
 	code := m.Run()
 	_ = os.RemoveAll(cache)
 	os.Exit(code)
@@ -60,6 +69,121 @@ func TestDiscoveryCacheReusesUnchangedFilesAndRefreshesEdits(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCacheDetectsRewritesWithPreservedSizeAndTime(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(map[bool]string{false: "in-place", true: "atomic-replacement"}[replace], func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			writeFile(t, path, "first")
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parse := func(path string) (Row, bool) {
+				data, err := os.ReadFile(path)
+				return Row{ID: string(data), File: path}, err == nil
+			}
+			parseRowsCached(path, []string{path}, parse)
+			target := path
+			if replace {
+				target += ".new"
+			}
+			writeFile(t, target, "other")
+			if err := os.Chmod(target, info.Mode()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(target, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			if replace {
+				if err := os.Rename(target, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rows := parseRowsCached(path, []string{path}, parse)
+			if len(rows) != 1 || rows[0].ID != "other" {
+				t.Fatalf("restored file metadata concealed a changed session: %#v", rows)
+			}
+		})
+	}
+}
+
+func TestDeleteAlsoRemovesPersistedSessionPreview(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("CLAUDE_HOME", home)
+	workspace := t.TempDir()
+	path := filepath.Join(home, "projects", claudeProjectDir(workspace), "deleted-session.jsonl")
+	writeFile(t, path, `{"type":"user","sessionId":"deleted-session","cwd":"`+workspace+`","timestamp":"2026-06-01T10:00:00Z","message":{"role":"user","content":"private preview to remove"}}`)
+	rows := discoverClaude(home)
+	if len(rows) != 1 {
+		t.Fatalf("session fixture was not discovered: %#v", rows)
+	}
+	cachePath := discoveryCachePath(discoveryCacheKey("claude", home))
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := Delete(rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "private preview to remove") {
+		t.Fatal("deleting a session retained its saved preview on disk")
+	}
+}
+
+func TestDiscoveryCacheRejectsWrongVersionAndTrailingData(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	key := "invalid-envelope"
+	for _, bad := range []string{
+		`{"Version":0,"Data":{"ID":"stale"}}`,
+		fmt.Sprintf(`{"Version":%d,"Data":{"ID":"stale"}} trailing`, discoveryCacheVersion),
+	} {
+		writeFile(t, discoveryCachePath(key), bad)
+		if err := os.Chmod(discoveryCachePath(key), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var value Row
+		if readDiscoveryCache(key, &value) {
+			t.Fatal("an invalid cache envelope was accepted")
+		}
+	}
+	writeDiscoveryCache(key, Row{ID: "current"})
+	var current Row
+	if !readDiscoveryCache(key, &current) || current.ID != "current" {
+		t.Fatal("valid versioned cache could not be read")
+	}
+}
+
+func TestDeletingDatabaseSessionPurgesOnlyItsSavedPreview(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	home := opencodeFixtureHome(t)
+	withFakeOpenCode(t, home)
+	writeFile(t, filepath.Join(home, "sessions.json"), `[{"id":"ses_delete","created":1,"updated":2,"first_user":"deleted private preview"},{"id":"ses_keep","created":1,"updated":2,"first_user":"keep this preview"}]`)
+	provider := opencodeProvider{}
+	rows := provider.Discover()
+	if len(rows) != 2 {
+		t.Fatalf("database fixture not discovered: %#v", rows)
+	}
+	if err := Delete(rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	var cached opencodeDiscoveryCache
+	if !readDiscoveryCache(discoveryCacheKey("opencode:db", home), &cached) {
+		t.Fatal("deletion discarded unaffected cached previews")
+	}
+	data, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "deleted private preview") || !strings.Contains(string(data), "keep this preview") {
+		t.Fatal("database cache did not remove only the deleted session")
+	}
+}
+
 func TestOpenCodeDiscoveryCachesIdleDatabaseAndRefreshesWAL(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	home := opencodeFixtureHome(t)
@@ -100,6 +224,9 @@ func TestDiscoveryCacheRecoversFromCorruptionAndUnavailableDirectory(t *testing.
 	key := "cache-recovery"
 	for _, corrupt := range []string{"{broken", `{"missing":{"Valid":true}},oops`} {
 		writeFile(t, discoveryCachePath(key), corrupt)
+		if err := os.Chmod(discoveryCachePath(key), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if rows := parseRowsCached(key, []string{path}, parseCodex); len(rows) != 1 {
 			t.Fatalf("a corrupt derived cache hid the source session: %#v", rows)
 		}
@@ -177,6 +304,35 @@ type controlledDiscoveryProvider struct {
 	ProviderImpl
 	name  Provider
 	ready <-chan struct{}
+}
+
+type contextualDiscoveryProvider struct {
+	controlledDiscoveryProvider
+	started chan struct{}
+	stopped chan struct{}
+}
+
+func (p contextualDiscoveryProvider) DiscoverContext(ctx context.Context) []Row {
+	close(p.started)
+	<-ctx.Done()
+	close(p.stopped)
+	return nil
+}
+
+func TestDiscoveryStopWaitsForNativeCleanup(t *testing.T) {
+	provider := contextualDiscoveryProvider{
+		controlledDiscoveryProvider: controlledDiscoveryProvider{name: ProviderMiMo},
+		started:                     make(chan struct{}), stopped: make(chan struct{}),
+	}
+	discovery := startDiscovery([]ProviderImpl{provider})
+	defer discovery.Stop()
+	<-provider.started
+	discovery.Stop()
+	select {
+	case <-provider.stopped:
+	default:
+		t.Fatal("discovery returned before its native provider was stopped")
+	}
 }
 
 func (p controlledDiscoveryProvider) Name() Provider { return p.name }

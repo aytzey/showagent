@@ -124,7 +124,7 @@ func (p opencodeProvider) ScanTargets() []ScanTarget {
 }
 
 func (p opencodeProvider) Discover() []Row {
-	return discoverOpenCode(p)
+	return p.DiscoverContext(context.Background())
 }
 
 func (p opencodeProvider) ResumeArgs(row Row, options ResumeOptions) []string {
@@ -207,12 +207,12 @@ type opencodeSessionEntry struct {
 	ImportSource string `json:"import_source"`
 }
 
-func discoverOpenCode(p opencodeProvider) []Row {
-	if !ProviderCommandAvailable(p.Name()) || !p.databaseExists() {
+func (p opencodeProvider) DiscoverContext(ctx context.Context) []Row {
+	if ctx.Err() != nil || !ProviderCommandAvailable(p.Name()) || !p.databaseExists() {
 		return nil
 	}
 
-	entries, err := p.discoveryEntries()
+	entries, err := p.discoveryEntries(ctx)
 	if err != nil {
 		// Deliberate skip, matching the other providers: discovery shows what
 		// it can parse and never fails the whole listing.
@@ -259,20 +259,22 @@ func discoverOpenCode(p opencodeProvider) []Row {
 	return rows
 }
 
-func (p opencodeProvider) discoveryEntries() ([]opencodeSessionEntry, error) {
+type opencodeDiscoveryCache struct {
+	State   map[string]discoveryStamp
+	Entries []opencodeSessionEntry
+}
+
+func (p opencodeProvider) discoveryEntries(ctx context.Context) ([]opencodeSessionEntry, error) {
 	key := discoveryCacheKey(string(p.Name())+":db", p.Home())
 	before := p.discoveryState()
-	var cached struct {
-		State   map[string]discoveryStamp
-		Entries []opencodeSessionEntry
-	}
+	var cached opencodeDiscoveryCache
 	if len(before) > 0 && readDiscoveryCache(key, &cached) && cached.Entries != nil && maps.Equal(before, cached.State) {
 		return cached.Entries, nil
 	}
-	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
-	if err != nil && p.mimo {
+	output, err := runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
+	if err != nil && p.mimo && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		// MiMo builds without external_import have no copies to hide.
-		output, err = runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
+		output, err = runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
 	}
 	if err != nil {
 		return nil, err
@@ -315,8 +317,14 @@ func (p opencodeProvider) discoveryState() map[string]discoveryStamp {
 		if !ok {
 			return nil
 		}
+		if stamp.Identity == "" {
+			return nil
+		}
 		state[path] = stamp
 		if wal, ok := stampFile(path + "-wal"); ok {
+			if wal.Identity == "" {
+				return nil
+			}
 			state[path+"-wal"] = wal
 		}
 	}
@@ -644,10 +652,16 @@ func runOpenCode(dir string, args ...string) ([]byte, error) {
 }
 
 func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), opencodeTimeout)
+	return runOpenCodeCLIContext(context.Background(), binary, dir, args...)
+}
+
+func runOpenCodeCLIContext(parent context.Context, binary, dir string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, opencodeTimeout)
 	defer cancel()
 
 	command := exec.CommandContext(ctx, binary, args...)
+	configureCommandCancellation(command)
+	command.WaitDelay = 2 * time.Second
 	if dir != "" {
 		command.Dir = dir
 	}
@@ -674,6 +688,9 @@ func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 	stderr.max = maxOpenCodeError
 	_, _ = io.Copy(&stderr, stderrPipe)
 	waitErr := command.Wait()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s %s: %w", binary, strings.Join(args, " "), ctx.Err())
+	}
 
 	if info, err := stdoutFile.Stat(); err == nil && info.Size() > maxOpenCodeOutput {
 		return nil, fmt.Errorf("%s %s: command output exceeds %d bytes", binary, strings.Join(args, " "), maxOpenCodeOutput)

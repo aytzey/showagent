@@ -93,11 +93,14 @@ resuming it. It also explains the reverse direction and what conversion preserve
 If showagent saved you a re-explanation, a ⭐ helps other people find it.
 
 The picker shows sessions as each agent's scan finishes. Codex and Claude
-summaries are cached by file size and modification time; OpenCode and MiMoCode
-listings refresh when their database or WAL changes. Private, secret-redacted
-metadata caches live in the OS cache directory under `showagent/discovery-v1`
-(`~/.cache/showagent/discovery-v1` on Linux). Deleting this cache rebuilds it
-on the next scan.
+summaries are cached by file identity, change time, size, and modification time;
+OpenCode and MiMoCode listings refresh when their database or WAL changes.
+Private metadata caches redact common secret patterns and live in the OS cache
+directory under `showagent/discovery-v2` (`~/.cache/showagent/discovery-v2` on
+Linux). Deleting this cache rebuilds it on the next scan. A first scan of a
+large archive can take longer; ready providers remain usable while others load.
+Leaving the picker cancels unfinished read-only database scans and cleans up
+their temporary output. Deleting a session also removes its cached preview.
 
 ## Install
 
@@ -229,7 +232,7 @@ and adding context to an existing one.
 | `↑/k`, `↓/j`, `pgup/pgdn` | Move through sessions |
 | `/` | Search agent, session id, paths, and first/latest user prompts (every word must match) |
 | `enter` | Resume the selected session in its own CLI |
-| `1`..`9` | Toggle provider visibility, numbered as listed in the header bar |
+| `1`..`8` | Toggle fixed provider slots: Codex, Claude, jcode, OpenCode, MiMoCode, Gemini, Pi, Antigravity |
 | `p` | Cycle the preview column: first → latest → first + latest message |
 | `space` | Collapse or expand the selected workspace group |
 | `o` | Cycle the convert target for the selected session |

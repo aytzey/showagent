@@ -231,7 +231,11 @@ func Delete(row Row) error {
 	if !ok {
 		return fmt.Errorf("unsupported provider %q", row.Provider)
 	}
-	return impl.Delete(row)
+	if err := impl.Delete(row); err != nil {
+		return err
+	}
+	removeDiscoveryPreview(row, impl)
+	return nil
 }
 
 func launch(cwd string, command []string) error {

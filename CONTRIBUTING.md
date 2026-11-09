@@ -30,6 +30,11 @@ For format changes, include fixtures for discovery, transcript extraction,
 branching, conversion, malformed input, and secret-safe previews. Describe the
 upstream CLI version or source commit used to verify the format.
 
+Discovery caches contain derived, redacted metadata. Bump
+`discoveryCacheVersion` when parser or preview rules change, so unchanged
+transcripts cannot retain summaries produced by older parsing rules. Keep cache
+failure non-fatal and cancel read-only CLI scans before leaving the picker.
+
 ## Pull requests
 
 - Add regression tests for behavior changes.

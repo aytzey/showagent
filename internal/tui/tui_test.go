@@ -531,7 +531,7 @@ func TestPreviewCycle(t *testing.T) {
 }
 
 func TestSessionsLoadedTransition(t *testing.T) {
-	m := newLoadingModel(firstMessage)
+	m := newLoadingModel()
 	if !m.loading {
 		t.Fatal("loading model should start in loading state")
 	}

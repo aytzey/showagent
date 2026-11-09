@@ -57,6 +57,22 @@ jobs:
       - name: Demo isolation regression checks
         run: SHOWAGENT_DEMO_BINARY="$PWD/showagent" python3 demo/test_demo.py -v
 
+  native-cache:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Native cache invalidation and scan lifecycle
+        run: go test ./internal/session -run '^(TestDiscoveryCacheReusesUnchangedFilesAndRefreshesEdits|TestDiscoveryCacheDetectsRewritesWithPreservedSizeAndTime|TestDiscoveryCacheRejectsWrongVersionAndTrailingData|TestDiscoveryDoesNotCacheAFileThatChangesDuringParsing|TestDiscoveryStopWaitsForNativeCleanup|TestDiscoveryEmitsReadyProviderWithoutWaitingForSlowProvider)$'
+
   cross-compile:
     runs-on: ubuntu-latest
     strategy:

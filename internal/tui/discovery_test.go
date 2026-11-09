@@ -12,7 +12,7 @@ import (
 )
 
 func TestDiscoveryShowsReadySessionsBeforeOtherProvidersFinish(t *testing.T) {
-	m := newLoadingModel(firstMessage)
+	m := newLoadingModel()
 	m.width, m.height = 120, 36
 	row := session.Row{Provider: session.ProviderClaude, ID: "ready", CWD: "/work/ready", FirstUser: "ready to resume", LastAt: time.Now()}
 	more := make(chan session.ProviderSessions)
@@ -86,5 +86,39 @@ func TestProgressiveRescanRemovesDeletedRowsAndKeepsHiddenProviders(t *testing.T
 	m = asModel(t, updated)
 	if len(m.allRows) != 1 || m.rescanning || m.busy != "" || m.loading {
 		t.Fatalf("progressive rescan did not complete: rows=%d scanning=%v busy=%q", len(m.allRows), m.rescanning, m.busy)
+	}
+}
+
+func TestProviderShortcutsDoNotMoveAsSourcesArrive(t *testing.T) {
+	m := newLoadingModel()
+	more := make(chan session.ProviderSessions)
+	for _, provider := range []session.Provider{session.ProviderClaude, session.ProviderPi} {
+		updated, _ := m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: provider, Rows: []session.Row{{Provider: provider, ID: string(provider)}}}, more: more})
+		m = asModel(t, updated)
+	}
+	if label, _, _ := m.providerFilterHelp(); label != "2/7" {
+		t.Fatalf("ready sources do not have their stable provider keys: %q", label)
+	}
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '7'}))
+	m = asModel(t, updated)
+	if m.providers[session.ProviderPi] {
+		t.Fatal("key 7 did not hide Pi before Codex finished scanning")
+	}
+	updated, _ = m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: session.ProviderCodex, Rows: []session.Row{{Provider: session.ProviderCodex, ID: "late"}}}, more: more})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: '7'}))
+	m = asModel(t, updated)
+	if !m.providers[session.ProviderPi] || !m.providers[session.ProviderClaude] {
+		t.Fatal("a late provider changed the meaning of an existing filter shortcut")
+	}
+}
+
+func TestClosedPickerDoesNotStartALateDiscoveryCommand(t *testing.T) {
+	controller := &discoveryController{}
+	cmd := loadSessionsCmd(controller)
+	controller.close()
+	msg, ok := cmd().(providerSessionsMsg)
+	if !ok || !msg.done || controller.current != nil {
+		t.Fatal("a command scheduled before quit started another provider scan")
 	}
 }
