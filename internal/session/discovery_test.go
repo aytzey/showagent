@@ -42,7 +42,12 @@ func TestDiscoveryCacheReusesUnchangedFilesAndRefreshesEdits(t *testing.T) {
 		return Row{Provider: ProviderCodex, ID: string(data), File: path}, err == nil
 	}
 	for range 2 {
+		before, _ := stampFile(path)
 		rows := parseRowsCached(root, []string{path}, parse)
+		after, _ := stampFile(path)
+		var saved map[string]cachedDiscoveryRow
+		read := readDiscoveryCache(root, &saved)
+		t.Logf("source before=%+v after=%+v cache_read=%v saved=%+v", before, after, read, saved[path].Stamp)
 		if len(rows) != 1 || rows[0].ID != "first" {
 			t.Fatalf("discovery lost an unchanged session: %#v", rows)
 		}
