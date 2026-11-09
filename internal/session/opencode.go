@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -211,19 +212,10 @@ func discoverOpenCode(p opencodeProvider) []Row {
 		return nil
 	}
 
-	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
-	if err != nil && p.mimo {
-		// MiMo builds without external_import have no copies to hide.
-		output, err = runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
-	}
+	entries, err := p.discoveryEntries()
 	if err != nil {
 		// Deliberate skip, matching the other providers: discovery shows what
 		// it can parse and never fails the whole listing.
-		return nil
-	}
-
-	var entries []opencodeSessionEntry
-	if err := decodeOpenCodeJSON(output, &entries); err != nil {
 		return nil
 	}
 
@@ -265,6 +257,70 @@ func discoverOpenCode(p opencodeProvider) []Row {
 		})
 	}
 	return rows
+}
+
+func (p opencodeProvider) discoveryEntries() ([]opencodeSessionEntry, error) {
+	key := discoveryCacheKey(string(p.Name())+":db", p.Home())
+	before := p.discoveryState()
+	var cached struct {
+		State   map[string]discoveryStamp
+		Entries []opencodeSessionEntry
+	}
+	if len(before) > 0 && readDiscoveryCache(key, &cached) && cached.Entries != nil && maps.Equal(before, cached.State) {
+		return cached.Entries, nil
+	}
+	output, err := runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
+	if err != nil && p.mimo {
+		// MiMo builds without external_import have no copies to hide.
+		output, err = runOpenCodeCLI(p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []opencodeSessionEntry
+	if err := decodeOpenCodeJSON(output, &entries); err != nil {
+		return nil, err
+	}
+	if len(before) > 0 && maps.Equal(before, p.discoveryState()) {
+		cached.State = before
+		cached.Entries = make([]opencodeSessionEntry, len(entries))
+		for index, entry := range entries {
+			entry.Title = cleanPreviewText(entry.Title)
+			entry.FirstUser = cleanPreviewText(entry.FirstUser)
+			entry.LastUser = cleanPreviewText(entry.LastUser)
+			cached.Entries[index] = entry
+		}
+		writeDiscoveryCache(key, cached)
+	}
+	return entries, nil
+}
+
+func (p opencodeProvider) discoveryState() map[string]discoveryStamp {
+	name := p.CommandName()
+	if p.mimo {
+		name = "mimocode"
+	}
+	paths, _ := filepath.Glob(filepath.Join(p.Home(), name+"*.db"))
+	if len(paths) == 0 {
+		return nil
+	}
+	state := make(map[string]discoveryStamp)
+	command, err := exec.LookPath(p.CommandName())
+	if err != nil {
+		return nil
+	}
+	paths = append(paths, command)
+	for _, path := range paths {
+		stamp, ok := stampFile(path)
+		if !ok {
+			return nil
+		}
+		state[path] = stamp
+		if wal, ok := stampFile(path + "-wal"); ok {
+			state[path+"-wal"] = wal
+		}
+	}
+	return state
 }
 
 func opencodeUserText(value string) string {
@@ -602,8 +658,8 @@ func runOpenCodeCLI(binary, dir string, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s %s stdout file: %w", binary, strings.Join(args, " "), err)
 	}
-	defer os.Remove(stdoutFile.Name())
-	defer stdoutFile.Close()
+	defer func() { _ = os.Remove(stdoutFile.Name()) }()
+	defer func() { _ = stdoutFile.Close() }()
 	command.Stdout = stdoutFile
 	stderrPipe, err := command.StderrPipe()
 	if err != nil {

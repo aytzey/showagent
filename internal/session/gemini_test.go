@@ -268,6 +268,7 @@ func TestConvertCodexToGeminiRoundTrips(t *testing.T) {
 	}
 	if found == nil {
 		t.Fatalf("converted session not discovered: %#v", rows)
+		return
 	}
 	if found.CWD != source.CWD {
 		t.Fatalf("discovered cwd = %q, want %q (marker-based workspace resolution)", found.CWD, source.CWD)

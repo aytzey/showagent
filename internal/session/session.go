@@ -173,24 +173,14 @@ func (r Row) FilterValue() string {
 }
 
 func Discover() []Row {
-	// Providers own independent stores. Scan them concurrently so a large
-	// Codex archive does not serialize Claude/Gemini discovery or the OpenCode
-	// CLI query. Results are reassembled in registry order before the final
-	// deterministic sort.
-	byProvider := make([][]Row, len(registry))
-	var wg sync.WaitGroup
-	for index, impl := range registry {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			byProvider[index] = impl.Discover()
-		}()
+	byProvider := make(map[Provider][]Row, len(registry))
+	for result := range DiscoverProviders() {
+		byProvider[result.Provider] = result.Rows
 	}
-	wg.Wait()
 
 	var rows []Row
-	for _, providerRows := range byProvider {
-		rows = append(rows, providerRows...)
+	for _, impl := range registry {
+		rows = append(rows, byProvider[impl.Name()]...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if !rows[i].LastAt.Equal(rows[j].LastAt) {

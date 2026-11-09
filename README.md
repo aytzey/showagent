@@ -92,6 +92,13 @@ resuming it. It also explains the reverse direction and what conversion preserve
 
 If showagent saved you a re-explanation, a ⭐ helps other people find it.
 
+The picker shows sessions as each agent's scan finishes. Codex and Claude
+summaries are cached by file size and modification time; OpenCode and MiMoCode
+listings refresh when their database or WAL changes. Private, secret-redacted
+metadata caches live in the OS cache directory under `showagent/discovery-v1`
+(`~/.cache/showagent/discovery-v1` on Linux). Deleting this cache rebuilds it
+on the next scan.
+
 ## Install
 
 On **Linux or macOS**, install the latest GitHub release. The script checks

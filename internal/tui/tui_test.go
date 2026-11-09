@@ -241,6 +241,7 @@ func TestEnterAndCtrlMSelectResume(t *testing.T) {
 		selected := selectedFromModel(t, updated)
 		if selected == nil {
 			t.Fatalf("%q did not select a row", msg.String())
+			return
 		}
 		if selected.Row.ID != "resume-id" {
 			t.Fatalf("%q selected row %q, want resume-id", msg.String(), selected.Row.ID)
