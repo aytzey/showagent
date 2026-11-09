@@ -3,8 +3,10 @@ package tui
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -87,6 +89,39 @@ type pendingConversion struct {
 
 type sessionsLoadedMsg struct {
 	rows []session.Row
+}
+
+type providerSessionsMsg struct {
+	rows session.ProviderSessions
+	more <-chan session.ProviderSessions
+	done bool
+}
+
+type discoveryController struct {
+	mu      sync.Mutex
+	current *session.Discovery
+	closed  bool
+}
+
+func (c *discoveryController) next() tea.Msg {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return providerSessionsMsg{done: true}
+	}
+	c.current.Stop()
+	c.current = session.StartDiscovery()
+	results := c.current.Results
+	c.mu.Unlock()
+	return nextProviderCmd(results)()
+}
+
+func (c *discoveryController) close() {
+	c.mu.Lock()
+	c.closed = true
+	current := c.current
+	c.mu.Unlock()
+	current.Stop()
 }
 
 var handoffScopes = []session.HandoffOptions{
@@ -293,6 +328,8 @@ type model struct {
 	pendingConvert   *pendingConversion
 	busy             string
 	loading          bool
+	discovering      bool
+	discovery        *discoveryController
 	rescanning       bool
 	rescanRow        *session.Row
 	compoundChoosing bool
@@ -306,15 +343,15 @@ type model struct {
 }
 
 func newModel(rows []session.Row) model {
-	return buildModel(rows, firstMessage, false)
+	return buildModel(rows, false)
 }
 
-func newLoadingModel(mode previewMode) model {
-	return buildModel(nil, mode, true)
+func newLoadingModel() model {
+	return buildModel(nil, true)
 }
 
-func buildModel(rows []session.Row, mode previewMode, loading bool) model {
-	render := &renderState{mode: mode, theme: newTheme(true)}
+func buildModel(rows []session.Row, loading bool) model {
+	render := &renderState{mode: firstMessage, theme: newTheme(true)}
 	providers := defaultProviderFilter(rows)
 	collapsedGroups := map[string]bool{}
 	items := groupedItems(filterRows(rows, providers), collapsedGroups)
@@ -359,8 +396,10 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 		allRows:         rows,
 		providers:       providers,
 		collapsedGroups: collapsedGroups,
-		mode:            mode,
+		mode:            firstMessage,
 		loading:         loading,
+		discovering:     loading,
+		discovery:       &discoveryController{},
 		isDark:          true,
 	}
 }
@@ -368,14 +407,17 @@ func buildModel(rows []session.Row, mode previewMode, loading bool) model {
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tea.RequestBackgroundColor}
 	if m.loading {
-		cmds = append(cmds, m.spinner.Tick, loadSessionsCmd())
+		cmds = append(cmds, m.spinner.Tick, loadSessionsCmd(m.discovery))
 	}
 	return tea.Batch(cmds...)
 }
 
-func loadSessionsCmd() tea.Cmd {
+func loadSessionsCmd(controller *discoveryController) tea.Cmd { return controller.next }
+
+func nextProviderCmd(results <-chan session.ProviderSessions) tea.Cmd {
 	return func() tea.Msg {
-		return sessionsLoadedMsg{rows: session.Discover()}
+		rows, ok := <-results
+		return providerSessionsMsg{rows: rows, more: results, done: !ok}
 	}
 }
 
@@ -391,39 +433,54 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyTheme()
 		return m, nil
 	case spinner.TickMsg:
-		if !m.loading {
+		if !m.discovering {
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+	case providerSessionsMsg:
+		if msg.done {
+			return m.Update(sessionsLoadedMsg{rows: m.allRows})
+		}
+		if m.rescanning {
+			kept := make([]session.Row, 0, len(m.allRows))
+			for _, row := range m.allRows {
+				if row.Provider != msg.rows.Provider {
+					kept = append(kept, row)
+				}
+			}
+			m.allRows = kept
+		}
+		m.allRows = upsertAndSortRows(m.allRows, msg.rows.Rows...)
+		m.providers = mergeProviderFilter(m.providers, m.allRows)
+		m.loading = len(m.allRows) == 0
+		m.refreshSessionList()
+		return m, nextProviderCmd(msg.more)
 	case sessionsLoadedMsg:
 		wasRescan := m.rescanning
 		m.loading = false
+		m.discovering = false
 		m.rescanning = false
-		m.busy = ""
-		m.pendingConvert = nil
-		m.allRows = msg.rows
 		if wasRescan {
-			// A rescan keeps the user's provider filter and search; only the
-			// initial load starts from the default all-providers view.
-			m.providers = mergeProviderFilter(m.providers, msg.rows)
-		} else {
-			m.providers = defaultProviderFilter(msg.rows)
+			m.busy = ""
+			m.pendingConvert = nil
 		}
-		m.pruneCollapsedGroups()
-		cmd := m.list.SetItems(m.currentItems())
+		m.allRows = msg.rows
+		m.providers = mergeProviderFilter(m.providers, msg.rows)
+		m.refreshSessionList()
 		if wasRescan && m.rescanRow != nil {
 			selectRowItem(&m.list, *m.rescanRow)
-		} else {
-			selectFirstSession(&m.list)
 		}
 		m.rescanRow = nil
-		m.resizeList()
 		if wasRescan {
-			return m, tea.Batch(cmd, m.list.NewStatusMessage(fmt.Sprintf("rescan done: %d sessions", len(msg.rows))))
+			return m, m.list.NewStatusMessage(fmt.Sprintf("rescan done: %d sessions", len(msg.rows)))
 		}
-		return m, cmd
+		return m, nil
+	case list.FilterMatchesMsg:
+		// Search commands may finish after another provider changes the corpus.
+		m.refreshSessionList()
+		return m, nil
 	case sessionMutationMsg:
 		return m.applyMutation(msg)
 	case sessionDeleteMsg:
@@ -601,15 +658,19 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.setMode(nextPreviewMode(m.mode))
 		return m, m.list.NewStatusMessage("preview: " + modeLong(m.mode))
 	case key.Matches(msg, m.keys.Rescan):
+		if m.discovering {
+			return m, m.list.NewStatusMessage("session scan in progress…")
+		}
 		m.pendingConvert = nil
 		m.rescanning = true
+		m.discovering = true
 		m.busy = "rescan"
 		m.rescanRow = nil
 		if selected, ok := m.list.SelectedItem().(item); ok {
 			row := selected.row
 			m.rescanRow = &row
 		}
-		return m, tea.Batch(loadSessionsCmd(), m.list.NewStatusMessage("rescanning session stores…"))
+		return m, tea.Batch(m.spinner.Tick, loadSessionsCmd(m.discovery), m.list.NewStatusMessage("rescanning session stores…"))
 	case key.Matches(msg, m.keys.Providers):
 		return m.toggleProviderIndex(msg.String())
 	}
@@ -780,6 +841,25 @@ func (m *model) rebuildList() tea.Cmd {
 	return m.list.SetItems(m.currentItems())
 }
 
+func (m *model) refreshSessionList() {
+	selected := m.list.SelectedItem()
+	m.pruneCollapsedGroups()
+	if cmd := m.list.SetItems(m.currentItems()); cmd != nil {
+		m.list, _ = m.list.Update(cmd())
+	}
+	switch selected := selected.(type) {
+	case item:
+		selectRowItem(&m.list, selected.row)
+	case headerItem:
+		selectHeaderItem(&m.list, selected.path)
+	default:
+		selectFirstSession(&m.list)
+	}
+	m.reconcileDeleteArm()
+	m.reconcilePendingConversion()
+	m.resizeList()
+}
+
 func (m *model) rebuildListForSearch() tea.Cmd {
 	return m.list.SetItems(flatItems(filterRows(m.allRows, m.providers)))
 }
@@ -823,10 +903,9 @@ func (m *model) toggleProvider(provider session.Provider) tea.Cmd {
 	return tea.Batch(cmd, m.list.NewStatusMessage("providers: "+providerLabel(m.providers)))
 }
 
-// toggleProviderIndex maps a digit key onto the discovered provider order:
-// "1" toggles the first discovered provider, "2" the second, and so on.
+// Provider keys use fixed registry slots, including while sources are loading.
 func (m model) toggleProviderIndex(digit string) (tea.Model, tea.Cmd) {
-	order := discoveredProviders(m.allRows)
+	order := session.ProviderOrder()
 	index := int(digit[0] - '1')
 	if index < 0 || index >= len(order) {
 		return m, m.list.NewStatusMessage("no provider on key " + digit)
@@ -834,8 +913,7 @@ func (m model) toggleProviderIndex(digit string) (tea.Model, tea.Cmd) {
 	return m, m.toggleProvider(order[index])
 }
 
-// discoveredProviders lists the providers that actually have sessions, in the
-// stable ProviderOrder, so digit filter keys keep a predictable meaning.
+// discoveredProviders lists only providers with sessions, in registry order.
 func discoveredProviders(rows []session.Row) []session.Provider {
 	var providers []session.Provider
 	for _, provider := range session.ProviderOrder() {
@@ -1033,6 +1111,9 @@ func (m model) statsParts() []string {
 		count = fmt.Sprintf("%d of %d sessions", shown, len(m.allRows))
 	}
 	parts = append(parts, th.muted.Render(count))
+	if m.discovering {
+		parts = append(parts, m.spinner.View()+" "+th.muted.Render("scanning…"))
+	}
 	if chips := m.providerChips(); chips != "" {
 		parts = append(parts, chips)
 	}
@@ -1044,8 +1125,8 @@ func (m model) statsParts() []string {
 func (m model) providerChips() string {
 	th := m.render.theme
 	chips := make([]string, 0, len(m.providers))
-	for index, provider := range discoveredProviders(m.allRows) {
-		label := fmt.Sprintf("%d %s", index+1, provider)
+	for _, provider := range discoveredProviders(m.allRows) {
+		label := fmt.Sprintf("%d %s", slices.Index(session.ProviderOrder(), provider)+1, provider)
 		if m.providers[provider] {
 			chips = append(chips, th.badgeFor(provider).Padding(0, 1).Render(label))
 		} else {
@@ -1111,8 +1192,8 @@ func (m model) providerFilterHelp() (label, desc string, ok bool) {
 	}
 	labels := make([]string, 0, len(order))
 	states := make([]string, 0, len(order))
-	for index, provider := range order {
-		labels = append(labels, fmt.Sprintf("%d", index+1))
+	for _, provider := range order {
+		labels = append(labels, fmt.Sprintf("%d", slices.Index(session.ProviderOrder(), provider)+1))
 		state := "off"
 		if m.providers[provider] {
 			state = "on"
@@ -1381,10 +1462,11 @@ func Pick(rows []session.Row) (*Selection, error) {
 // Run launches the interactive picker, discovering sessions asynchronously with
 // a loading spinner so startup never blocks on a blank screen.
 func Run() (*Selection, error) {
-	return runProgram(newLoadingModel(firstMessage))
+	return runProgram(newLoadingModel())
 }
 
 func runProgram(m model) (*Selection, error) {
+	defer m.discovery.close()
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return nil, err
@@ -1470,9 +1552,18 @@ func removeRow(rows []session.Row, removed session.Row) []session.Row {
 	return filtered
 }
 
-func upsertAndSortRows(rows []session.Row, row session.Row) []session.Row {
-	next := removeRow(rows, row)
-	next = append(next, row)
+func upsertAndSortRows(rows []session.Row, additions ...session.Row) []session.Row {
+	replaced := make(map[string]bool, len(additions))
+	for _, row := range additions {
+		replaced[rowKey(row)] = true
+	}
+	next := make([]session.Row, 0, len(rows)+len(additions))
+	for _, row := range rows {
+		if !replaced[rowKey(row)] {
+			next = append(next, row)
+		}
+	}
+	next = append(next, additions...)
 	sort.SliceStable(next, func(i, j int) bool {
 		return next[i].LastAt.After(next[j].LastAt)
 	})

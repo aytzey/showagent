@@ -17,6 +17,40 @@ test. This page distinguishes the checks we can report.
 
 ## Recorded checks
 
+### Local discovery candidate, 2026-11-09
+
+The unreleased `fix/fast-session-discovery` branch was checked on Linux Mint
+amd64 after incorporating the current main branch. These checks cover discovery
+and picker behavior; they add no new provider-resume compatibility claim.
+
+| Check | Result | Scope |
+|---|---|---|
+| Existing archive discovery | Passed | All 651 listed rows matched the original v0.14.2 binary's provider, ID, workspace, and first/latest previews, including duplicate rows |
+| Local listing time | Measured | Original: 18.042 s; first scan with an empty application cache: 12.900 s; three warm scans: 0.441, 0.446, 0.494 s (median 0.446 s) |
+| Exit during an unfinished database scan | Passed | An isolated terminal showed a ready provider while a fixture CLI and its child were still running; quit returned in 6 ms, both processes stopped, temporary output was removed, and the source fixture was unchanged |
+| Cache invalidation | Passed | Same-length rewrites with restored modification times, atomic replacement, concurrent edits, database/WAL changes, corrupt envelopes, and deletion of cached previews |
+| Picker continuity | Passed | Late providers retain search, selection, provider shortcuts, and pending actions; a rescan removes deleted rows |
+| Linux source checks | Passed | Race/shuffled tests, coverage floors, vet, golangci-lint, govulncheck, workflow/shell checks, isolated handoff and demo checks |
+| Five release targets | Built | Linux and macOS amd64/arm64, Windows amd64; cross-compilation does not establish native runtime behavior |
+| macOS and Windows cache behavior | Not run locally | Targeted native CI jobs were added; their results remain a release check |
+
+These are observations from one archive and host, not a portable speed claim.
+The operating-system cache and original session stores were not reset between
+runs. Two active Codex sessions advanced their timestamps during the comparison;
+the identity, workspace, and preview comparison above excludes that changing
+`updated` field. An empty application cache still requires the first full scan
+of each provider; progress is delivered per provider, not per session file.
+
+Reproduce the fixture checks without personal agent stores:
+
+```sh
+go test ./... -race -shuffle=on -covermode=atomic -coverprofile=coverage.out
+go test ./internal/session -run '^$' -bench '^BenchmarkCachedDiscoveryLargeHistory$'
+go build -o showagent ./cmd/showagent
+python3 scripts/verify-handoff.py --binary ./showagent
+SHOWAGENT_DEMO_BINARY="$PWD/showagent" python3 demo/test_demo.py -v
+```
+
 ### Local Antigravity CLI build, 2026-10-16
 
 On Linux, an unreleased showagent build from the `feat/antigravity` branch

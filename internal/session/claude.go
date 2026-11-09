@@ -155,7 +155,7 @@ func discoverClaude(claudeHome string) []Row {
 		}
 		filtered = append(filtered, path)
 	}
-	return parseRowsBounded(filtered, parseClaude)
+	return parseRowsCached(discoveryCacheKey("claude", claudeHome), filtered, parseClaude)
 }
 
 func parseClaude(path string) (Row, bool) {

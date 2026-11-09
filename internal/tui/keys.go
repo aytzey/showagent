@@ -53,7 +53,7 @@ func defaultKeys() keyMap {
 		Yolo:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
 		Providers: key.NewBinding(
 			key.WithKeys(providerFilterKeys()...),
-			key.WithHelp("1-9", "providers"),
+			key.WithHelp("1-8", "providers"),
 		),
 		Rescan: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
 		Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -61,9 +61,7 @@ func defaultKeys() keyMap {
 	}
 }
 
-// providerFilterKeys binds one digit per potential provider slot. A digit's
-// meaning follows the discovered provider order, so new providers pick up the
-// next free digit without a keymap change.
+// Digits map to fixed registry slots even before a provider finishes loading.
 func providerFilterKeys() []string {
 	keys := make([]string, 0, 9)
 	for digit := '1'; digit <= '9'; digit++ {

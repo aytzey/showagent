@@ -199,8 +199,13 @@ class DemoTests(unittest.TestCase):
 
             def snapshot(root):
                 scan_root = native_fs(root)
+                caches = tuple(Path(p) for p in (
+                    ".cache/showagent", "Library/Caches/showagent", "AppData/Local/showagent",
+                ))
                 return {p.relative_to(scan_root): hashlib.sha256(p.read_bytes()).hexdigest()
-                        for p in scan_root.rglob("*") if p.is_file() and p.suffix in (".json", ".jsonl")}
+                        for p in scan_root.rglob("*")
+                        if p.is_file() and p.suffix in (".json", ".jsonl")
+                        and not any(p.relative_to(scan_root).is_relative_to(cache) for cache in caches)}
 
             try:
                 send("printf '__ROOT__:%s\\n' \"$USERPROFILE\"")
@@ -221,6 +226,12 @@ class DemoTests(unittest.TestCase):
                 self.assertEqual(code, "0", preview)
                 self.assertIn("5 transferable turns", "\n".join(preview))
                 self.assertEqual(snapshot(root), before)
+                cache_files = list(root.rglob("showagent/discovery-*/*.json"))
+                self.assertTrue(cache_files, "discovery did not use the isolated demo cache")
+                for path in cache_files:
+                    self.assertTrue(path.resolve().is_relative_to(root))
+                    if os.name != "nt":
+                        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                 send("showagent convert " + source_id + " --to claude")
                 send("printf '__CONVERT__:%s\\n' \"$?\"")
                 converted, code = until("__CONVERT__:")

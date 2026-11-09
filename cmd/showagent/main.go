@@ -609,7 +609,7 @@ Flags:
 Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope
   x preview/confirm hand-off · n branch a copy · C compound · d/del delete
-  p cycle preview (first/latest/both) · 1..9 toggle providers · r rescan
+  p cycle preview (first/latest/both) · 1..8 toggle providers · r rescan
   i import a web conversation · ? full help · esc clear search/overlay · q quit
 
 Session locations:

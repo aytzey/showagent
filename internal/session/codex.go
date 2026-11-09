@@ -119,7 +119,7 @@ func discoverCodex(codexHome string) []Row {
 	var rows []Row
 	multicaRoot := filepath.Join(codexHome, "multica-sessions")
 	for _, target := range codexScanTargets(codexHome) {
-		discovered := parseRowsBounded(jsonlPaths(target.Path), parseCodex)
+		discovered := parseRowsCached(discoveryCacheKey("codex", target.Path), jsonlPaths(target.Path), parseCodex)
 		if target.Path == multicaRoot {
 			for index := range discovered {
 				discovered[index].HandoffOnly = true

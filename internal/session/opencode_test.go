@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -554,5 +555,48 @@ func TestOnlyMiMoHidesClaudeImportCopies(t *testing.T) {
 	}
 	if query := (opencodeProvider{mimo: true}).sessionQuery(); !strings.Contains(query, "FROM external_import e WHERE e.session_id = s.id LIMIT 1) AS import_source,") {
 		t.Fatalf("MiMo must hide its Claude Code import copies:\n%s", query)
+	}
+}
+
+func TestReadOnlyCLICallStopsWhenDiscoveryIsCancelled(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "slow-cli")
+	release := filepath.Join(root, "release")
+	started := filepath.Join(root, "started")
+	script := "#!/bin/sh\n(\nprintf ready > '" + started + "'\nwhile [ ! -f '" + release + "' ]; do sleep 0.02; done\nprintf '[]'\n) &\nwait\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runOpenCodeCLIContext(ctx, binary, "", "db", "--format", "json", "SELECT 1")
+		done <- err
+	}()
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, nil, 0o600)
+		cancel()
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("CLI fixture did not start its child process")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled discovery reported a successful CLI read")
+		}
+	case <-time.After(time.Second):
+		t.Error("leaving the picker left its read-only CLI call running")
+		_ = os.WriteFile(release, nil, 0o600)
+		<-done
 	}
 }
