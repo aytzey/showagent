@@ -101,7 +101,7 @@ Both paths run through your `opencode` CLI. OpenCode 2.x API reads may start its
 managed background service. Unknown versions are skipped during discovery and
 produce an error for transcript or conversion operations.
 Private metadata caches redact common secret patterns and live in the OS cache
-directory under `showagent/discovery-v2` (`~/.cache/showagent/discovery-v2` on
+directory under `showagent/discovery-v3` (`~/.cache/showagent/discovery-v3` on
 Linux). Deleting this cache rebuilds it on the next scan. A first scan of a
 large archive can take longer; ready providers remain usable while others load.
 Leaving the picker cancels unfinished read-only database scans and cleans up
@@ -186,7 +186,7 @@ Notes:
 # Homebrew (Linux/macOS)
 brew install aytzey/tap/showagent
 
-# Go 1.26.10+
+# Go 1.26.11+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -459,7 +459,7 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-The minimum supported toolchain is Go 1.26.10 (see `go.mod`); CI also runs race tests,
+The minimum supported toolchain is Go 1.26.11 (see `go.mod`); CI also runs race tests,
 golangci-lint, `govulncheck`, and every published cross-compile target.
 
 The illustrated demo uses [vhs](https://github.com/charmbracelet/vhs),

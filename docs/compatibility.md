@@ -55,7 +55,9 @@ The smoke creates and stops its own managed service; it does not use the live
 service's port or provider homes. These checks establish compatibility with the
 tested CLI version, not every OpenCode 2.x release. The existing CI retains its
 race/coverage, lint, vulnerability and cross-platform build jobs. Workflow triggers
-remain unchanged.
+remain unchanged. The first CI run exposed
+GO-2026-6859 in the inherited Go 1.26.10 pin, so the minimum toolchain is now
+Go 1.26.11, the patch already used for local verification.
 
 ### Local discovery candidate, 2026-11-09
 
