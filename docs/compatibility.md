@@ -17,6 +17,50 @@ test. This page distinguishes the checks we can report.
 
 ## Recorded checks
 
+### OpenCode 2.x adapter, 2026-11-11
+
+The `opencode-2.x` branch was checked on Linux amd64 with OpenCode **2.2.6**.
+The adapter explicitly detects `opencode --version`: 0.x/1.x keep the existing
+database CLI and export/import formats, while 2.x uses the global paginated API
+through `opencode api` and `opencode session export/import`. MiMoCode keeps its
+existing adapter. Unrecognized output or a major version above 2 fails closed.
+
+The wire format was checked against the tagged OpenCode sources:
+[CLI handlers](https://github.com/anomalyco/opencode/tree/v2.2.6/packages/cli/src/commands/handlers/session),
+[session API](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/protocol/src/groups/session.ts),
+[message API](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/protocol/src/groups/message.ts),
+and [typed messages](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/schema/src/session-message.ts).
+Development guidance was reviewed in OpenCode's tagged
+[AGENTS.md](https://github.com/anomalyco/opencode/blob/v2.2.6/AGENTS.md) and
+[CONTRIBUTING.md](https://github.com/anomalyco/opencode/blob/v2.2.6/CONTRIBUTING.md),
+alongside this repository's Go contribution rules and CI/release workflows.
+
+| Check | Result | Scope |
+|---|---|---|
+| Existing local discovery | Passed | 15 top-level, unarchived sessions across four workspaces; only listing/transcript reads |
+| Isolated native conversion | Passed | Fabricated Codex conversation imported into a separate OpenCode data/config/state/cache home, with its own service port |
+| Native export and transcript | Passed | Three user/assistant messages, Unicode and indentation preserved; source fixture unchanged |
+| Rediscovery and deletion | Passed | Imported fixture rediscovered by showagent and removed through OpenCode's session delete CLI |
+| Version and malformed-data fixtures | Passed | Legacy and 2.x selection, unsupported versions, pagination, preview redaction, isolated preview failures, provider-wide errors and CLI/WAL cache invalidation |
+| Preview reuse | Passed | WAL updates refetch only changed sessions; unrelated updates reuse all previews; CLI replacement invalidates reused previews |
+| Relative native CLI path | Passed | Smoke accepts a relative OpenCode executable path and resolves it before changing directories |
+| Model continuation and interactive resume | Not run | No model call; resume/delete argument shapes remain compatible with 2.2.6 |
+
+Reproduce the native smoke with a real 2.x CLI and fabricated data only:
+
+```sh
+go build -o showagent ./cmd/showagent
+python3 scripts/verify-opencode2.py --binary ./showagent
+```
+
+The smoke creates and stops its own managed service; it does not use the live
+service's port or provider homes. These checks establish compatibility with the
+tested CLI version, not every OpenCode 2.x release. The existing CI retains its
+race/coverage, lint, vulnerability and cross-platform build jobs. Workflow triggers
+remain unchanged. The first CI run exposed
+GO-2026-6859 in the inherited Go 1.26.10 pin, so the minimum toolchain is now
+Go 1.26.11, the patch already used for local verification.
+
 ### Local discovery candidate, 2026-11-09
 
 The unreleased `fix/fast-session-discovery` branch was checked on Linux Mint

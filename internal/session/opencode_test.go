@@ -27,6 +27,13 @@ func withFakeOpenCode(t *testing.T, fixtureDir string) {
 export PATH=/usr/bin:/bin
 echo "$@" >> "` + fixtureDir + `/calls.log"
 case "$1" in
+--version)
+  if test -f "` + fixtureDir + `/version"; then
+    cat "` + fixtureDir + `/version"
+  else
+    echo '1.17.15'
+  fi
+  ;;
 debug)
   echo '{"model":"devpass/mimo-v2.6-pro"}'
   ;;
