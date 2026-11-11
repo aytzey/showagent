@@ -209,7 +209,7 @@ func TestPiBranchCreatesIndependentTransferableCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	branched, err := Branch(source)
+	branched, err := Branch(source, HandoffOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -359,7 +359,7 @@ func TestAntigravityIsAHandoffSourceOnly(t *testing.T) {
 	if _, err := PreviewConversion(source, ProviderAntigravity, HandoffOptions{}); !errors.Is(err, errAntigravityTarget) {
 		t.Fatalf("preview into antigravity err = %v", err)
 	}
-	if _, err := Branch(agyRow); !errors.Is(err, errAntigravityTarget) {
+	if _, err := Branch(agyRow, HandoffOptions{}); !errors.Is(err, errAntigravityTarget) {
 		t.Fatalf("branch antigravity err = %v", err)
 	}
 	if capability := ImportCapabilities(ProviderAntigravity); capability.CanCreate || capability.CanAppendContext || capability.Reason == "" {

@@ -83,7 +83,7 @@ func TestRealCLIMutate(t *testing.T) {
 
 	targets := []Provider{ProviderCodex, ProviderClaude, ProviderGemini, ProviderOpenCode, ProviderJCode, ProviderPi}
 	for _, row := range rows {
-		branched, err := Branch(row)
+		branched, err := Branch(row, HandoffOptions{})
 		if err != nil {
 			t.Fatalf("branch %s/%s: %v", row.Provider, row.ID, err)
 		}

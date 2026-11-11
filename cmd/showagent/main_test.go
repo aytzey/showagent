@@ -506,6 +506,36 @@ func TestConvertDryRunPrintsPreviewWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestConvertThroughUserMessage(t *testing.T) {
+	setFixtureHomes(t)
+	code, stdout, stderr := runCLI(t, "convert", codexID, "--to", "claude", "--through-user", "1", "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "last user: first codex message") || strings.Contains(stdout, "last codex message") {
+		t.Fatalf("preview included conversation after the selected message:\n%s", stdout)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_HOME"), "projects", "*", "*.jsonl")); len(matches) != 1 {
+		t.Fatalf("dry-run wrote sessions: %v", matches)
+	}
+	code, _, stderr = runCLI(t, "convert", codexID, "--to", "claude", "--through-user", "1")
+	if code != 0 {
+		t.Fatalf("convert exit = %d: %s", code, stderr)
+	}
+	rows := session.Discover()
+	for _, row := range rows {
+		if row.Provider != session.ProviderClaude || row.ID == claudeID {
+			continue
+		}
+		turns, err := session.Transcript(row)
+		if err != nil || len(turns) != 1 || turns[0].Text != "first codex message" {
+			t.Fatalf("copied transcript = %#v, err=%v", turns, err)
+		}
+		return
+	}
+	t.Fatal("converted session was not discovered")
+}
+
 func TestConvertWritesTargetAndPrintsRecipe(t *testing.T) {
 	setFixtureHomes(t)
 	code, stdout, stderr := runCLI(t, "convert", codexID, "--to", "claude", "--scope", "last:1")

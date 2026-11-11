@@ -64,6 +64,20 @@ To transfer only recent messages, use `--scope last:50` instead of
 messages; trimming can leave out earlier decisions. Keep the same scope in
 the preview and write commands.
 
+To return to an earlier topic, list the last 30 user messages and use the
+absolute number of the message you want to continue from:
+
+```sh
+showagent messages SOURCE_SESSION_ID
+showagent convert SOURCE_SESSION_ID --to claude --through-user 12 --dry-run
+```
+
+This includes user message #12 and earlier context, excluding its answer and
+every later turn. Keep `--through-user 12` when removing `--dry-run`. Combining
+it with `--scope last:50` keeps the last 50 turns ending at that message.
+Without `--through-user`, conversion keeps the conversation's end. Neither
+choice restores earlier project files; the workspace stays in its current state.
+
 When the preview matches your intent, remove `--dry-run`:
 
 ```sh
@@ -87,9 +101,11 @@ still apply.
 ### The same steps in the picker
 
 Select the source row, then press `o` until the target is `claude`. Press `t`
-if you want a smaller scope. Press `x` to preview and `x` again to create and
-select the new session. Press `enter` to resume it. `esc` backs out of search
-or the preview.
+if you want a smaller scope. Press `x` to choose the conversation's end or
+one of the last 30 user messages. Use `ctrl+d/u` to scroll a long message,
+then `enter` to preview and `x` to create and select the new session. Press
+`enter` to resume it. `esc` backs out of search, the chooser, or the preview.
+For a same-agent branch, press `n`, choose the point, then `enter` to create it.
 Only targets with a CLI on `PATH` appear in the picker.
 
 ## What moves with the conversation

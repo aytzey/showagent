@@ -336,6 +336,7 @@ type model struct {
 	compoundRow      *session.Row
 	compoundNotice   string
 	importFlow       *importWizard
+	continuation     *continuationChooser
 	keysHidden       bool
 	isDark           bool
 	width            int
@@ -487,6 +488,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDelete(msg)
 	case conversionPreviewMsg:
 		return m.applyConversionPreview(msg)
+	case continuationLoadedMsg:
+		if m.continuation == msg.chooser {
+			m.continuation.loading = false
+			m.continuation.messages = msg.messages
+			m.continuation.err = msg.err
+		}
+		return m, nil
 	case importParsedMsg:
 		return m.applyImportParsed(msg)
 	case importPlannedMsg:
@@ -523,6 +531,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.importFlow != nil {
 		return m.updateImport(msg)
+	}
+	if m.continuation != nil {
+		return m.updateContinuation(msg)
 	}
 
 	// The compound chooser is a modal: pick the agent by digit, or cancel.
@@ -644,7 +655,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.startConvert()
 	case key.Matches(msg, m.keys.Branch):
 		m.pendingConvert = nil
-		return m.startMutation(m.branchSelected(), "branch", "creating session branch…")
+		return m.startContinuation(mutationBranch, "")
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
 	case key.Matches(msg, m.keys.Yolo):
@@ -746,6 +757,7 @@ func (m model) applyDelete(msg sessionDeleteMsg) (tea.Model, tea.Cmd) {
 
 func (m model) applyConversionPreview(msg conversionPreviewMsg) (tea.Model, tea.Cmd) {
 	m.busy = ""
+	m.continuation = nil
 	if msg.err != nil {
 		m.pendingConvert = nil
 		return m, m.list.NewStatusMessage("preview failed: " + msg.err.Error())
@@ -779,10 +791,10 @@ func (m model) startConvert() (tea.Model, tea.Cmd) {
 	if m.pendingConvert != nil &&
 		m.pendingConvert.rowKey == rowKey(selected.row) &&
 		m.pendingConvert.target == target &&
-		m.pendingConvert.options == m.handoff {
-		return m.startMutation(m.convertRow(selected.row, target, m.handoff), "conversion", "converting to "+string(target)+"…")
+		m.pendingConvert.options.MaxTurns == m.handoff.MaxTurns {
+		return m.startMutation(m.convertRow(selected.row, target, m.pendingConvert.options), "conversion", "converting to "+string(target)+"…")
 	}
-	return m.startMutation(m.previewConversion(selected.row, target, m.handoff), "preview", "building conversion preview…")
+	return m.startContinuation(mutationConvert, target)
 }
 
 func (m *model) setMode(mode previewMode) {
@@ -955,18 +967,6 @@ func (m *model) convertRow(row session.Row, target session.Provider, options ses
 	}
 }
 
-func (m *model) branchSelected() tea.Cmd {
-	selected, ok := m.list.SelectedItem().(item)
-	if !ok {
-		return nil
-	}
-	row := selected.row
-	return func() tea.Msg {
-		branched, err := session.Branch(row)
-		return sessionMutationMsg{kind: mutationBranch, row: branched, err: err}
-	}
-}
-
 func (m model) startDelete() (tea.Model, tea.Cmd) {
 	selected, ok := m.list.SelectedItem().(item)
 	if !ok {
@@ -1014,6 +1014,8 @@ func (m model) View() tea.View {
 		content = m.loadingView()
 	case m.importFlow != nil:
 		content = m.importView()
+	case m.continuation != nil:
+		content = m.continuationView()
 	case m.compoundChoosing:
 		content = m.compoundView()
 	case len(m.allRows) == 0:

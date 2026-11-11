@@ -17,21 +17,76 @@ type Turn struct {
 }
 
 type HandoffOptions struct {
-	MaxTurns int
+	MaxTurns    int
+	ThroughUser int // One-based user message number; zero keeps the conversation's end.
 }
 
 func (o HandoffOptions) Label() string {
+	if o.ThroughUser > 0 {
+		label := fmt.Sprintf("through user #%d", o.ThroughUser)
+		if o.MaxTurns > 0 {
+			label += fmt.Sprintf(" · last %d", o.MaxTurns)
+		}
+		return label
+	}
 	if o.MaxTurns <= 0 {
 		return "all"
 	}
 	return fmt.Sprintf("last %d", o.MaxTurns)
 }
 
-func (o HandoffOptions) apply(turns []Turn) []Turn {
-	if o.MaxTurns <= 0 || len(turns) <= o.MaxTurns {
-		return turns
+func (o HandoffOptions) apply(turns []Turn) ([]Turn, error) {
+	if o.ThroughUser < 0 {
+		return nil, fmt.Errorf("user message number must be positive")
 	}
-	return turns[len(turns)-o.MaxTurns:]
+	if o.ThroughUser > 0 {
+		users, end := 0, 0
+		for index, turn := range turns {
+			if turn.Role == "user" {
+				users++
+				if users == o.ThroughUser {
+					end = index + 1
+					break
+				}
+			}
+		}
+		if end == 0 {
+			return nil, fmt.Errorf("user message #%d is not in this session", o.ThroughUser)
+		}
+		turns = turns[:end]
+	}
+	if o.MaxTurns <= 0 || len(turns) <= o.MaxTurns {
+		return turns, nil
+	}
+	return turns[len(turns)-o.MaxTurns:], nil
+}
+
+type UserMessage struct {
+	Number int    `json:"number"`
+	Text   string `json:"text"`
+}
+
+// RecentUserMessages returns redacted previews with absolute numbers, so
+// appending messages cannot shift a chosen continuation point.
+func RecentUserMessages(row Row) ([]UserMessage, error) {
+	turns, err := Transcript(row)
+	if err != nil {
+		return nil, err
+	}
+	users := 0
+	for _, turn := range turns {
+		if turn.Role == "user" {
+			users++
+		}
+	}
+	messages := make([]UserMessage, 0, min(users, 30))
+	for index := len(turns) - 1; index >= 0 && len(messages) < 30; index-- {
+		if turn := turns[index]; turn.Role == "user" {
+			messages = append(messages, UserMessage{Number: users, Text: RedactTranscriptText(turn.Text)})
+			users--
+		}
+	}
+	return messages, nil
 }
 
 func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {
@@ -42,7 +97,10 @@ func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
-	turns = options.apply(turns)
+	turns, err = options.apply(turns)
+	if err != nil {
+		return Row{}, err
+	}
 	if len(turns) == 0 {
 		return Row{}, fmt.Errorf("source session has no transferable user or assistant turns")
 	}
