@@ -149,7 +149,7 @@ func parseRowsCached(key string, paths []string, parse func(string) (Row, bool))
 	return rows
 }
 
-const discoveryCacheVersion = 2
+const discoveryCacheVersion = 3
 const maxDiscoveryCacheBytes = 64 << 20
 
 var discoveryCacheDir = os.UserCacheDir

@@ -95,6 +95,11 @@ If showagent saved you a re-explanation, a ⭐ helps other people find it.
 The picker shows sessions as each agent's scan finishes. Codex and Claude
 summaries are cached by file identity, change time, size, and modification time;
 OpenCode and MiMoCode listings refresh when their database or WAL changes.
+OpenCode's installed version selects the adapter: pre-2.x uses its database CLI;
+2.x uses its global paginated API and native session import/export commands.
+Both paths run through your `opencode` CLI. OpenCode 2.x API reads may start its
+managed background service. Unknown versions are skipped during discovery and
+produce an error for transcript or conversion operations.
 Private metadata caches redact common secret patterns and live in the OS cache
 directory under `showagent/discovery-v2` (`~/.cache/showagent/discovery-v2` on
 Linux). Deleting this cache rebuilds it on the next scan. A first scan of a

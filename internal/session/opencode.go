@@ -271,17 +271,33 @@ func (p opencodeProvider) discoveryEntries(ctx context.Context) ([]opencodeSessi
 	if len(before) > 0 && readDiscoveryCache(key, &cached) && cached.Entries != nil && maps.Equal(before, cached.State) {
 		return cached.Entries, nil
 	}
-	output, err := runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
-	if err != nil && p.mimo && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		// MiMo builds without external_import have no copies to hide.
-		output, err = runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
-	}
-	if err != nil {
-		return nil, err
-	}
 	var entries []opencodeSessionEntry
-	if err := decodeOpenCodeJSON(output, &entries); err != nil {
-		return nil, err
+	major := 1
+	if !p.mimo {
+		var err error
+		major, err = openCodeMajorVersion(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if major == 2 {
+		var err error
+		entries, err = discoverOpenCode2(ctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		output, err := runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", p.sessionQuery())
+		if err != nil && p.mimo && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			// MiMo builds without external_import have no copies to hide.
+			output, err = runOpenCodeCLIContext(ctx, p.CommandName(), "", "db", "--format", "json", opencodeSessionQuery)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := decodeOpenCodeJSON(output, &entries); err != nil {
+			return nil, err
+		}
 	}
 	if len(before) > 0 && maps.Equal(before, p.discoveryState()) {
 		cached.State = before
@@ -358,6 +374,13 @@ type opencodeExportData struct {
 func opencodeTranscript(command string, row Row) ([]Turn, error) {
 	if command == "mimo" {
 		return mimoTranscript(row)
+	}
+	major, err := openCodeMajorVersion(context.Background(), existingDir(row.CWD))
+	if err != nil {
+		return nil, err
+	}
+	if major == 2 {
+		return openCode2Transcript(row)
 	}
 	output, err := runOpenCodeCLI(command, existingDir(row.CWD), "export", row.ID)
 	if err != nil {
@@ -457,6 +480,15 @@ func writeOpenCodeConverted(p opencodeProvider, source Row, turns []Turn) (Row, 
 	}
 	if dir == "" {
 		return Row{}, fmt.Errorf("%s conversion needs a known workspace directory", p.CommandName())
+	}
+	if !p.mimo {
+		major, err := openCodeMajorVersion(context.Background(), dir)
+		if err != nil {
+			return Row{}, err
+		}
+		if major == 2 {
+			return writeOpenCode2Converted(source, turns, dir)
+		}
 	}
 	modelProviderID, modelID := "showagent", "converted-transcript"
 	if p.mimo {
