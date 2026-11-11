@@ -82,8 +82,9 @@ showagent
    or latest user prompt. Press `enter` to finish searching, then select the
    session you want to continue.
 2. Press `o` until the target is `claude` (or another installed agent).
-3. Press `x` to review the workspace, message scope, and state that will be
-   dropped. Press `x` again to write and select the new session.
+3. Press `x` and choose where to continue: the conversation's end, or one of
+   the last 30 user messages. Press `enter` to review the hand-off, then `x`
+   to write and select the new session.
 4. Press `enter` to open that new session in the target CLI.
 
 Prefer commands? The [Codex → Claude handoff guide](docs/handoff-guide.md)
@@ -181,7 +182,7 @@ Notes:
 # Homebrew (Linux/macOS)
 brew install aytzey/tap/showagent
 
-# Go 1.26.10+
+# Go 1.26.11+
 go install github.com/aytzey/showagent/cmd/showagent@latest
 ```
 
@@ -237,8 +238,8 @@ and adding context to an existing one.
 | `space` | Collapse or expand the selected workspace group |
 | `o` | Cycle the convert target for the selected session |
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
-| `x` | Preview convert; press `x` again to write and select the new session |
-| `n` | Branch: copy the transferable conversation to a new session in the same agent (not available for Antigravity) |
+| `x` | Choose a continuation point, `enter` to preview, then `x` to write and select the new session |
+| `n` | Choose a continuation point, then `enter` to branch in the same agent (not available for Antigravity) |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
@@ -272,6 +273,19 @@ alias can reopen your last session in one keystroke.
 `showagent transcript <id|latest> [--max-turns N] [--json]` exports the most
 recent turns for local tools that need a bounded context handoff. Output is
 always secret-redacted, marked as untrusted history, and capped at 500 turns.
+
+`showagent messages <id|latest> [--json]` lists the last 30 user messages,
+newest first, with absolute message numbers. Use `--through-user N` with
+`convert` to copy the conversation up to and including that user message.
+Its answer and all later turns are excluded. Earlier context is retained;
+`--scope last:N`, when supplied, trims that prefix. Omit `--through-user`
+to keep the conversation's end. Use the source provider as `--to` for a branch.
+These operations change conversation history only; project files are not rewound.
+
+In the picker, `n` and `x` open the same message chooser. Use `↑/↓` or
+`pgup/pgdn` to choose, `ctrl+d/u` to scroll the full message preview, and
+`esc` to cancel. Message previews redact common secrets; copied history
+retains the original values.
 
 `showagent convert <id|latest> --to <provider> --dry-run` prints the hand-off
 before writing anything: source session, target provider, workspace, scope,
@@ -332,8 +346,9 @@ Tools:
 |---|---|
 | `list_sessions` | Find supported local sessions — filter by provider, workspace substring, or free text over workspace + first/last user message (default 25, max 100 results) |
 | `get_transcript` | Read recent user/assistant turns (default 50, hard max 500); secrets are redacted unless the server was explicitly started with `--allow-secrets` |
-| `branch_session` | Copy the transferable conversation to a new session in the same agent; returns the new id, file, and resume command |
-| `convert_session` | Rewrite a session into another agent's native format; returns the new id, file, and resume command |
+| `get_user_messages` | List the last 30 user messages, newest first, with absolute `number` values; always secret-redacted |
+| `branch_session` | Copy to the same agent; optional `through_user` ends the copy at that user message; returns the new id, file, and resume command |
+| `convert_session` | Copy to another agent; optional `through_user` ends the copy at that user message; returns the new id, file, and resume command |
 | `resume_command` | The exact shell command (and cwd) that resumes a session — returned as a string, **never executed** |
 
 The default MCP surface is deliberately non-destructive: there is **no delete
@@ -405,8 +420,8 @@ the original session is never modified. For file-backed targets, showagent
 writes the new file itself: private (`0600`) and atomically, so a crash cannot
 leave a half-written session in another tool's store.
 
-Trust is explicit: in the TUI, the first `x` shows the hand-off preview and the
-second `x` writes it. In scripts, use `showagent convert ... --dry-run` for
+Trust is explicit: in the TUI, `x` opens the continuation chooser, `enter`
+shows the hand-off preview, and the next `x` writes it. In scripts, use `showagent convert ... --dry-run` for
 the same preview. Conversion intentionally does **not** copy tool-call
 internals, approval history, encrypted reasoning blobs, or provider
 attachments: those are private to the source agent and would not replay
@@ -454,7 +469,7 @@ go test ./...
 go build -o showagent ./cmd/showagent
 ```
 
-The minimum supported toolchain is Go 1.26.10 (see `go.mod`); CI also runs race tests,
+The minimum supported toolchain is Go 1.26.11 (see `go.mod`); CI also runs race tests,
 golangci-lint, `govulncheck`, and every published cross-compile target.
 
 The illustrated demo uses [vhs](https://github.com/charmbracelet/vhs),

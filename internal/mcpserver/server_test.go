@@ -451,11 +451,12 @@ func TestNoDeleteToolExposed(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"list_sessions":   true,
-		"get_transcript":  true,
-		"branch_session":  true,
-		"convert_session": true,
-		"resume_command":  true,
+		"list_sessions":     true,
+		"get_transcript":    true,
+		"get_user_messages": true,
+		"branch_session":    true,
+		"convert_session":   true,
+		"resume_command":    true,
 	}
 	if len(tools.Tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools.Tools), len(want))
@@ -501,7 +502,7 @@ func TestReadOnlyServerOmitsWriteTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"list_sessions": true, "get_transcript": true, "resume_command": true}
+	want := map[string]bool{"list_sessions": true, "get_transcript": true, "get_user_messages": true, "resume_command": true}
 	if len(tools.Tools) != len(want) {
 		t.Fatalf("read-only tool count = %d, want %d", len(tools.Tools), len(want))
 	}

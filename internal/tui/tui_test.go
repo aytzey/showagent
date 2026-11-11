@@ -380,13 +380,13 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 		t.Fatal("expected preview command")
 	}
 	busy := asModel(t, updated)
-	if busy.busy != "preview" {
-		t.Fatalf("busy = %q, want preview", busy.busy)
+	if busy.continuation == nil || !busy.continuation.loading {
+		t.Fatal("expected continuation messages to load before preview")
 	}
 
 	stillBusy, _ := busy.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
-	if got := asModel(t, stillBusy); got.busy != "preview" {
-		t.Fatalf("busy after second action = %q, want preview", got.busy)
+	if got := asModel(t, stillBusy); got.continuation != busy.continuation {
+		t.Fatal("a second action replaced the loading continuation chooser")
 	}
 
 	notResumed, _ := asModel(t, stillBusy).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
@@ -429,6 +429,18 @@ func TestBusyMutationBlocksSecondAction(t *testing.T) {
 	selected, ok := got.list.SelectedItem().(item)
 	if !ok || selected.row.ID != "new" {
 		t.Fatalf("selected row after mutation = %#v, want new", got.list.SelectedItem())
+	}
+}
+
+func TestBranchAsksWhereToContinueBeforeWriting(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "source", File: "/unused/source.jsonl", FirstUser: "original topic"}
+	updated, _ := sizedModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+	got := asModel(t, updated)
+	if view := ansi.Strip(got.View().Content); !strings.Contains(view, "Continue from") {
+		t.Fatalf("branch skipped the message chooser:\n%s", view)
+	}
+	if len(got.allRows) != 1 || got.selected != nil {
+		t.Fatal("opening the chooser changed or resumed a session")
 	}
 }
 

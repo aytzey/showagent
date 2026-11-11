@@ -8,9 +8,10 @@ The MCP server runs locally over stdio. It has no hosted account, telemetry, or 
 |---|---|---|
 | `list_sessions` | Optional `provider`, `workspace`, `query`, `limit` | Read-only metadata and first/last user-message previews; newest first. Default limit 25, maximum 100. |
 | `get_transcript` | Required exact `id`; optional `max_turns` | Reads recent user/assistant turns. Default 50, maximum 500. Secret-like values are redacted unless the server was explicitly started with `--allow-secrets`; do not enable that option. |
+| `get_user_messages` | Required exact `id` | Lists the last 30 user messages, newest first, with absolute one-based `number` values. Always redacts common secrets. |
 | `resume_command` | Required exact `id` | Returns a command and working directory. It does not execute the command. |
-| `branch_session` | Required exact `id` | Writes a new native session for the same provider. It does not change the source. Requires the default writable server and explicit user confirmation. |
-| `convert_session` | Required exact `id`, `target` | Writes a new native session for a different provider. It does not change the source. Requires the default writable server and explicit user confirmation. |
+| `branch_session` | Required exact `id`; optional `through_user` | Writes a new native session for the same provider. It does not change the source. Requires the default writable server and explicit user confirmation. |
+| `convert_session` | Required exact `id`, `target`; optional `through_user` | Writes a new native session for a different provider. It does not change the source. Requires the default writable server and explicit user confirmation. |
 
 Valid provider IDs include `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `mimocode`, `jcode`, and `pi`. `antigravity` sessions can be converted from, but not into. Conversion to OpenCode or MiMoCode requires that provider's CLI because showagent uses the CLI to import.
 
@@ -18,9 +19,9 @@ Antigravity cannot receive a new session, so `branch_session` is unsupported for
 
 `get_transcript` reports `total_turns`, `truncated`, and `secrets_redacted`. Before reading, verify the live tool description says the server redacts secret-like values; a server started with `--allow-secrets` instead advertises verbatim output. Do not rely on the response flag to prevent an unsafe read.
 
-There is no delete tool. Branch and conversion preserve the original and create a separate session. They carry transferable user/assistant turns, not provider-private tool calls, approvals, encrypted reasoning, or attachments. MCP handoff has no dry-run tool or turn-scope parameter: `max_turns` only limits the read preview, while branch/convert copy all transferable turns. Before confirmation, show `total_turns`, the number previewed, and whether `truncated` is true. Explain when older, unpreviewed text will enter the new session. A request to copy only the previewed subset cannot be fulfilled by these MCP tools.
+There is no delete tool. Branch and conversion preserve the original and create a separate session. They carry transferable user/assistant turns, not provider-private tool calls, approvals, encrypted reasoning, or attachments. Ask where to continue using `get_user_messages`: pass the selected absolute `number` as `through_user`. That user message and its preceding context are copied; its answer and all later turns are excluded. Zero or omitted means the full conversation. Project files are never rewound. MCP handoff has no dry-run tool or last-N-turn scope: `max_turns` only limits the read preview. Before confirmation, explain the selected cutoff and any earlier, unpreviewed context included in the copy. A request to copy only the previewed subset cannot be fulfilled by these MCP tools.
 
-Preview redaction affects only `get_transcript` output. Both `branch_session` and `convert_session` copy original transferable content, including secret-like values hidden in the preview. Before either write is confirmed, explain that those values may enter the new session and its target model's context. Neither MCP handoff tool provides sanitized-only copying.
+Preview redaction affects only read output. Both `branch_session` and `convert_session` copy original transferable content, including secret-like values hidden in the preview. Before either write is confirmed, explain that those values may enter the new session and its target model's context. Neither MCP handoff tool provides sanitized-only copying.
 
 ## Local setup
 

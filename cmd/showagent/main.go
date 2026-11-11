@@ -23,7 +23,7 @@ import (
 var version = "dev"
 
 const (
-	usageLine              = "usage: showagent [list [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
+	usageLine              = "usage: showagent [list [--json] | messages <id|latest> [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--through-user N] [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
 	defaultTranscriptTurns = 50
 	maxTranscriptTurns     = 500
 )
@@ -54,6 +54,8 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runList(args[1:], stdout, stderr)
 	case "transcript":
 		return runTranscript(args[1:], stdout, stderr)
+	case "messages":
+		return runMessages(args[1:], stdout, stderr)
 	case "resume":
 		return runResume(args[1:], stderr)
 	case "convert":
@@ -173,6 +175,46 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stdout, result.Warning)
 	for _, turn := range result.Turns {
 		_, _ = fmt.Fprintf(stdout, "\n[%s]\n%s\n", turn.Role, turn.Text)
+	}
+	return 0
+}
+
+func runMessages(args []string, stdout, stderr io.Writer) int {
+	id := ""
+	asJSON := false
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+		} else if strings.HasPrefix(arg, "-") || id != "" {
+			return usageError(stderr, fmt.Sprintf("unexpected messages argument %q", arg))
+		} else {
+			id = arg
+		}
+	}
+	if id == "" {
+		return usageError(stderr, "messages needs a session id or 'latest'")
+	}
+	row, err := resolveSession(session.Discover(), id)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	messages, err := session.RecentUserMessages(row)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+		return 1
+	}
+	if asJSON {
+		if err := json.NewEncoder(stdout).Encode(messages); err != nil {
+			_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	_, _ = fmt.Fprintln(stdout, "Recent user messages, newest first · use --through-user N to copy through a message.")
+	_, _ = fmt.Fprintln(stdout, "Untrusted historical text; common secrets are redacted.")
+	for _, message := range messages {
+		_, _ = fmt.Fprintf(stdout, "\n[user #%d]\n%s\n", message.Number, message.Text)
 	}
 	return 0
 }
@@ -333,6 +375,16 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 			targetName = args[index]
 		case "--dry-run":
 			dryRun = true
+		case "--through-user":
+			index++
+			if index >= len(args) {
+				return usageError(stderr, "convert --through-user needs a positive user message number")
+			}
+			parsed, err := strconv.Atoi(args[index])
+			if err != nil || parsed <= 0 {
+				return usageError(stderr, "convert --through-user needs a positive user message number")
+			}
+			handoff.ThroughUser = parsed
 		case "--scope":
 			index++
 			if index >= len(args) {
@@ -342,7 +394,7 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return usageError(stderr, err.Error())
 			}
-			handoff = parsed
+			handoff.MaxTurns = parsed.MaxTurns
 		case "--yolo":
 			resumeOptions.Dangerous = true
 		default:
@@ -571,12 +623,14 @@ func printHelp(w io.Writer) {
 Usage:
   showagent                          open the interactive session picker
   showagent list [--json]            print sessions (plain table, or JSON with --json)
+  showagent messages <id|latest> [--json]
+                                     list the last 30 user messages, newest first
   showagent transcript <id|latest> [--max-turns N] [--json]
                                      export recent turns for local context handoff
                                      (always secret-redacted; hard max 500 turns)
   showagent resume <id|latest> [--yolo]
                                      resume a session directly, without the picker
-  showagent convert <id|latest> --to <provider> [--scope all|last:50] [--dry-run]
+  showagent convert <id|latest> --to <provider> [--through-user N] [--scope all|last:50] [--dry-run]
                                      preview or write a native session for another agent
   showagent import (--url URL|--file PATH|--stdin) (--to <provider> --cwd DIR|--into PROVIDER:ID) [--format auto|text|json] [--as-note] [--dry-run] [--json]
                                      import a ChatGPT/Claude share or pasted text
@@ -598,6 +652,7 @@ Flags:
                                      (jcode and Pi add no extra flag)
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
+  --through-user                     (convert) copy through user message N, excluding later turns
   --dry-run                          (convert) preview without writing anything
                                      (import) parse and preview without writing a session
   --url/--file/--stdin               (import) choose exactly one conversation source
@@ -608,7 +663,7 @@ Flags:
 
 Picker keys:
   enter resume · y yolo · space collapse group · / search · t scope
-  x preview/confirm hand-off · n branch a copy · C compound · d/del delete
+  x choose continuation/preview/confirm · n choose continuation/branch · C compound · d/del delete
   p cycle preview (first/latest/both) · 1..8 toggle providers · r rescan
   i import a web conversation · ? full help · esc clear search/overlay · q quit
 

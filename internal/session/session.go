@@ -219,8 +219,8 @@ func Handoff(row Row, target Provider, resumeOptions ResumeOptions, handoffOptio
 	return Resume(converted, resumeOptions)
 }
 
-func Branch(row Row) (Row, error) {
-	return Convert(row, row.Provider, HandoffOptions{})
+func Branch(row Row, options HandoffOptions) (Row, error) {
+	return Convert(row, row.Provider, options)
 }
 
 func Delete(row Row) error {

@@ -46,7 +46,10 @@ func PreviewConversion(row Row, target Provider, options HandoffOptions) (Conver
 	if err != nil {
 		return ConversionPreview{}, err
 	}
-	turns = options.apply(turns)
+	turns, err = options.apply(turns)
+	if err != nil {
+		return ConversionPreview{}, err
+	}
 	if len(turns) == 0 {
 		return ConversionPreview{}, fmt.Errorf("source session has no transferable user or assistant turns")
 	}
