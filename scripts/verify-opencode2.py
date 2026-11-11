@@ -21,6 +21,7 @@ def main():
     opencode = shutil.which(args.opencode)
     if not opencode:
         parser.error("OpenCode CLI not found")
+    opencode = str(Path(opencode).resolve())
 
     with tempfile.TemporaryDirectory(prefix="showagent-opencode2-") as root:
         home = Path(root)

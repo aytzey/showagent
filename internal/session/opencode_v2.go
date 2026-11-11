@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,6 +14,11 @@ import (
 )
 
 var openCodeVersionPattern = regexp.MustCompile(`^(?:opencode[ \t]+)?v?([0-9]+)\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$`)
+
+var (
+	errOpenCode2SessionNotFound = errors.New("opencode 2.x session not found")
+	errOpenCode2Data            = errors.New("invalid opencode 2.x data")
+)
 
 func openCodeMajorVersion(ctx context.Context, dir string) (int, error) {
 	output, err := runOpenCodeCLIContext(ctx, "opencode", dir, "--version")
@@ -57,15 +63,21 @@ type openCode2Message struct {
 func openCode2Read(ctx context.Context, path string, target any) error {
 	output, err := runOpenCodeCLIContext(ctx, "opencode", "", "api", "GET", path)
 	if err != nil {
+		var problem struct {
+			Tag string `json:"_tag"`
+		}
+		if decodeOpenCodeJSON(output, &problem) == nil && problem.Tag == "SessionNotFoundError" {
+			return fmt.Errorf("%w: %w", errOpenCode2SessionNotFound, err)
+		}
 		return err
 	}
 	if err := decodeOpenCodeJSON(output, target); err != nil {
-		return fmt.Errorf("parse opencode 2.x API response: %w", err)
+		return fmt.Errorf("%w: %w", errOpenCode2Data, err)
 	}
 	return nil
 }
 
-func discoverOpenCode2(ctx context.Context) ([]opencodeSessionEntry, error) {
+func discoverOpenCode2(ctx context.Context, previous map[string]opencodeSessionEntry) ([]opencodeSessionEntry, error) {
 	query := url.Values{"limit": {"100"}, "order": {"desc"}, "parentID": {"null"}, "archived": {"false"}}
 	var entries []opencodeSessionEntry
 	seen := make(map[string]bool)
@@ -88,14 +100,20 @@ func discoverOpenCode2(ctx context.Context) ([]opencodeSessionEntry, error) {
 				ID: session.ID, Directory: session.Location.Directory, Title: session.Title,
 				Created: session.Time.Created, Updated: session.Time.Updated,
 			}
-			var err error
-			entry.FirstUser, err = openCode2UserPreview(ctx, session.ID, "asc")
-			if err != nil {
-				return nil, err
-			}
-			entry.LastUser, err = openCode2UserPreview(ctx, session.ID, "desc")
-			if err != nil {
-				return nil, err
+			if cached, ok := previous[entry.ID]; ok && entry.Updated > 0 && cached.Updated == entry.Updated && cached.Created == entry.Created {
+				entry.FirstUser, entry.LastUser = cached.FirstUser, cached.LastUser
+			} else {
+				var err error
+				entry.FirstUser, err = openCode2UserPreview(ctx, session.ID, "asc")
+				if err == nil {
+					entry.LastUser, err = openCode2UserPreview(ctx, session.ID, "desc")
+				}
+				if err != nil {
+					if errors.Is(err, errOpenCode2SessionNotFound) || errors.Is(err, errOpenCode2Data) {
+						continue
+					}
+					return nil, err
+				}
 			}
 			entries = append(entries, entry)
 		}
@@ -119,13 +137,13 @@ func openCode2UserPreview(ctx context.Context, id, order string) (string, error)
 		return "", err
 	}
 	if page.Data == nil {
-		return "", fmt.Errorf("opencode 2.x user messages are missing data")
+		return "", fmt.Errorf("%w: user messages are missing data", errOpenCode2Data)
 	}
 	if len(page.Data) == 0 {
 		return "", nil
 	}
 	if page.Data[0].Type != "user" || page.Data[0].Text == nil {
-		return "", fmt.Errorf("opencode 2.x user message is missing its type or text")
+		return "", fmt.Errorf("%w: user message is missing its type or text", errOpenCode2Data)
 	}
 	return *page.Data[0].Text, nil
 }

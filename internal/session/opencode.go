@@ -262,6 +262,7 @@ func (p opencodeProvider) DiscoverContext(ctx context.Context) []Row {
 type opencodeDiscoveryCache struct {
 	State   map[string]discoveryStamp
 	Entries []opencodeSessionEntry
+	Major   int
 }
 
 func (p opencodeProvider) discoveryEntries(ctx context.Context) ([]opencodeSessionEntry, error) {
@@ -281,8 +282,15 @@ func (p opencodeProvider) discoveryEntries(ctx context.Context) ([]opencodeSessi
 		}
 	}
 	if major == 2 {
-		var err error
-		entries, err = discoverOpenCode2(ctx)
+		var previous map[string]opencodeSessionEntry
+		command, err := exec.LookPath(p.CommandName())
+		if err == nil && cached.Major == major && before[command].Identity != "" && before[command] == cached.State[command] {
+			previous = make(map[string]opencodeSessionEntry, len(cached.Entries))
+			for _, entry := range cached.Entries {
+				previous[entry.ID] = entry
+			}
+		}
+		entries, err = discoverOpenCode2(ctx, previous)
 		if err != nil {
 			return nil, err
 		}
@@ -301,6 +309,7 @@ func (p opencodeProvider) discoveryEntries(ctx context.Context) ([]opencodeSessi
 	}
 	if len(before) > 0 && maps.Equal(before, p.discoveryState()) {
 		cached.State = before
+		cached.Major = major
 		cached.Entries = make([]opencodeSessionEntry, len(entries))
 		for index, entry := range entries {
 			entry.Title = cleanPreviewText(entry.Title)
@@ -736,7 +745,7 @@ func runOpenCodeCLIContext(parent context.Context, binary, dir string, args ...s
 		if detail == "" {
 			detail = strings.TrimSpace(string(stdout))
 		}
-		return nil, fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
+		return stdout, fmt.Errorf("%s %s: %w: %s", binary, strings.Join(args, " "), waitErr, detail)
 	}
 	return stdout, nil
 }

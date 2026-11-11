@@ -97,6 +97,8 @@ summaries are cached by file identity, change time, size, and modification time;
 OpenCode and MiMoCode listings refresh when their database or WAL changes.
 OpenCode's installed version selects the adapter: pre-2.x uses its database CLI;
 2.x uses its global paginated API and native session import/export commands.
+Unchanged 2.x sessions reuse cached previews after database updates. A missing
+or malformed session preview is skipped while healthy sessions remain visible.
 Both paths run through your `opencode` CLI. OpenCode 2.x API reads may start its
 managed background service. Unknown versions are skipped during discovery and
 produce an error for transcript or conversion operations.

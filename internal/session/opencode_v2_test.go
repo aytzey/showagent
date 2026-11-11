@@ -29,9 +29,21 @@ api)
     *) exit 8 ;;
     esac ;;
   /api/session/*/message\?*)
+    session=${3#/api/session/}
+    session=${session%%/*}
     case "$3" in
     *type=user*)
-      case "$3" in *order=asc*) cat "$home/first.json" ;; *order=desc*) cat "$home/last.json" ;; *) exit 9 ;; esac ;;
+      case "$3" in *order=asc*) preview=first ;; *order=desc*) preview=last ;; *) exit 9 ;; esac
+      if test -f "$home/$session-$preview-error.json"; then
+        cat "$home/$session-$preview-error.json"
+        echo 'HTTP request failed' >&2
+        exit 1
+      fi
+      if test -f "$home/$session-$preview.json"; then
+        cat "$home/$session-$preview.json"
+      else
+        cat "$home/$preview.json"
+      fi ;;
     *) exit 10 ;;
     esac ;;
   *) exit 11 ;;
@@ -153,9 +165,116 @@ func TestOpenCode2DiscoveryCachesAndRefreshesWAL(t *testing.T) {
 		t.Fatal("warm cache unnecessarily invoked the CLI")
 	}
 	writeFile(t, filepath.Join(home, "last.json"), `{"data":[{"type":"user","text":"new message"}],"cursor":{}}`)
+	writeFile(t, filepath.Join(home, "page1.json"), `{"data":[{"id":"ses_one","title":"First project","location":{"directory":"/work/one"},"time":{"created":1,"updated":5}}],"cursor":{"next":"page two/+="}}`)
 	writeFile(t, filepath.Join(home, "opencode.db-wal"), "changed")
 	if rows := provider.Discover(); len(rows) != 2 || rows[0].LastUser != "new message" {
 		t.Fatalf("WAL change retained stale preview: %#v", rows)
+	}
+}
+
+func TestOpenCode2PreviewFailuresKeepHealthySessions(t *testing.T) {
+	for _, preview := range []string{"first", "last"} {
+		t.Run(preview, func(t *testing.T) {
+			home := opencodeFixtureHome(t)
+			withFakeOpenCode2(t, home)
+			writeFile(t, filepath.Join(home, "ses_two-"+preview+"-error.json"), `{"_tag":"SessionNotFoundError","sessionID":"ses_two","message":"Session not found"}`)
+			provider := opencodeProvider{}
+			rows := provider.Discover()
+			if len(rows) != 1 || rows[0].ID != "ses_one" || rows[0].LastUser != "latest user message" {
+				t.Fatalf("one missing session hid healthy sessions: %#v", rows)
+			}
+			if err := os.Remove(filepath.Join(home, "ses_two-"+preview+"-error.json")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(home, "opencode.db-wal"), "session recovered")
+			if rows := provider.Discover(); len(rows) != 2 {
+				t.Fatalf("session did not recover: %#v", rows)
+			}
+		})
+	}
+}
+
+func TestOpenCode2MalformedPreviewKeepsHealthySessions(t *testing.T) {
+	for _, fixture := range []string{`not json`, `{}`, `{"data":[{"type":"synthetic","text":"injected context"}]}`} {
+		t.Run(fixture, func(t *testing.T) {
+			home := opencodeFixtureHome(t)
+			withFakeOpenCode2(t, home)
+			writeFile(t, filepath.Join(home, "ses_two-first.json"), fixture)
+			rows := (opencodeProvider{}).Discover()
+			if len(rows) != 1 || rows[0].ID != "ses_one" {
+				t.Fatalf("one corrupt preview hid healthy sessions: %#v", rows)
+			}
+		})
+	}
+}
+
+func TestOpenCode2ProviderFailuresRemainErrors(t *testing.T) {
+	for _, fixture := range []string{
+		`{"_tag":"UnauthorizedError","message":"Unauthorized"}`,
+		`{"_tag":"ServiceUnavailableError","message":"Service unavailable"}`,
+		`{"message":"Not found"}`,
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			home := opencodeFixtureHome(t)
+			withFakeOpenCode2(t, home)
+			writeFile(t, filepath.Join(home, "ses_two-first-error.json"), fixture)
+			if _, err := (opencodeProvider{}).discoveryEntries(context.Background()); err == nil {
+				t.Fatal("provider failure was treated as one missing session")
+			}
+		})
+	}
+}
+
+func TestOpenCode2ReusesOnlyUnchangedSessionPreviews(t *testing.T) {
+	home := opencodeFixtureHome(t)
+	withFakeOpenCode2(t, home)
+	provider := opencodeProvider{}
+	if rows := provider.Discover(); len(rows) != 2 {
+		t.Fatalf("first listing = %#v", rows)
+	}
+	writeFile(t, filepath.Join(home, "calls.log"), "")
+	writeFile(t, filepath.Join(home, "last.json"), `{"data":[{"type":"user","text":"new password hunter2"}]}`)
+	writeFile(t, filepath.Join(home, "page1.json"), `{"data":[{"id":"ses_one","title":"Renamed project","location":{"directory":"/work/one"},"time":{"created":1,"updated":5}}],"cursor":{"next":"page two/+="}}`)
+	writeFile(t, filepath.Join(home, "opencode.db-wal"), "one session updated")
+	rows := provider.Discover()
+	if len(rows) != 2 || rows[0].LastUser != "new password [redacted]" || rows[1].LastUser != "latest user message" {
+		t.Fatalf("wrong preview refresh: %#v", rows)
+	}
+	log, err := os.ReadFile(filepath.Join(home, "calls.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(log), "/message?") != 2 || strings.Contains(string(log), "/ses_two/message?") {
+		t.Fatalf("unchanged session refetched its previews: %s", log)
+	}
+	cache, err := os.ReadFile(discoveryCachePath(discoveryCacheKey("opencode:db", home)))
+	if err != nil || strings.Contains(string(cache), "hunter2") {
+		t.Fatalf("cache leaked preview secrets: %v", err)
+	}
+	writeFile(t, filepath.Join(home, "calls.log"), "")
+	writeFile(t, filepath.Join(home, "opencode.db-wal"), "unrelated database update")
+	if rows := provider.Discover(); len(rows) != 2 {
+		t.Fatalf("unrelated update lost sessions: %#v", rows)
+	}
+	log, _ = os.ReadFile(filepath.Join(home, "calls.log"))
+	if strings.Contains(string(log), "/message?") {
+		t.Fatalf("unrelated database update refetched previews: %s", log)
+	}
+	binary := filepath.Join(os.Getenv("PATH"), "opencode")
+	script, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, "calls.log"), "")
+	if err := os.WriteFile(binary, append(script, '\n'), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rows := provider.Discover(); len(rows) != 2 || rows[1].LastUser != "new password [redacted]" {
+		t.Fatalf("CLI replacement reused old previews: %#v", rows)
+	}
+	log, _ = os.ReadFile(filepath.Join(home, "calls.log"))
+	if strings.Count(string(log), "/message?") != 4 {
+		t.Fatalf("CLI replacement did not refresh all previews: %s", log)
 	}
 }
 

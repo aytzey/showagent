@@ -41,7 +41,9 @@ alongside this repository's Go contribution rules and CI/release workflows.
 | Isolated native conversion | Passed | Fabricated Codex conversation imported into a separate OpenCode data/config/state/cache home, with its own service port |
 | Native export and transcript | Passed | Three user/assistant messages, Unicode and indentation preserved; source fixture unchanged |
 | Rediscovery and deletion | Passed | Imported fixture rediscovered by showagent and removed through OpenCode's session delete CLI |
-| Version and malformed-data fixtures | Passed | Legacy and 2.x selection, unsupported versions, pagination, preview redaction, malformed responses and CLI/WAL cache invalidation |
+| Version and malformed-data fixtures | Passed | Legacy and 2.x selection, unsupported versions, pagination, preview redaction, isolated preview failures, provider-wide errors and CLI/WAL cache invalidation |
+| Preview reuse | Passed | WAL updates refetch only changed sessions; unrelated updates reuse all previews; CLI replacement invalidates reused previews |
+| Relative native CLI path | Passed | Smoke accepts a relative OpenCode executable path and resolves it before changing directories |
 | Model continuation and interactive resume | Not run | No model call; resume/delete argument shapes remain compatible with 2.2.6 |
 
 Reproduce the native smoke with a real 2.x CLI and fabricated data only:
