@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,12 +30,69 @@ func TestDiscoveryShowsReadySessionsBeforeOtherProvidersFinish(t *testing.T) {
 	}
 }
 
+func TestDiscoveryStartsOnNewestSessionRegardlessOfProviderOrder(t *testing.T) {
+	now := time.Now()
+	old := session.Row{Provider: session.ProviderClaude, ID: "old", CWD: "/work/old", LastAt: now.Add(-time.Hour)}
+	newer := make([]session.Row, 45)
+	for i := range newer {
+		newer[i] = session.Row{Provider: session.ProviderCodex, ID: fmt.Sprintf("new-%d", i), CWD: fmt.Sprintf("/work/new-%d", i), LastAt: now.Add(-time.Duration(i) * time.Minute)}
+	}
+	oldProvider := session.ProviderSessions{Provider: old.Provider, Rows: []session.Row{old}}
+	newerProvider := session.ProviderSessions{Provider: session.ProviderCodex, Rows: newer}
+	for name, providers := range map[string][]session.ProviderSessions{
+		"newest arrives last":  {oldProvider, newerProvider},
+		"newest arrives first": {newerProvider, oldProvider},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := newLoadingModel()
+			m.width, m.height = 100, 30
+			more := make(chan session.ProviderSessions)
+			for _, provider := range providers {
+				updated, _ := m.Update(providerSessionsMsg{rows: provider, more: more})
+				m = asModel(t, updated)
+			}
+			updated, _ := m.Update(providerSessionsMsg{done: true})
+			m = asModel(t, updated)
+			selected, ok := m.list.SelectedItem().(item)
+			if !ok || selected.row.ID != newer[0].ID || m.list.Paginator.Page != 0 {
+				t.Fatalf("startup landed on an old session/page: selected=%#v page=%d; want %q on page 0", m.list.SelectedItem(), m.list.Paginator.Page, newer[0].ID)
+			}
+		})
+	}
+}
+
+func TestLateProviderKeepsKeyboardSelectionDuringStartup(t *testing.T) {
+	now := time.Now()
+	rows := []session.Row{
+		{Provider: session.ProviderClaude, ID: "first", CWD: "/work", LastAt: now},
+		{Provider: session.ProviderClaude, ID: "chosen", CWD: "/work", LastAt: now.Add(-time.Hour)},
+	}
+	m := newLoadingModel()
+	more := make(chan session.ProviderSessions)
+	updated, _ := m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: session.ProviderClaude, Rows: rows}, more: more})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	m = asModel(t, updated)
+	later := session.Row{Provider: session.ProviderCodex, ID: "newest", CWD: "/other", LastAt: now.Add(time.Hour)}
+	updated, _ = m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: later.Provider, Rows: []session.Row{later}}, more: more})
+	m = asModel(t, updated)
+	updated, _ = m.Update(providerSessionsMsg{done: true})
+	m = asModel(t, updated)
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok || selected.row.ID != "chosen" {
+		t.Fatalf("background discovery moved the user's keyboard selection: %#v", m.list.SelectedItem())
+	}
+}
+
 func TestLateProviderKeepsSearchSelectionAndInFlightAction(t *testing.T) {
 	now := time.Now()
 	first := session.Row{Provider: session.ProviderClaude, ID: "first", CWD: "/work/first", FirstUser: "fix login", LastAt: now}
 	chosen := session.Row{Provider: session.ProviderClaude, ID: "chosen", CWD: "/work/chosen", FirstUser: "fix login again", LastAt: now.Add(-time.Hour)}
-	m := sizedModel([]session.Row{first, chosen})
-	m.discovering = true
+	m := newLoadingModel()
+	m.width, m.height = 120, 36
+	more := make(chan session.ProviderSessions)
+	updated, _ := m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: first.Provider, Rows: []session.Row{first, chosen}}, more: more})
+	m = asModel(t, updated)
 	searching, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: '/'}))
 	m = asModel(t, searching)
 	m.list.SetFilterText("login")
@@ -42,8 +100,7 @@ func TestLateProviderKeepsSearchSelectionAndInFlightAction(t *testing.T) {
 	m.busy = "conversion"
 	m.pendingConvert = &pendingConversion{rowKey: rowKey(chosen)}
 	later := session.Row{Provider: session.ProviderCodex, ID: "later", CWD: "/work/later", FirstUser: "fix login elsewhere", LastAt: now.Add(time.Hour)}
-	more := make(chan session.ProviderSessions)
-	updated, _ := m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: later.Provider, Rows: []session.Row{later}}, more: more})
+	updated, _ = m.Update(providerSessionsMsg{rows: session.ProviderSessions{Provider: later.Provider, Rows: []session.Row{later}}, more: more})
 	m = asModel(t, updated)
 	if m.list.FilterValue() != "login" || len(m.list.VisibleItems()) != 3 {
 		t.Fatalf("late provider lost the current search: query=%q results=%d", m.list.FilterValue(), len(m.list.VisibleItems()))
