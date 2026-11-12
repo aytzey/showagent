@@ -329,6 +329,7 @@ type model struct {
 	busy             string
 	loading          bool
 	discovering      bool
+	followNewest     bool
 	discovery        *discoveryController
 	rescanning       bool
 	rescanRow        *session.Row
@@ -400,6 +401,7 @@ func buildModel(rows []session.Row, loading bool) model {
 		mode:            firstMessage,
 		loading:         loading,
 		discovering:     loading,
+		followNewest:    loading,
 		discovery:       &discoveryController{},
 		isDark:          true,
 	}
@@ -470,6 +472,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allRows = msg.rows
 		m.providers = mergeProviderFilter(m.providers, msg.rows)
 		m.refreshSessionList()
+		m.followNewest = false
 		if wasRescan && m.rescanRow != nil {
 			selectRowItem(&m.list, *m.rescanRow)
 		}
@@ -528,6 +531,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+
+	m.followNewest = false
 
 	if m.importFlow != nil {
 		return m.updateImport(msg)
@@ -855,6 +860,9 @@ func (m *model) rebuildList() tea.Cmd {
 
 func (m *model) refreshSessionList() {
 	selected := m.list.SelectedItem()
+	if m.followNewest {
+		selected = nil
+	}
 	m.pruneCollapsedGroups()
 	if cmd := m.list.SetItems(m.currentItems()); cmd != nil {
 		m.list, _ = m.list.Update(cmd())
