@@ -24,7 +24,7 @@ deleted by the runner. The generator refuses an existing destination, including
 an existing directory containing agent files.
 
 The child environment is rebuilt with `env -i`: HOME, USERPROFILE, AppData/XDG,
-temporary files, all six provider stores, both Pi overrides, and the learnings directory point
+temporary files, the provider stores, both Pi overrides, and the learnings directory point
 inside the sample root. Update checks are disabled. The working directory also
 changes into that root, so caller-local Pi settings are not read. PATH contains
 only the two demo stubs; an installed real `pi`, `opencode`, or other agent cannot
@@ -48,8 +48,8 @@ the MP4 when a publishing channel needs video.
 Requires VHS, ttyd, and ffmpeg, plus GNU date for fixtures. On macOS install
 coreutils or set `DATE_BIN=gdate`; the generator detects `gdate` automatically.
 The tape uses the same isolated runner as the manual demo. It opens with the
-Codex → Claude outcome, previews and confirms the conversion, then hands the
-resume command to an explicitly labeled stub. No fabricated model answer or
+Codex → Claude outcome, shows the continuation chooser, previews and confirms
+the conversion, then hands the resume command to an explicitly labeled stub. No fabricated model answer or
 restored-message count is shown.
 
 The intended loop is about 15–25 seconds at 1200×700, with a GIF budget of 3 MB.
