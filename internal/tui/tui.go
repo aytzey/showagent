@@ -332,6 +332,7 @@ type model struct {
 	selected         *Selection
 	deleteArmed      string
 	pendingConvert   *pendingConversion
+	copyFallback     string
 	busy             string
 	loading          bool
 	discovering      bool
@@ -453,6 +454,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.Update(sessionsLoadedMsg{rows: m.allRows})
 		}
 		if m.rescanning {
+			m.copyFallback = ""
 			kept := make([]session.Row, 0, len(m.allRows))
 			for _, row := range m.allRows {
 				if row.Provider != msg.rows.Provider {
@@ -467,6 +469,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessionList()
 		return m, nextProviderCmd(msg.more)
 	case sessionsLoadedMsg:
+		m.copyFallback = ""
 		wasRescan := m.rescanning
 		m.loading = false
 		m.discovering = false
@@ -511,6 +514,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case importAppliedMsg:
 		return m.applyImportApplied(msg)
 	case tea.KeyPressMsg:
+		if m.copyFallback != "" {
+			m.copyFallback = ""
+			m.resizeList()
+		}
 		return m.handleKey(msg)
 	}
 	if m.importFlow != nil {
@@ -998,11 +1005,18 @@ func (m model) copyResumeCommand() (tea.Model, tea.Cmd) {
 func (m model) applyClipboardCopy(msg clipboardCopyMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		// No clipboard tool (a bare SSH session, a container): ask the terminal
-		// to copy instead. Terminals do not report whether they did.
+		// to copy and keep the full line selectable until the next key press.
+		// Terminals do not report whether they copied it.
+		m.copyFallback = msg.text
+		m.resizeList()
 		return m, tea.Batch(
 			tea.SetClipboard(msg.text),
-			m.list.NewStatusMessage("no clipboard tool · asked the terminal to copy · "+msg.text),
+			m.list.NewStatusMessage("no clipboard tool · asked the terminal to copy · command below"),
 		)
+	}
+	if m.copyFallback != "" {
+		m.copyFallback = ""
+		m.resizeList()
 	}
 	return m, m.list.NewStatusMessage("copied · " + msg.text)
 }
@@ -1298,13 +1312,16 @@ func (m model) detailView() string {
 	}
 	th := m.render.theme
 	width := max(40, m.width)
-	// Lines are truncated to the text area so nothing can wrap and blow the
-	// height budget.
+	// Metadata is truncated to the text area; the copy fallback is already
+	// hard-wrapped and reserves enough rows for every character.
 	frameW, _ := th.detail.GetFrameSize()
 	innerW := max(10, width-frameW)
 	valueW := max(8, innerW-detailLabelWidth)
 	box := func(title string, lines []string) string {
 		return titledBox(th.detailEdge, th.detailEdge, title, "", fitLines(lines, count, innerW), width)
+	}
+	if m.copyFallback != "" {
+		return box("Resume command · select it to copy", m.copyFallbackLines())
 	}
 
 	selected, ok := m.list.SelectedItem().(item)
@@ -1435,18 +1452,33 @@ func yoloEffect(provider session.Provider) string {
 }
 
 func (m model) detailLineCount() int {
+	count := 6
 	switch {
 	case m.width > 0 && m.width < 40:
-		return 0
+		count = 0
 	case m.height < 14:
-		return 0
+		count = 0
 	case m.height < 20:
-		return 2
+		count = 2
 	case m.height < 28:
-		return 4
-	default:
-		return 6
+		count = 4
 	}
+	if m.copyFallback != "" {
+		count = max(count, len(m.copyFallbackLines()))
+	}
+	return count
+}
+
+func (m model) copyFallbackLines() []string {
+	frameW, _ := m.render.theme.detail.GetFrameSize()
+	innerW := max(1, max(40, m.width)-frameW)
+	// Sanitize word by word: runs of spaces inside a quoted path must stay as
+	// they are, or the line on screen would no longer be the copied command.
+	words := strings.Split(m.copyFallback, " ")
+	for i, word := range words {
+		words[i] = session.SafeDisplayText(word)
+	}
+	return strings.Split(ansi.Hardwrap(strings.Join(words, " "), innerW, true), "\n")
 }
 
 func (m model) detailHeight() int {

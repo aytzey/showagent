@@ -905,6 +905,9 @@ func TestCopyPutsTheResumeLineOnTheClipboard(t *testing.T) {
 	if got.selected != nil {
 		t.Fatal("copying resumed the session")
 	}
+	if got.copyFallback != "" || strings.Contains(got.detailView(), "Resume command") || !strings.Contains(got.detailView(), " Session ") {
+		t.Fatalf("native copy changed the session box:\n%s", got.detailView())
+	}
 }
 
 // TestCopyFallsBackToTheTerminalClipboard: without a clipboard tool (a bare
@@ -929,8 +932,117 @@ func TestCopyFallsBackToTheTerminalClipboard(t *testing.T) {
 		t.Fatalf("fallback message = %T %q, want the terminal clipboard request for %q", osc, osc, want)
 	}
 	view := ansi.Strip(asModel(t, done).browseView())
-	if !strings.Contains(view, "no clipboard tool · asked the terminal to copy") || strings.Contains(view, "copied ·") {
+	if !strings.Contains(view, "no clipboard tool · asked the terminal to copy · command below") || strings.Contains(view, "copied ·") {
 		t.Fatalf("status overstates the fallback:\n%s", view)
+	}
+
+	// Pressing c again dismisses the old box and runs the copy normally.
+	again, cmd := asModel(t, done).Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	if asModel(t, again).copyFallback != "" || cmd == nil {
+		t.Fatal("second c did not clear the old fallback and start another copy")
+	}
+	again, _ = asModel(t, again).Update(cmd())
+	if asModel(t, again).copyFallback != want {
+		t.Fatal("second c did not show the fallback again")
+	}
+}
+
+func TestCopyFallbackShowsCompleteCommand(t *testing.T) {
+	withFakeCommands(t, "codex", "claude")
+	for _, pathLength := range []int{100, 139, 600} {
+		t.Run(fmt.Sprint(pathLength), func(t *testing.T) {
+			row := session.Row{Provider: session.ProviderCodex, ID: "c1", CWD: "/projects/" + strings.Repeat("a", pathLength), FirstUser: "resume this session"}
+			command := session.RecipeFor(row, session.ResumeOptions{}).ShellLine()
+			m := sizedModel([]session.Row{row})
+			m.width, m.height = 80, 24
+			m.resizeList()
+			updated, _ := m.Update(clipboardCopyMsg{text: command, err: errors.New("no clipboard tool")})
+			got := asModel(t, updated)
+			view := ansi.Strip(got.browseView())
+			if !strings.Contains(view, "no clipboard tool · asked the terminal to copy · command below") {
+				t.Fatalf("short fallback status missing:\n%s", view)
+			}
+			var joined strings.Builder
+			inCommand := false
+			for _, line := range strings.Split(view, "\n") {
+				if strings.Contains(line, "Resume command · select it to copy") {
+					inCommand = true
+					continue
+				}
+				if inCommand {
+					if strings.HasPrefix(line, "╰") {
+						break
+					}
+					joined.WriteString(strings.TrimSuffix(strings.TrimPrefix(line, "│ "), " │"))
+				}
+			}
+			if !strings.Contains(joined.String(), command) {
+				t.Fatalf("full command %q missing from joined box %q:\n%s", command, joined.String(), view)
+			}
+			for index, line := range strings.Split(view, "\n") {
+				if width := lipgloss.Width(line); width > 80 {
+					t.Fatalf("line %d is %d cells wide: %q", index, width, line)
+				}
+			}
+			if height := lipgloss.Height(view); height > 24 {
+				t.Fatalf("fallback view is %d rows, want <= 24:\n%s", height, view)
+			}
+			if pathLength == 100 {
+				t.Logf("80x24 picker:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestCopyFallbackClearsOnKeyAndRescan(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", FirstUser: "hi"}
+	for name, msg := range map[string]tea.Msg{
+		"key":             tea.KeyPressMsg(tea.Key{Code: 'p'}),
+		"rescan complete": sessionsLoadedMsg{rows: []session.Row{row}},
+		"rescan provider": providerSessionsMsg{rows: session.ProviderSessions{Provider: row.Provider, Rows: []session.Row{row}}},
+		"native copy":     clipboardCopyMsg{text: "codex resume c1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := sizedModel([]session.Row{row})
+			m.width, m.height = 80, 24
+			m.resizeList()
+			listHeight := m.list.Height()
+			updated, _ := m.Update(clipboardCopyMsg{text: strings.Repeat("a", 600), err: errors.New("no clipboard tool")})
+			m = asModel(t, updated)
+			m.rescanning = true
+			updated, _ = m.Update(msg)
+			got := asModel(t, updated)
+			if got.copyFallback != "" || strings.Contains(got.detailView(), "Resume command") || !strings.Contains(got.detailView(), " Session ") {
+				t.Fatalf("fallback not dismissed:\n%s", got.detailView())
+			}
+			if name == "key" && got.mode != lastMessage {
+				t.Fatal("dismissing the fallback swallowed the preview key")
+			}
+			if got.list.Height() != listHeight {
+				t.Fatalf("list height after dismissal = %d, want %d", got.list.Height(), listHeight)
+			}
+		})
+	}
+}
+
+func TestCopyFallbackSanitizesDisplayOnly(t *testing.T) {
+	row := session.Row{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a"}
+	command := "codex \x1b[31mresume\x1b[0m c1\x1b]52;c;YXR0YWNr\x07\u202e"
+	updated, cmd := sizedModel([]session.Row{row}).Update(clipboardCopyMsg{text: command, err: errors.New("no clipboard tool")})
+	got := asModel(t, updated)
+	detail := got.detailView()
+	if !strings.Contains(detail, "codex resume c1") || strings.ContainsAny(detail, "\x07\u202e") || strings.Contains(detail, "\x1b]52") || strings.Contains(detail, "\x1b[31m") {
+		t.Fatalf("unsafe fallback display: %q", detail)
+	}
+	batch := cmd().(tea.BatchMsg)
+	if got.copyFallback != command || fmt.Sprint(batch[0]()) != command {
+		t.Fatal("display sanitization changed the copied text")
+	}
+
+	spaced := "cd '/p/my  project' && codex resume c1"
+	updated, _ = sizedModel([]session.Row{row}).Update(clipboardCopyMsg{text: spaced, err: errors.New("no clipboard tool")})
+	if detail := asModel(t, updated).detailView(); !strings.Contains(detail, spaced) {
+		t.Fatalf("fallback display changed the spacing of the command: %q", detail)
 	}
 }
 

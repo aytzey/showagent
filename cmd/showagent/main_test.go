@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,13 @@ func useRealCodexWorkspace(t *testing.T) string {
 func withFakeCLI(t *testing.T, name string) {
 	t.Helper()
 	bin := t.TempDir()
-	writeFixture(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
+	body := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		// LookPath requires a PATHEXT extension and a Windows batch body.
+		name += ".cmd"
+		body = "@echo off\r\nexit /b 0\r\n"
+	}
+	writeFixture(t, filepath.Join(bin, name), body)
 	if err := os.Chmod(filepath.Join(bin, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
