@@ -39,6 +39,20 @@ type ResumeRecipe struct {
 // PreviewConversion extracts the transferable transcript and summarizes the
 // hand-off without writing anything into the target agent's session store.
 func PreviewConversion(row Row, target Provider, options HandoffOptions) (ConversionPreview, error) {
+	preview, err := previewCopy(row, target, options)
+	if err == nil && row.Provider == target {
+		preview.Warnings = append([]string{"target provider matches source; this creates a local branch/copy"}, preview.Warnings...)
+	}
+	return preview, err
+}
+
+// PreviewBranch is PreviewConversion for a copy that stays in the session's
+// own agent, where landing in the same agent is the point, not a warning.
+func PreviewBranch(row Row, options HandoffOptions) (ConversionPreview, error) {
+	return previewCopy(row, row.Provider, options)
+}
+
+func previewCopy(row Row, target Provider, options HandoffOptions) (ConversionPreview, error) {
 	if err := conversionTargetError(target); err != nil {
 		return ConversionPreview{}, err
 	}
@@ -71,9 +85,6 @@ func PreviewConversion(row Row, target Provider, options HandoffOptions) (Conver
 			"model, provider, token, and runtime metadata",
 			"sidechain, subagent, cache, and checkpoint internals",
 		},
-	}
-	if row.Provider == target {
-		preview.Warnings = append(preview.Warnings, "target provider matches source; this creates a local branch/copy")
 	}
 	if strings.TrimSpace(row.resumeCWD()) == "" || strings.HasPrefix(strings.TrimSpace(row.resumeCWD()), "(") {
 		preview.Warnings = append(preview.Warnings, "source workspace is unknown; some target providers may refuse conversion")

@@ -129,7 +129,7 @@ func TestHelpFlag(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s exit = %d, want 0", flag, code)
 		}
-		for _, want := range []string{"Usage:", "list", "transcript", "resume", "convert", "info", "mcp", "update", "setup", "~/.codex/multica-sessions", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--markdown", "--max-turns", "--scope", "--dry-run", "--open", "--read-only", "--allow-secrets", "c copy the resume command", "o hand-off target"} {
+		for _, want := range []string{"Usage:", "list", "messages <id|latest> [--all] [--json]", "transcript", "resume", "showagent branch <id|latest>", "convert", "--through-user", "--before-user", "info", "mcp", "update", "setup", "~/.codex/multica-sessions", "CODEX_HOME", "CLAUDE_HOME", "JCODE_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "--yolo", "--json", "--markdown", "--max-turns", "--scope", "--dry-run", "--open", "--read-only", "--allow-secrets", "c copy the resume command", "o hand-off target", "n branch from the message you choose", "tab leave the chosen message out"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("%s output missing %q:\n%s", flag, want, stdout)
 			}

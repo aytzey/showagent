@@ -501,9 +501,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyClipboardCopy(msg)
 	case continuationLoadedMsg:
 		if m.continuation == msg.chooser {
-			m.continuation.loading = false
-			m.continuation.messages = msg.messages
-			m.continuation.err = msg.err
+			m.continuation.loaded(msg)
 		}
 		return m, nil
 	case importParsedMsg:
@@ -519,11 +517,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateImportInput(msg)
 	}
 
+	// A paste and the cursor's blink belong to the chooser's search field while
+	// it has the keyboard.
+	var searchCmd tea.Cmd
+	if c := m.continuation; c != nil && c.typing {
+		searchCmd = c.updateSearch(msg, m.continuationSearchWidth())
+	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	m.reconcileDeleteArm()
 	m.reconcilePendingConversion()
-	return m, cmd
+	return m, tea.Batch(searchCmd, cmd)
 }
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

@@ -23,7 +23,7 @@ import (
 var version = "dev"
 
 const (
-	usageLine              = "usage: showagent [list [--json] | messages <id|latest> [--json] | transcript <id|latest> [--max-turns N] [--json|--markdown] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--through-user N] [--scope all|last:N] [--dry-run|--open] [--yolo] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> [--yolo] | mcp [--read-only] [--allow-secrets] | update | setup]"
+	usageLine              = "usage: showagent [list [--json] | messages <id|latest> [--all] [--json] | transcript <id|latest> [--max-turns N] [--json|--markdown] | resume <id|latest> [--yolo] | branch <id|latest> [--through-user N|--before-user N] [--scope all|last:N] [--dry-run|--open] [--yolo] | convert <id|latest> --to <provider> [--through-user N|--before-user N] [--scope all|last:N] [--dry-run|--open] [--yolo] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> [--yolo] | mcp [--read-only] [--allow-secrets] | update | setup]"
 	defaultTranscriptTurns = 50
 	maxTranscriptTurns     = 500
 )
@@ -62,8 +62,10 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runMessages(args[1:], stdout, stderr)
 	case "resume":
 		return runResume(args[1:], stderr)
+	case "branch":
+		return runCopy("branch", args[1:], stdout, stderr)
 	case "convert":
-		return runConvert(args[1:], stdout, stderr)
+		return runCopy("convert", args[1:], stdout, stderr)
 	case "import":
 		return runImport(args[1:], stdin, stdout, stderr)
 	case "info":
@@ -242,12 +244,16 @@ func markdownCode(value string) string {
 func runMessages(args []string, stdout, stderr io.Writer) int {
 	id := ""
 	asJSON := false
+	limit := session.RecentUserMessageLimit
 	for _, arg := range args {
-		if arg == "--json" {
+		switch {
+		case arg == "--json":
 			asJSON = true
-		} else if strings.HasPrefix(arg, "-") || id != "" {
+		case arg == "--all":
+			limit = 0
+		case strings.HasPrefix(arg, "-") || id != "":
 			return usageError(stderr, fmt.Sprintf("unexpected messages argument %q", arg))
-		} else {
+		default:
 			id = arg
 		}
 	}
@@ -259,7 +265,7 @@ func runMessages(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
-	messages, err := session.RecentUserMessages(row)
+	messages, _, err := session.UserMessages(row, 0, limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
@@ -271,8 +277,13 @@ func runMessages(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	_, _ = fmt.Fprintln(stdout, "Recent user messages, newest first · use --through-user N to copy through a message.")
+	_, _ = fmt.Fprintln(stdout, "User messages, newest first · --through-user N ends a copy on a message, --before-user N just before it.")
 	_, _ = fmt.Fprintln(stdout, "Untrusted historical text; common secrets are redacted.")
+	// Numbers are absolute and the list is newest first, so the first one is
+	// also the count and the last one says whether older messages were cut.
+	if count := len(messages); count > 0 && messages[count-1].Number > 1 {
+		_, _ = fmt.Fprintf(stdout, "Showing the newest %d of %d user messages; add --all for the rest.\n", count, messages[0].Number)
+	}
 	for _, message := range messages {
 		_, _ = fmt.Fprintf(stdout, "\n[user #%d]\n%s\n", message.Number, message.Text)
 	}
@@ -422,7 +433,11 @@ func runResume(args []string, stderr io.Writer) int {
 	return 0
 }
 
-func runConvert(args []string, stdout, stderr io.Writer) int {
+// runCopy writes a new session from an existing one. "convert" hands it to the
+// agent named by --to; "branch" keeps it in the session's own agent. Both end
+// the copy wherever --through-user or --before-user says.
+func runCopy(command string, args []string, stdout, stderr io.Writer) int {
+	branch := command == "branch"
 	id := ""
 	targetName := ""
 	dryRun := false
@@ -434,6 +449,9 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 		arg := args[index]
 		switch arg {
 		case "--to":
+			if branch {
+				return usageError(stderr, "branch copies a session inside its own agent; use 'showagent convert --to <provider>' to hand it to another agent")
+			}
 			index++
 			if index >= len(args) {
 				return usageError(stderr, "convert --to needs a provider")
@@ -443,20 +461,24 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 			dryRun = true
 		case "--open":
 			open = true
-		case "--through-user":
+		case "--through-user", "--before-user":
 			index++
-			if index >= len(args) {
-				return usageError(stderr, "convert --through-user needs a positive user message number")
+			parsed := 0
+			if index < len(args) {
+				parsed, _ = strconv.Atoi(args[index])
 			}
-			parsed, err := strconv.Atoi(args[index])
-			if err != nil || parsed <= 0 {
-				return usageError(stderr, "convert --through-user needs a positive user message number")
+			if parsed <= 0 {
+				return usageError(stderr, command+" "+arg+" needs a positive user message number")
 			}
-			handoff.ThroughUser = parsed
+			if arg == "--through-user" {
+				handoff.ThroughUser = parsed
+			} else {
+				handoff.BeforeUser = parsed
+			}
 		case "--scope":
 			index++
 			if index >= len(args) {
-				return usageError(stderr, "convert --scope needs a value")
+				return usageError(stderr, command+" --scope needs a value")
 			}
 			parsed, err := parseHandoffScope(args[index])
 			if err != nil {
@@ -467,26 +489,33 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 			resumeOptions.Dangerous = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return usageError(stderr, fmt.Sprintf("unknown convert argument %q", arg))
+				return usageError(stderr, fmt.Sprintf("unknown %s argument %q", command, arg))
 			}
 			if id != "" {
-				return usageError(stderr, fmt.Sprintf("unexpected convert argument %q", arg))
+				return usageError(stderr, fmt.Sprintf("unexpected %s argument %q", command, arg))
 			}
 			id = arg
 		}
 	}
 	if id == "" {
-		return usageError(stderr, "convert needs a session id or 'latest'")
+		return usageError(stderr, command+" needs a session id or 'latest'")
 	}
-	if targetName == "" {
+	if !branch && targetName == "" {
 		return usageError(stderr, "convert needs --to <provider>")
 	}
 	if open && dryRun {
-		return usageError(stderr, "convert --open and --dry-run cannot be combined")
+		return usageError(stderr, command+" --open and --dry-run cannot be combined")
 	}
-	target, err := session.ParseProvider(targetName)
-	if err != nil {
-		return usageError(stderr, err.Error())
+	if handoff.ThroughUser > 0 && handoff.BeforeUser > 0 {
+		return usageError(stderr, command+" --through-user and --before-user cannot be combined")
+	}
+	var target session.Provider
+	if !branch {
+		parsed, err := session.ParseProvider(targetName)
+		if err != nil {
+			return usageError(stderr, err.Error())
+		}
+		target = parsed
 	}
 
 	row, err := resolveSession(session.Discover(), id)
@@ -494,13 +523,20 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
-	preview, err := session.PreviewConversion(row, target, handoff)
+	title, done := "conversion preview", "converted"
+	var preview session.ConversionPreview
+	if branch {
+		target, title, done = row.Provider, "branch preview", "branched"
+		preview, err = session.PreviewBranch(row, handoff)
+	} else {
+		preview, err = session.PreviewConversion(row, target, handoff)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
 	if dryRun {
-		printConversionPreview(stdout, preview)
+		printConversionPreview(stdout, title, preview)
 		return 0
 	}
 	if open {
@@ -518,14 +554,15 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	recipe := session.RecipeFor(converted, resumeOptions)
-	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n", row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
+	_, _ = fmt.Fprintf(stdout, "%s %s %s -> %s %s\n", done, row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
 	if open {
 		_, _ = fmt.Fprintf(stdout, "opening: %s\n", session.SafeDisplayText(recipe.CommandString))
 	} else {
 		_, _ = fmt.Fprintln(stdout)
 		printResumeRecipe(stdout, recipe)
 	}
-	if session.FirstConversion() {
+	// As in the picker, the one-time hint follows a hand-off, not a branch.
+	if !branch && session.FirstConversion() {
 		_, _ = fmt.Fprintln(stderr, "\n"+session.StarHint)
 	}
 	if !open {
@@ -665,8 +702,8 @@ func parseHandoffScope(value string) (session.HandoffOptions, error) {
 	return session.HandoffOptions{MaxTurns: turns}, nil
 }
 
-func printConversionPreview(w io.Writer, preview session.ConversionPreview) {
-	_, _ = fmt.Fprintf(w, "conversion preview\n")
+func printConversionPreview(w io.Writer, title string, preview session.ConversionPreview) {
+	_, _ = fmt.Fprintln(w, title)
 	_, _ = fmt.Fprintf(w, "  source:    %s %s\n", preview.SourceProvider, session.SafeDisplayText(preview.SourceID))
 	_, _ = fmt.Fprintf(w, "  read from: %s\n", session.SafeDisplayText(preview.SourceLocation))
 	_, _ = fmt.Fprintf(w, "  target:    %s\n", preview.TargetProvider)
@@ -717,14 +754,18 @@ func printHelp(w io.Writer) {
 Usage:
   showagent                          open the interactive session picker
   showagent list [--json]            print sessions (plain table, or JSON with --json)
-  showagent messages <id|latest> [--json]
-                                     list the last 30 user messages, newest first
+  showagent messages <id|latest> [--all] [--json]
+                                     list the last 30 user messages, newest first, with
+                                     the numbers --through-user and --before-user take
   showagent transcript <id|latest> [--max-turns N] [--json|--markdown]
                                      export recent turns for local context handoff
                                      (always secret-redacted; hard max 500 turns)
   showagent resume <id|latest> [--yolo]
                                      resume a session directly, without the picker
-  showagent convert <id|latest> --to <provider> [--through-user N] [--scope all|last:50] [--dry-run|--open] [--yolo]
+  showagent branch <id|latest> [--through-user N|--before-user N] [--scope all|last:50] [--dry-run|--open] [--yolo]
+                                     copy a session inside its own agent from the point you
+                                     choose; the original session stays as it is
+  showagent convert <id|latest> --to <provider> [--through-user N|--before-user N] [--scope all|last:50] [--dry-run|--open] [--yolo]
                                      preview or write a native session for another agent;
                                      --open continues there straight away
   showagent import (--url URL|--file PATH|--stdin) (--to <provider> --cwd DIR|--into PROVIDER:ID) [--format auto|text|json] [--as-note] [--dry-run] [--json]
@@ -745,14 +786,18 @@ Flags:
                                      (transcript) emit a JSON object
   --markdown, --md                   (transcript) emit a Markdown document to read or paste
   --max-turns                        (transcript) recent turns to emit (default 50, max 500)
-  --yolo                             (resume, convert, info) request the provider's permission bypass
+  --all                              (messages) list every user message, not only the last 30
+  --yolo                             (resume, branch, convert, info) request the provider's permission bypass
                                      (jcode and Pi add no extra flag)
   --to                               (convert) target provider: %s
-  --scope                            (convert) all, or last:N / last-N
-  --through-user                     (convert) copy through user message N, excluding later turns
-  --dry-run                          (convert) preview without writing anything
+  --scope                            (branch, convert) all, or last:N / last-N
+  --through-user                     (branch, convert) end the copy on user message N; later turns
+                                     are left out
+  --before-user                      (branch, convert) end the copy just before user message N,
+                                     keeping the reply that precedes it
+  --dry-run                          (branch, convert) preview without writing anything
                                      (import) parse and preview without writing a session
-  --open                             (convert) write the session, then open it in the target agent
+  --open                             (branch, convert) write the session, then open it in its agent
   --url/--file/--stdin               (import) choose exactly one conversation source
   --into                             (import) add context to an exact provider:session-id
   --as-note                          (import) treat unlabelled text as one user context note
@@ -761,9 +806,15 @@ Flags:
 
 Picker keys:
   enter resume · c copy the resume command · y yolo · space collapse group · / search
-  x choose continuation/preview/confirm · o hand-off target · t scope · n choose continuation/branch
-  C compound · d/del delete · p cycle preview (first/latest/both) · 1..8 toggle providers · r rescan
-  i import a web conversation · ? show/hide keys · esc clear search/overlay · q quit
+  n branch from the message you choose · x hand off: choose the message, preview, confirm
+  o hand-off target · t scope · C compound · d/del delete · p cycle preview (first/latest/both)
+  1..8 toggle providers · r rescan · i import a web conversation · ? show/hide keys
+  esc clear search/overlay · q quit
+
+Choosing where a branch or hand-off picks up (after n or x):
+  ↑/↓ choose a user message, or the end of the conversation · / search the messages
+  tab leave the chosen message out, so the copy ends on the reply before it
+  enter create the branch or preview the hand-off · esc cancel
 
 Session locations:
   codex     ~/.codex/sessions, ~/.codex/multica-sessions
