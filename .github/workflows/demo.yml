@@ -31,11 +31,17 @@ jobs:
         with:
           version: v0.11.0
           path: demo/demo.tape
+      - name: Record isolated branch sample
+        uses: charmbracelet/vhs-action@f6d7db07a432fcd3b06772628d36a57f96d95dcf
+        with:
+          version: v0.11.0
+          path: demo/branch.tape
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: sample-demo
           path: |
             docs/demo.gif
             docs/demo.mp4
+            docs/branch.gif
           if-no-files-found: error
           retention-days: 7

@@ -149,23 +149,27 @@ class DemoTests(unittest.TestCase):
         command = foreign_bin / "showagent"
         command.write_text('#!/bin/sh\nprintf called > "$DEMO_SENTINEL_LOG"\n', encoding="utf-8")
         command.chmod(0o755)
-        tape = (DEMO / "demo.tape").read_text(encoding="utf-8")
-        startup = re.search(r'^Type "([^"]*run-isolated.sh[^"]*)"$', tape, re.MULTILINE)
-        self.assertIsNotNone(startup, "recording startup command is missing")
-        result = subprocess.run(
-            [BASH, "--noprofile", "--norc"],
-            input=startup.group(1) + "\nshowagent\n",
-            cwd=DEMO.parent,
-            env={**os.environ, "SHOWAGENT_DEMO_BINARY": str(self.root / "missing-binary"),
-                 "DEMO_SENTINEL_LOG": str(sentinel),
-                 "PATH": str(foreign_bin) + os.pathsep + os.environ.get("PATH", "")},
-            capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
-        )
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("build demo/.build/showagent first", result.stderr)
-        self.assertFalse(sentinel.exists(), "failed recording escaped into the personal shell")
+        tapes = sorted(DEMO.glob("*.tape"))
+        self.assertTrue(tapes, "recording tapes are missing")
+        for path in tapes:
+            with self.subTest(tape=path.name):
+                tape = path.read_text(encoding="utf-8")
+                startup = re.search(r'^Type "([^"]*run-isolated.sh[^"]*)"$', tape, re.MULTILINE)
+                self.assertIsNotNone(startup, "recording startup command is missing")
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc"],
+                    input=startup.group(1) + "\nshowagent\n",
+                    cwd=DEMO.parent,
+                    env={**os.environ, "SHOWAGENT_DEMO_BINARY": str(self.root / "missing-binary"),
+                         "DEMO_SENTINEL_LOG": str(sentinel),
+                         "PATH": str(foreign_bin) + os.pathsep + os.environ.get("PATH", "")},
+                    capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("build demo/.build/showagent first", result.stderr)
+                self.assertFalse(sentinel.exists(), "failed recording escaped into the personal shell")
 
-    def test_preview_and_conversion_preserve_sources_in_isolated_shell(self):
+    def test_previews_conversion_and_branch_preserve_sources_in_isolated_shell(self):
         stderr_file = self.root / "shell-stderr.txt"
         with stderr_file.open("w", encoding="utf-8") as stderr:
             process = subprocess.Popen(
@@ -224,7 +228,7 @@ class DemoTests(unittest.TestCase):
                 send("printf '__PREVIEW__:%s\\n' \"$?\"")
                 preview, code = until("__PREVIEW__:")
                 self.assertEqual(code, "0", preview)
-                self.assertIn("5 transferable turns", "\n".join(preview))
+                self.assertIn("11 transferable turns", "\n".join(preview))
                 self.assertEqual(snapshot(root), before)
                 cache_files = list(root.rglob("showagent/discovery-*/*.json"))
                 self.assertTrue(cache_files, "discovery did not use the isolated demo cache")
@@ -240,6 +244,34 @@ class DemoTests(unittest.TestCase):
                 self.assertEqual(len(after), len(before) + 1)
                 for path, digest in before.items():
                     self.assertEqual(after[path], digest)
+                send("showagent branch " + source_id + " --before-user 4 --dry-run")
+                send("printf '__BRANCH_PREVIEW__:%s\\n' \"$?\"")
+                preview, code = until("__BRANCH_PREVIEW__:")
+                self.assertEqual(code, "0", preview)
+                preview_text = "\n".join(preview)
+                self.assertIn("branch preview", preview_text)
+                self.assertIn("scope:     before user #4 (6 transferable turns)", preview_text)
+                self.assertIn("last user: the redis TTL test is flaky - mock the clock instead of sleeping", preview_text)
+                self.assertEqual(snapshot(root), after)
+                send("showagent branch " + source_id + " --before-user 4")
+                send("printf '__BRANCH__:%s\\n' \"$?\"")
+                branched, code = until("__BRANCH__:")
+                self.assertEqual(code, "0", branched)
+                self.assertIn("branched codex " + source_id + " -> codex ", "\n".join(branched))
+                after_branch = snapshot(root)
+                self.assertEqual(len(after_branch), len(after) + 1)
+                for path, digest in after.items():
+                    self.assertEqual(after_branch[path], digest)
+                added = next(iter(after_branch.keys() - after.keys()))
+                self.assertTrue(added.is_relative_to(Path(".codex/sessions")), added)
+                self.assertEqual(added.suffix, ".jsonl")
+                records = [json.loads(line) for line in (native_fs(root) / added).read_text(encoding="utf-8").splitlines()]
+                turns = [record["payload"] for record in records
+                         if record.get("type") == "response_item" and record["payload"].get("type") == "message"]
+                self.assertEqual(len(turns), 6)
+                self.assertEqual(turns[-1]["role"], "assistant")
+                self.assertEqual(turns[-1]["content"][0]["text"],
+                                 "Replaced time.Sleep with an injected clock; the TTL test is deterministic now.")
                 self.assertFalse(self.real_cli_marker.exists())
                 send("exit")
                 self.assertEqual(process.wait(timeout=10), 0)

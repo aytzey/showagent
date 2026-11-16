@@ -24,7 +24,7 @@ Enter
 Sleep 2.5s
 
 # The newest fixture is the Codex rate-limit session. x asks where the new
-# session should pick up: the end, or one of the last user messages.
+# session should pick up: the end, or any user message (newest first).
 Type "x"
 Sleep 1.8s
 Down
