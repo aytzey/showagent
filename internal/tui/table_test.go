@@ -208,3 +208,26 @@ func TestPrintTableSanitizesUntrustedMetadata(t *testing.T) {
 		t.Fatalf("metadata injected a forged row: %q", got)
 	}
 }
+
+func TestRelativeTimeTreatsSlightlyFutureStampsAsJustNow(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name  string
+		value time.Time
+		want  string
+	}{
+		{"zero", time.Time{}, "unknown"},
+		{"copied turns stamped ahead", now.Add(2 * time.Second), "just now"},
+		{"moments ago", now.Add(-5 * time.Second), "just now"},
+		{"minutes ago", now.Add(-5*time.Minute - time.Second), "5m ago"},
+		{"hours ago", now.Add(-3*time.Hour - time.Second), "3h ago"},
+		{"days ago", now.Add(-49 * time.Hour), "2d ago"},
+		{"far future", now.Add(48 * time.Hour), now.Add(48 * time.Hour).Local().Format("Jan 02")},
+		{"long ago", now.Add(-30 * 24 * time.Hour), now.Add(-30 * 24 * time.Hour).Local().Format("Jan 02")},
+	}
+	for _, tc := range cases {
+		if got := relativeTime(tc.value); got != tc.want {
+			t.Errorf("%s: relativeTime = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

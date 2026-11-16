@@ -229,9 +229,11 @@ func relativeTime(value time.Time) string {
 	}
 	d := time.Since(value)
 	switch {
-	case d < 0:
+	case d < -time.Minute:
 		return value.Local().Format("Jan 02")
 	case d < time.Minute:
+		// A session written a moment ago can carry a stamp slightly ahead of
+		// the clock: each copied turn is stamped one millisecond later.
 		return "just now"
 	case d < time.Hour:
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
