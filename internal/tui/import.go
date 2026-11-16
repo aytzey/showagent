@@ -29,6 +29,7 @@ var (
 	applySessionImport  = session.ApplyImport
 	importWorkingDir    = os.Getwd
 	readImportClipboard = clipboard.ReadAll
+	writeClipboard      = clipboard.WriteAll
 )
 
 type importStep int

@@ -22,6 +22,7 @@ type theme struct {
 	cursor       lipgloss.Style
 	selected     lipgloss.Style
 	badges       map[session.Provider]lipgloss.Style
+	plainBadges  bool // badges have no fill (NO_COLOR), so their text is left-aligned
 	date         lipgloss.Style
 	workspaceDim lipgloss.Style
 	workspace    lipgloss.Style
@@ -43,7 +44,8 @@ type theme struct {
 
 // badgeFor is the badge style for provider; providers without a dedicated
 // accent fall back to the neutral chip style so new registry entries render
-// sensibly before they get colors.
+// sensibly before they get colors. Like every badge style it carries no
+// padding: callers size and pad the badge themselves.
 func (t *theme) badgeFor(provider session.Provider) lipgloss.Style {
 	if style, ok := t.badges[provider]; ok {
 		return style
@@ -58,15 +60,17 @@ type badgeColors struct {
 	lightFg, darkFg string
 }
 
-// providerAccents assigns each known provider its brand-ish accent. Providers
-// missing here (future registry additions) fall back to theme.chip.
+// providerAccents assigns each known provider its own accent, far enough apart
+// in hue that a badge is recognizable without reading it. Providers missing
+// here (future registry additions) fall back to theme.chip.
 var providerAccents = map[session.Provider]badgeColors{
 	session.ProviderCodex:       {lightBg: "#0969DA", darkBg: "#1F6FEB", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
 	session.ProviderClaude:      {lightBg: "#8250DF", darkBg: "#D2A8FF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 	session.ProviderJCode:       {lightBg: "#1A7F37", darkBg: "#238636", lightFg: "#FFFFFF", darkFg: "#FFFFFF"},
 	session.ProviderOpenCode:    {lightBg: "#1B7C8C", darkBg: "#39C5CF", lightFg: "#FFFFFF", darkFg: "#0D1117"},
-	session.ProviderMiMo:        {lightBg: "#C95718", darkBg: "#FF8A45", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderMiMo:        {lightBg: "#9A6700", darkBg: "#E3B341", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 	session.ProviderGemini:      {lightBg: "#B04A17", darkBg: "#F0883E", lightFg: "#FFFFFF", darkFg: "#0D1117"},
+	session.ProviderPi:          {lightBg: "#424A53", darkBg: "#C9D1D9", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 	session.ProviderAntigravity: {lightBg: "#BF3989", darkBg: "#F778BA", lightFg: "#FFFFFF", darkFg: "#0D1117"},
 }
 
@@ -106,7 +110,7 @@ func newTheme(isDark bool) *theme {
 	return &theme{
 		title:    lipgloss.NewStyle().Bold(true).Foreground(accent),
 		muted:    c("#57606A", "#8B949E"),
-		chip:     lipgloss.NewStyle().Foreground(chipFg).Background(chipBg).Padding(0, 1),
+		chip:     lipgloss.NewStyle().Bold(true).Foreground(chipFg).Background(chipBg),
 		yoloChip: lipgloss.NewStyle().Bold(true).Foreground(white).Background(ld(lipgloss.Color("#BC4C00"), lipgloss.Color("#BB8009"))).Padding(0, 1),
 		header: lipgloss.NewStyle().Bold(true).
 			Foreground(ld(lipgloss.Color("#1F2328"), lipgloss.Color("#C9D1D9"))).
@@ -152,13 +156,14 @@ func monoTheme() *theme {
 	return &theme{
 		title:        bold,
 		muted:        plain,
-		chip:         lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		chip:         bold,
 		yoloChip:     reverse,
 		header:       bold,
 		groupHeader:  bold,
 		cursor:       bold,
 		selected:     reverse,
 		badges:       badges,
+		plainBadges:  true,
 		date:         plain,
 		workspaceDim: plain,
 		workspace:    bold,

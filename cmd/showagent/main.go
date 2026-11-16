@@ -23,10 +23,14 @@ import (
 var version = "dev"
 
 const (
-	usageLine              = "usage: showagent [list [--json] | messages <id|latest> [--json] | transcript <id|latest> [--max-turns N] [--json] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--through-user N] [--dry-run] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> | mcp [--read-only] [--allow-secrets] | update | setup]"
+	usageLine              = "usage: showagent [list [--json] | messages <id|latest> [--json] | transcript <id|latest> [--max-turns N] [--json|--markdown] | resume <id|latest> [--yolo] | convert <id|latest> --to <provider> [--through-user N] [--scope all|last:N] [--dry-run|--open] [--yolo] | import (--url URL|--file PATH|--stdin) (--to PROVIDER --cwd DIR|--into PROVIDER:ID) [--dry-run] | info <id|latest> [--yolo] | mcp [--read-only] [--allow-secrets] | update | setup]"
 	defaultTranscriptTurns = 50
 	maxTranscriptTurns     = 500
 )
+
+// resumeSession hands the terminal to a session's own CLI. Tests replace it,
+// because a real resume replaces the running process.
+var resumeSession = session.Resume
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -101,11 +105,14 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 	id := ""
 	maxTurns := defaultTranscriptTurns
 	asJSON := false
+	asMarkdown := false
 
 	for index := 0; index < len(args); index++ {
 		switch arg := args[index]; arg {
 		case "--json":
 			asJSON = true
+		case "--markdown", "--md":
+			asMarkdown = true
 		case "--max-turns":
 			index++
 			if index >= len(args) {
@@ -128,6 +135,9 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 	}
 	if id == "" {
 		return usageError(stderr, "transcript needs a session id or 'latest'")
+	}
+	if asJSON && asMarkdown {
+		return usageError(stderr, "transcript --json and --markdown cannot be combined")
 	}
 
 	row, err := resolveSession(session.Discover(), id)
@@ -170,6 +180,10 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
+	if asMarkdown {
+		printTranscriptMarkdown(stdout, result)
+		return 0
+	}
 
 	_, _ = fmt.Fprintf(stdout, "showagent transcript (%s %s, %d/%d turns)\n", row.Provider, session.SafeDisplayText(row.ID), len(result.Turns), result.TotalTurns)
 	_, _ = fmt.Fprintln(stdout, result.Warning)
@@ -177,6 +191,52 @@ func runTranscript(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "\n[%s]\n%s\n", turn.Role, turn.Text)
 	}
 	return 0
+}
+
+// printTranscriptMarkdown writes result as a Markdown document for a person to
+// read or paste: a short header, then one section per turn. Turn text is
+// emitted as written, so its own Markdown renders; programs should read
+// --json, where a turn cannot be mistaken for document structure.
+func printTranscriptMarkdown(w io.Writer, result transcriptResult) {
+	turns := fmt.Sprintf("%d", result.TotalTurns)
+	if result.Truncated {
+		turns = fmt.Sprintf("last %d of %d", len(result.Turns), result.TotalTurns)
+	}
+	_, _ = fmt.Fprintf(w, "# %s session transcript\n\n", session.DisplayName(session.Provider(result.Provider)))
+	_, _ = fmt.Fprintf(w, "- **Session:** %s\n", markdownCode(session.SafeDisplayText(result.ID)))
+	if workspace := session.SafeDisplayText(result.Workspace); workspace != "" {
+		_, _ = fmt.Fprintf(w, "- **Workspace:** %s\n", markdownCode(workspace))
+	}
+	_, _ = fmt.Fprintf(w, "- **Turns:** %s\n", turns)
+	_, _ = fmt.Fprintf(w, "- **Secrets:** common credentials are redacted\n\n")
+	_, _ = fmt.Fprintf(w, "> %s\n", result.Warning)
+	for _, turn := range result.Turns {
+		heading := "Assistant"
+		if turn.Role == "user" {
+			heading = "User"
+		}
+		_, _ = fmt.Fprintf(w, "\n## %s\n\n%s\n", heading, strings.TrimSpace(turn.Text))
+	}
+}
+
+// markdownCode wraps value in a code span whose fence is longer than any run
+// of backticks inside it, so an untrusted id or path cannot close the span.
+func markdownCode(value string) string {
+	longest, run := 0, 0
+	for _, r := range value {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+			continue
+		}
+		run = 0
+	}
+	fence := strings.Repeat("`", longest+1)
+	if longest == 0 {
+		return fence + value + fence
+	}
+	// A span that starts or ends with a backtick needs the padding space.
+	return fence + " " + value + " " + fence
 }
 
 func runMessages(args []string, stdout, stderr io.Writer) int {
@@ -317,8 +377,13 @@ func runList(args []string, stdout, stderr io.Writer) int {
 func printNoSessions(stderr io.Writer) int {
 	_, _ = fmt.Fprintln(stderr, "showagent: no supported local sessions found")
 	_, _ = fmt.Fprintln(stderr, "scanned:")
-	for _, target := range session.ScanTargets() {
-		line := fmt.Sprintf("  %-8s %s  (override with %s)", target.Provider, session.SafeDisplayText(target.Path), target.EnvVar)
+	targets := session.ScanTargets()
+	nameWidth := 0
+	for _, target := range targets {
+		nameWidth = max(nameWidth, len(target.Provider))
+	}
+	for _, target := range targets {
+		line := fmt.Sprintf("  %-*s %s  (override with %s)", nameWidth, target.Provider, session.SafeDisplayText(target.Path), target.EnvVar)
 		if target.Note != "" {
 			line += "  — " + target.Note
 		}
@@ -361,6 +426,7 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 	id := ""
 	targetName := ""
 	dryRun := false
+	open := false
 	handoff := session.HandoffOptions{}
 	resumeOptions := session.ResumeOptions{}
 
@@ -375,6 +441,8 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 			targetName = args[index]
 		case "--dry-run":
 			dryRun = true
+		case "--open":
+			open = true
 		case "--through-user":
 			index++
 			if index >= len(args) {
@@ -413,6 +481,9 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 	if targetName == "" {
 		return usageError(stderr, "convert needs --to <provider>")
 	}
+	if open && dryRun {
+		return usageError(stderr, "convert --open and --dry-run cannot be combined")
+	}
 	target, err := session.ParseProvider(targetName)
 	if err != nil {
 		return usageError(stderr, err.Error())
@@ -432,16 +503,39 @@ func runConvert(args []string, stdout, stderr io.Writer) int {
 		printConversionPreview(stdout, preview)
 		return 0
 	}
+	if open {
+		// Refuse before writing: a session the target cannot be launched for
+		// would only be left behind.
+		if err := session.ValidateHandoff(row, target); err != nil {
+			_, _ = fmt.Fprintf(stderr, "showagent: cannot open the session in %s: %v\nnothing was written; drop --open to write the session without launching it\n", target, err)
+			return 1
+		}
+	}
 
 	converted, err := session.Convert(row, target, handoff)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "showagent: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n\n", row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
-	printResumeRecipe(stdout, session.RecipeFor(converted, resumeOptions))
+	recipe := session.RecipeFor(converted, resumeOptions)
+	_, _ = fmt.Fprintf(stdout, "converted %s %s -> %s %s\n", row.Provider, session.SafeDisplayText(row.ID), converted.Provider, session.SafeDisplayText(converted.ID))
+	if open {
+		_, _ = fmt.Fprintf(stdout, "opening: %s\n", session.SafeDisplayText(recipe.CommandString))
+	} else {
+		_, _ = fmt.Fprintln(stdout)
+		printResumeRecipe(stdout, recipe)
+	}
 	if session.FirstConversion() {
 		_, _ = fmt.Fprintln(stderr, "\n"+session.StarHint)
+	}
+	if !open {
+		return 0
+	}
+
+	if err := resumeSession(converted, resumeOptions); err != nil {
+		_, _ = fmt.Fprintf(stderr, "showagent: the %s session was written, but opening it failed: %v\n\n", converted.Provider, err)
+		printResumeRecipe(stderr, recipe)
+		return 1
 	}
 	return 0
 }
@@ -625,20 +719,22 @@ Usage:
   showagent list [--json]            print sessions (plain table, or JSON with --json)
   showagent messages <id|latest> [--json]
                                      list the last 30 user messages, newest first
-  showagent transcript <id|latest> [--max-turns N] [--json]
+  showagent transcript <id|latest> [--max-turns N] [--json|--markdown]
                                      export recent turns for local context handoff
                                      (always secret-redacted; hard max 500 turns)
   showagent resume <id|latest> [--yolo]
                                      resume a session directly, without the picker
-  showagent convert <id|latest> --to <provider> [--through-user N] [--scope all|last:50] [--dry-run]
-                                     preview or write a native session for another agent
+  showagent convert <id|latest> --to <provider> [--through-user N] [--scope all|last:50] [--dry-run|--open] [--yolo]
+                                     preview or write a native session for another agent;
+                                     --open continues there straight away
   showagent import (--url URL|--file PATH|--stdin) (--to <provider> --cwd DIR|--into PROVIDER:ID) [--format auto|text|json] [--as-note] [--dry-run] [--json]
                                      import a ChatGPT/Claude share or pasted text
   showagent info <id|latest> [--yolo]
                                      print the exact resume command and storage location
   showagent mcp [--read-only] [--allow-secrets]
                                      serve session history to MCP clients over stdio
-                                     (search, transcripts, branch, convert; no delete)
+                                     (search, transcripts, hand-off preview, branch,
+                                     convert; no delete)
   showagent update                   update a standalone install (package-manager installs use their manager)
   showagent setup                    install the compound-engineering plugin for supported agents
 
@@ -647,14 +743,16 @@ Flags:
   -v, --version                      print version
   --json                             (list) emit a JSON array of sessions
                                      (transcript) emit a JSON object
+  --markdown, --md                   (transcript) emit a Markdown document to read or paste
   --max-turns                        (transcript) recent turns to emit (default 50, max 500)
-  --yolo                             (resume) request the provider's permission bypass
+  --yolo                             (resume, convert, info) request the provider's permission bypass
                                      (jcode and Pi add no extra flag)
   --to                               (convert) target provider: %s
   --scope                            (convert) all, or last:N / last-N
   --through-user                     (convert) copy through user message N, excluding later turns
   --dry-run                          (convert) preview without writing anything
                                      (import) parse and preview without writing a session
+  --open                             (convert) write the session, then open it in the target agent
   --url/--file/--stdin               (import) choose exactly one conversation source
   --into                             (import) add context to an exact provider:session-id
   --as-note                          (import) treat unlabelled text as one user context note
@@ -662,10 +760,10 @@ Flags:
   --allow-secrets                    (mcp) return transcript values verbatim instead of redacting
 
 Picker keys:
-  enter resume · y yolo · space collapse group · / search · t scope
-  x choose continuation/preview/confirm · n choose continuation/branch · C compound · d/del delete
-  p cycle preview (first/latest/both) · 1..8 toggle providers · r rescan
-  i import a web conversation · ? full help · esc clear search/overlay · q quit
+  enter resume · c copy the resume command · y yolo · space collapse group · / search
+  x choose continuation/preview/confirm · o hand-off target · t scope · n choose continuation/branch
+  C compound · d/del delete · p cycle preview (first/latest/both) · 1..8 toggle providers · r rescan
+  i import a web conversation · ? show/hide keys · esc clear search/overlay · q quit
 
 Session locations:
   codex     ~/.codex/sessions, ~/.codex/multica-sessions

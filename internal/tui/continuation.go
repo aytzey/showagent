@@ -127,7 +127,8 @@ func (m model) continuationView() string {
 	}
 	lines := []string{
 		th.title.Render("Continue from · " + operation),
-		session.SafeDisplayText(string(c.row.Provider) + " " + c.row.ID + " · " + c.row.CWD),
+		m.providerWord(c.row.Provider) + " " + session.SafeDisplayText(c.row.ID) +
+			th.muted.Render(" · "+collapseHome(session.SafeDisplayText(c.row.CWD))),
 		"The selected user message is included; all later turns are left out.",
 		"The original session and project files stay as they are.",
 		"",
@@ -164,7 +165,7 @@ func (m model) continuationView() string {
 			title = fmt.Sprintf("User #%d · lines %d–%d/%d", c.messages[c.index-1].Number, offset+1, min(len(detail), offset+detailRows), len(detail))
 		}
 		body := strings.Join(detail[offset:min(len(detail), offset+detailRows)], "\n")
-		lines = append(lines, titledBox(th.detailEdge, th.detailEdge, title, body, max(4, m.width)))
+		lines = append(lines, titledBox(th.detailEdge, th.detailEdge, title, "", body, max(4, m.width)))
 		if c.kind == mutationConvert && m.handoff.MaxTurns > 0 {
 			lines = append(lines, fmt.Sprintf("Scope: last %d turns ending at this point.", m.handoff.MaxTurns))
 		}

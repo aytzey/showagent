@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -96,6 +97,38 @@ func RecipeFor(row Row, options ResumeOptions) ResumeRecipe {
 		StorageLocation: StorageLocation(row),
 		Note:            recipeNote(row),
 	}
+}
+
+// ShellLine is the one line that resumes the session from any directory: the
+// command, prefixed with a cd into its workspace when that is known. It is
+// meant to be pasted into a shell, so it is empty when the session's path or
+// id would carry a control character into that line.
+//
+// cmd.exe and PowerShell do not share the POSIX quoting used here, so on
+// Windows the line is the command alone, and only when it needs no quoting.
+func (r ResumeRecipe) ShellLine() string {
+	return r.shellLine(runtime.GOOS == "windows")
+}
+
+func (r ResumeRecipe) shellLine(windows bool) string {
+	line := r.CommandString
+	if line == "" {
+		return ""
+	}
+	if windows {
+		if line != strings.Join(r.Command, " ") {
+			return ""
+		}
+		return line
+	}
+	// Only an absolute path means the same directory in another shell.
+	if cwd := strings.TrimSpace(r.CWD); strings.HasPrefix(cwd, "/") {
+		line = "cd " + shellQuote(cwd) + " && " + line
+	}
+	if stripTerminalControls(line, false) != line {
+		return ""
+	}
+	return line
 }
 
 func SourceLocation(row Row) string {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,11 @@ type sessionMutationMsg struct {
 type sessionDeleteMsg struct {
 	row session.Row
 	err error
+}
+
+type clipboardCopyMsg struct {
+	text string
+	err  error
 }
 
 type conversionPreviewMsg struct {
@@ -491,6 +497,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDelete(msg)
 	case conversionPreviewMsg:
 		return m.applyConversionPreview(msg)
+	case clipboardCopyMsg:
+		return m.applyClipboardCopy(msg)
 	case continuationLoadedMsg:
 		if m.continuation == msg.chooser {
 			m.continuation.loading = false
@@ -636,6 +644,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.toggleGroup(header.path)
 		}
 		return m.selectResume()
+	case key.Matches(msg, m.keys.Copy):
+		return m.copyResumeCommand()
 	case key.Matches(msg, m.keys.Collapse):
 		if header, ok := m.list.SelectedItem().(headerItem); ok {
 			return m.toggleGroup(header.path)
@@ -961,6 +971,38 @@ func (m model) selectResume() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// copyResumeCommand puts the line that resumes the selected session on the
+// clipboard, for another pane, a script or a message to a teammate. The line
+// matches what enter would run, including the current resume mode.
+func (m model) copyResumeCommand() (tea.Model, tea.Cmd) {
+	selected, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return m, m.list.NewStatusMessage("no session selected")
+	}
+	if selected.row.HandoffOnly {
+		return m, m.list.NewStatusMessage("nothing to copy: " + string(selected.row.Provider) + " sessions are hand-off only · press x")
+	}
+	line := session.RecipeFor(selected.row, session.ResumeOptions{Dangerous: m.dangerous}).ShellLine()
+	if line == "" {
+		return m, m.list.NewStatusMessage("nothing to copy: this session has no resume command that is safe to paste")
+	}
+	return m, func() tea.Msg {
+		return clipboardCopyMsg{text: line, err: writeClipboard(line)}
+	}
+}
+
+func (m model) applyClipboardCopy(msg clipboardCopyMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		// No clipboard tool (a bare SSH session, a container): ask the terminal
+		// to copy instead. Terminals do not report whether they did.
+		return m, tea.Batch(
+			tea.SetClipboard(msg.text),
+			m.list.NewStatusMessage("no clipboard tool · asked the terminal to copy · "+msg.text),
+		)
+	}
+	return m, m.list.NewStatusMessage("copied · " + msg.text)
+}
+
 func (m *model) previewConversion(row session.Row, target session.Provider, options session.HandoffOptions) tea.Cmd {
 	return func() tea.Msg {
 		preview, err := session.PreviewConversion(row, target, options)
@@ -1092,58 +1134,90 @@ func clampLineWidths(value string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// headerView renders the title plus as many stats chips as fit the width, so
-// the header can never wrap and push the help bar off-screen.
+// headerView renders the title plus the richest stats line that fits the
+// width, so the header can never wrap and push the help bar off-screen.
 func (m model) headerView() string {
-	th := m.render.theme
-	title := th.title.Render("showagent")
-	stats := m.statsParts()
-	for len(stats) > 0 {
+	title := m.render.theme.title.Render("showagent")
+	for _, stats := range m.statsCandidates() {
 		header := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", strings.Join(stats, "  "))
 		if m.width <= 0 || lipgloss.Width(header) <= m.width {
 			return header
 		}
-		stats = stats[:len(stats)-1]
 	}
 	return title
 }
 
-// statsParts is ordered by importance: headerView drops parts from the end
-// when the terminal is narrow, so the YOLO warning is the last to go.
-func (m model) statsParts() []string {
+// statsCandidates lists the header's stats lines from richest to barest. A
+// narrow terminal first loses the tagline, then squeezes the provider chips
+// before dropping them, and keeps the YOLO warning the longest.
+func (m model) statsCandidates() [][]string {
 	th := m.render.theme
-	var parts []string
+	var base []string
 	if m.dangerous {
-		parts = append(parts, th.yoloChip.Render("YOLO"))
+		base = append(base, th.yoloChip.Render("YOLO"))
 	}
 	count := fmt.Sprintf("%d sessions", len(m.allRows))
 	if shown := sessionCount(m.list.VisibleItems()); shown != len(m.allRows) {
 		count = fmt.Sprintf("%d of %d sessions", shown, len(m.allRows))
 	}
-	parts = append(parts, th.muted.Render(count))
+	base = append(base, th.muted.Render(count))
 	if m.discovering {
-		parts = append(parts, m.spinner.View()+" "+th.muted.Render("scanning…"))
+		base = append(base, m.spinner.View()+" "+th.muted.Render("scanning…"))
 	}
-	if chips := m.providerChips(); chips != "" {
-		parts = append(parts, chips)
+	with := func(parts ...string) []string {
+		return append(slices.Clone(base), parts...)
 	}
-	return append(parts, th.hint.Render("· resume a coding-agent session, or hand it to another agent"))
-}
+	hint := th.hint.Render("· resume a coding-agent session, or hand it to another agent")
 
-// providerChips shows each discovered provider with the digit that toggles
-// it; hidden providers are struck through.
-func (m model) providerChips() string {
-	th := m.render.theme
-	chips := make([]string, 0, len(m.providers))
-	for _, provider := range discoveredProviders(m.allRows) {
-		label := fmt.Sprintf("%d %s", slices.Index(session.ProviderOrder(), provider)+1, provider)
-		if m.providers[provider] {
-			chips = append(chips, th.badgeFor(provider).Padding(0, 1).Render(label))
-		} else {
-			chips = append(chips, th.muted.Strikethrough(true).Padding(0, 1).Render(label))
+	candidates := [][]string{with(hint)}
+	if chips := m.providerChips(chipsSpaced); chips != "" {
+		candidates = [][]string{with(chips, hint)}
+		for layout := chipsSpaced; layout <= chipsDigits; layout++ {
+			candidates = append(candidates, with(m.providerChips(layout)))
 		}
 	}
-	return strings.Join(chips, " ")
+	for n := len(base); n > 0; n-- {
+		candidates = append(candidates, base[:n])
+	}
+	return candidates
+}
+
+// chipLayout is how much room the header's provider chips take, from the
+// roomiest form down to bare digits.
+type chipLayout int
+
+const (
+	chipsSpaced chipLayout = iota // " 1 codex " chips, a space apart
+	chipsJoined                   // " 1 codex " chips, side by side
+	chipsTight                    // "1 codex" chips, a space apart
+	chipsDigits                   // " 1 " chips, side by side
+)
+
+// providerChips shows each discovered provider with the digit that toggles
+// it; hidden providers are struck through. The digit-only layout still tells
+// providers apart because a chip has the color of its badge in the list.
+func (m model) providerChips(layout chipLayout) string {
+	th := m.render.theme
+	padding, gap := 1, ""
+	switch layout {
+	case chipsSpaced:
+		gap = " "
+	case chipsTight:
+		padding, gap = 0, " "
+	}
+	chips := make([]string, 0, len(m.providers))
+	for _, provider := range discoveredProviders(m.allRows) {
+		label := strconv.Itoa(slices.Index(session.ProviderOrder(), provider) + 1)
+		if layout != chipsDigits {
+			label += " " + string(provider)
+		}
+		style := th.muted.Strikethrough(true)
+		if m.providers[provider] {
+			style = th.badgeFor(provider)
+		}
+		chips = append(chips, style.Padding(0, padding).Render(label))
+	}
+	return strings.Join(chips, gap)
 }
 
 func (m model) helpView() string {
@@ -1226,7 +1300,7 @@ func (m model) detailView() string {
 	innerW := max(10, width-frameW)
 	valueW := max(8, innerW-detailLabelWidth)
 	box := func(title string, lines []string) string {
-		return titledBox(th.detailEdge, th.detailEdge, title, fitLines(lines, count, innerW), width)
+		return titledBox(th.detailEdge, th.detailEdge, title, "", fitLines(lines, count, innerW), width)
 	}
 
 	selected, ok := m.list.SelectedItem().(item)
@@ -1293,11 +1367,17 @@ func (m model) detailView() string {
 }
 
 // titledBox draws a rounded box of the given total width with title set
-// into its top border.
-func titledBox(edge, titleStyle lipgloss.Style, title, body string, width int) string {
+// into its top border. A non-empty hint, already styled, is set into the far
+// end of that border when there is room for it.
+func titledBox(edge, titleStyle lipgloss.Style, title, hint, body string, width int) string {
 	label := " " + title + " "
 	fill := max(0, width-3-lipgloss.Width(label))
-	top := edge.Render("╭─") + titleStyle.Render(label) + edge.Render(strings.Repeat("─", fill)+"╮")
+	corner := edge.Render("╮")
+	if tail := lipgloss.Width(hint) + 3; hint != "" && fill > tail {
+		fill -= tail
+		corner = " " + hint + " " + edge.Render("─╮")
+	}
+	top := edge.Render("╭─") + titleStyle.Render(label) + edge.Render(strings.Repeat("─", fill)) + corner
 	frame := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder(), false, true, true, true).
 		BorderForeground(edge.GetForeground()).
@@ -1326,8 +1406,15 @@ func (m model) selectedConversionPreview(row session.Row) *pendingConversion {
 	return m.pendingConvert
 }
 
+// providerWord is the provider's badge sized to its name, for use in running
+// text. A filled badge gets a cell of padding on each side.
 func (m model) providerWord(p session.Provider) string {
-	return providerBadge(m.render.theme, string(p), len(string(p))+2)
+	th := m.render.theme
+	width := len(string(p))
+	if !th.plainBadges {
+		width += 2
+	}
+	return providerBadge(th, string(p), width)
 }
 
 // yoloEffect states what yolo mode actually changes for provider, without
@@ -1385,8 +1472,13 @@ func (m model) emptyView() string {
 		"",
 		th.muted.Render("Scanned:"),
 	}
-	for _, target := range session.ScanTargets() {
-		prefix := fmt.Sprintf("  %-8s ", target.Provider)
+	targets := session.ScanTargets()
+	nameWidth := 0
+	for _, target := range targets {
+		nameWidth = max(nameWidth, len(target.Provider))
+	}
+	for _, target := range targets {
+		prefix := fmt.Sprintf("  %-*s ", nameWidth, target.Provider)
 		suffix := fmt.Sprintf("  (override with %s)", target.EnvVar)
 		pathWidth := max(1, m.width-lipgloss.Width(prefix)-lipgloss.Width(suffix))
 		if m.width <= 0 {

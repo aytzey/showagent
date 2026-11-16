@@ -62,7 +62,8 @@ def bundle_manifest(tag, goos, goarch):
         "description": "Find local coding-agent sessions and transfer their conversation between supported agents.",
         "long_description": (
             "Search session metadata and first/last user messages, read transcripts, "
-            "branch or convert user/assistant messages, and return resume commands. "
+            "preview a hand-off before it is written, branch or convert user/assistant "
+            "messages, and return resume commands. "
             "Original sessions are preserved; tool state and attachments are not transferred. "
             "Transcript secrets are redacted by default. The MCP client may send returned "
             "history to its model provider. Choose the bundle matching your OS and CPU."

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -837,9 +838,9 @@ func TestKeysBoxShowsEveryKey(t *testing.T) {
 	m.width, m.height = 80, 24
 	m.resizeList()
 	view := ansi.Strip(m.browseView())
-	for _, want := range []string{"first ask", "latest ask", "enter resume", "x hand off → claude", "o target claude", "t turns all",
-		"n     branch", "C     compound", "d     delete", "i import", "/     search", "p     preview first", "space collapse",
-		"y mode normal", "r rescan", "? hide keys", "q quit"} {
+	for _, want := range []string{"first ask", "latest ask", "enter resume", "c     copy cmd", "x hand off → claude", "o target claude", "t turns all",
+		"n     branch", "d     delete", "i import", "/     search", "p     preview first", "1     agents", "space collapse",
+		"y mode normal", "C compound", "r rescan", "q quit", "─ ? hide ─╮"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("80x24 view missing %q:\n%s", want, view)
 		}
@@ -857,6 +858,125 @@ func TestKeysBoxShowsEveryKey(t *testing.T) {
 	}
 	if got := lipgloss.Height(m.browseView()); got > 24 {
 		t.Fatalf("view is %d rows, want <= 24", got)
+	}
+}
+
+// stubClipboard swaps the system clipboard for a recorder whose writes return
+// err.
+func stubClipboard(t *testing.T, err error) *[]string {
+	t.Helper()
+	written := &[]string{}
+	previous := writeClipboard
+	writeClipboard = func(text string) error {
+		*written = append(*written, text)
+		return err
+	}
+	t.Cleanup(func() { writeClipboard = previous })
+	return written
+}
+
+// TestCopyPutsTheResumeLineOnTheClipboard: c copies the line enter would run,
+// in the current resume mode, and says what it copied.
+func TestCopyPutsTheResumeLineOnTheClipboard(t *testing.T) {
+	written := stubClipboard(t, nil)
+	row := session.Row{Provider: session.ProviderClaude, ID: "c1", CWD: "/p/a/sub", LaunchCWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "hi"}
+	m := sizedModel([]session.Row{row})
+	m.dangerous = true
+	want := session.RecipeFor(row, session.ResumeOptions{Dangerous: true}).ShellLine()
+	if !strings.HasSuffix(want, "claude --dangerously-skip-permissions --resume c1") {
+		t.Fatalf("resume line = %q", want)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	if cmd == nil {
+		t.Fatal("c returned no clipboard command")
+	}
+	if len(*written) != 0 {
+		t.Fatal("the clipboard was written on the UI goroutine")
+	}
+	done, _ := asModel(t, updated).Update(cmd())
+	if len(*written) != 1 || (*written)[0] != want {
+		t.Fatalf("clipboard = %q, want [%q]", *written, want)
+	}
+	got := asModel(t, done)
+	if view := ansi.Strip(got.browseView()); !strings.Contains(view, "copied · "+want) {
+		t.Fatalf("status does not confirm the copy:\n%s", view)
+	}
+	if got.selected != nil {
+		t.Fatal("copying resumed the session")
+	}
+}
+
+// TestCopyFallsBackToTheTerminalClipboard: without a clipboard tool (a bare
+// SSH session) the line goes to the terminal over OSC 52, and the status does
+// not claim a copy the picker cannot confirm.
+func TestCopyFallsBackToTheTerminalClipboard(t *testing.T) {
+	stubClipboard(t, errors.New("no clipboard utilities available"))
+	row := session.Row{Provider: session.ProviderCodex, ID: "c1", CWD: "/p/a", LastAt: time.Now(), File: "/t/c1.jsonl", FirstUser: "hi"}
+	want := session.RecipeFor(row, session.ResumeOptions{}).ShellLine()
+
+	updated, cmd := sizedModel([]session.Row{row}).Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+	done, fallback := asModel(t, updated).Update(cmd())
+	if fallback == nil {
+		t.Fatal("a failed clipboard write produced no fallback")
+	}
+	batch, ok := fallback().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("fallback = %#v, want a batch", fallback())
+	}
+	// The first command is the OSC 52 request; the other expires the status.
+	if osc := batch[0](); fmt.Sprintf("%T", osc) != fmt.Sprintf("%T", tea.SetClipboard("")()) || fmt.Sprint(osc) != want {
+		t.Fatalf("fallback message = %T %q, want the terminal clipboard request for %q", osc, osc, want)
+	}
+	view := ansi.Strip(asModel(t, done).browseView())
+	if !strings.Contains(view, "no clipboard tool · asked the terminal to copy") || strings.Contains(view, "copied ·") {
+		t.Fatalf("status overstates the fallback:\n%s", view)
+	}
+}
+
+// TestCopyRefusesWhatCannotBeResumedOrPasted: a workspace header, a hand-off
+// only session and a session whose id would inject into a shell copy nothing.
+func TestCopyRefusesWhatCannotBeResumedOrPasted(t *testing.T) {
+	at := time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		rows   []session.Row
+		header bool
+		status string
+	}{
+		"workspace header": {
+			rows: []session.Row{
+				{Provider: session.ProviderCodex, ID: "a1", CWD: "/p/alpha", LastAt: at, File: "/t/a1.jsonl", FirstUser: "x"},
+				{Provider: session.ProviderClaude, ID: "b1", CWD: "/p/beta", LastAt: at.Add(-time.Hour), File: "/t/b1.jsonl", FirstUser: "y"},
+			},
+			header: true,
+			status: "no session selected",
+		},
+		"hand-off only": {
+			rows:   []session.Row{{Provider: session.ProviderAntigravity, ID: "g1", CWD: "/p/a", LastAt: at, File: "/t/g1.pb", HandoffOnly: true, FirstUser: "x"}},
+			status: "nothing to copy: antigravity sessions are hand-off only · press x",
+		},
+		"control character": {
+			rows:   []session.Row{{Provider: session.ProviderCodex, ID: "c1\x1b[201~", CWD: "/p/a", LastAt: at, File: "/t/c1.jsonl", FirstUser: "x"}},
+			status: "nothing to copy: this session has no resume command that is safe to paste",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			written := stubClipboard(t, nil)
+			m := sizedModel(test.rows)
+			if test.header {
+				m = asModel(t, first(m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))))
+				if _, ok := m.list.SelectedItem().(headerItem); !ok {
+					t.Fatalf("selection = %T, want a workspace header", m.list.SelectedItem())
+				}
+			}
+			updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c'}))
+			if len(*written) != 0 {
+				t.Fatalf("clipboard = %q, want nothing", *written)
+			}
+			if view := ansi.Strip(asModel(t, updated).browseView()); !strings.Contains(view, test.status) {
+				t.Fatalf("status %q is missing:\n%s", test.status, view)
+			}
+		})
 	}
 }
 
@@ -1258,6 +1378,115 @@ func TestHelpShowsProviderStateAndTargets(t *testing.T) {
 	tm := asModel(t, toggled)
 	if !strings.Contains(tm.helpView(), "claude:off") {
 		t.Fatalf("help does not reflect the disabled provider:\n%s", tm.helpView())
+	}
+}
+
+// oneSessionPerProvider is the fullest header the picker can show: a session
+// for every registered agent.
+func oneSessionPerProvider() []session.Row {
+	var rows []session.Row
+	for index, provider := range session.ProviderOrder() {
+		rows = append(rows, session.Row{
+			Provider: provider,
+			ID:       fmt.Sprintf("s%d", index),
+			CWD:      "/p/a",
+			LastAt:   time.Now().Add(-time.Duration(index) * time.Minute),
+			File:     fmt.Sprintf("/t/s%d.jsonl", index),
+		})
+	}
+	return rows
+}
+
+// TestHeaderKeepsProviderTogglesAsWidthShrinks: the header shows which digit
+// toggles which agent in the roomiest form that fits, falls back to the bare
+// digits before giving the chips up, and never wraps.
+func TestHeaderKeepsProviderTogglesAsWidthShrinks(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	rows := oneSessionPerProvider()
+	last := fmt.Sprintf("%d %s", len(rows), rows[len(rows)-1].Provider)
+	header := func(width int) string {
+		m := sizedModel(rows)
+		m.width = width
+		m.resizeList()
+		got := m.headerView()
+		if lipgloss.Height(got) != 1 || lipgloss.Width(got) > width {
+			t.Fatalf("width %d header is %dx%d: %q", width, lipgloss.Width(got), lipgloss.Height(got), ansi.Strip(got))
+		}
+		return ansi.Strip(got)
+	}
+
+	if got := header(200); !strings.Contains(got, "1 codex") || !strings.Contains(got, last) || !strings.Contains(got, "hand it to another agent") {
+		t.Fatalf("wide header should show every agent and the tagline: %q", got)
+	}
+	for _, width := range []int{140, 110, 100} {
+		if got := header(width); !strings.Contains(got, "1 codex") || !strings.Contains(got, last) {
+			t.Fatalf("width %d header should still name every agent: %q", width, got)
+		}
+	}
+	digits := make([]string, len(rows))
+	for index := range rows {
+		digits[index] = fmt.Sprintf(" %d ", index+1)
+	}
+	if got := header(80); strings.Contains(got, "codex") || !strings.Contains(got, strings.Join(digits, "")) {
+		t.Fatalf("80-column header should fall back to digit chips: %q", got)
+	}
+	want := fmt.Sprintf("%d sessions", len(rows))
+	for width := 24; width <= 200; width++ {
+		if got := header(width); !strings.Contains(got, want) {
+			t.Fatalf("width %d header lost the session count: %q", width, got)
+		}
+	}
+}
+
+// TestHeaderStrikesThroughHiddenProviders: a provider toggled off keeps its
+// chip, so the digit that brings it back stays visible.
+func TestHeaderStrikesThroughHiddenProviders(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	m := sizedModel(oneSessionPerProvider())
+	m.width = 140
+	m.resizeList()
+	shown := m.headerView()
+
+	hidden := asModel(t, first(m.Update(tea.KeyPressMsg(tea.Key{Code: '2'})))).headerView()
+	plain := ansi.Strip(hidden)
+	if !strings.Contains(plain, "2 claude") || !strings.Contains(plain, "7 of 8 sessions") {
+		t.Fatalf("header lost the hidden provider or the filtered count: %q", plain)
+	}
+	if hidden == shown || !strings.Contains(hidden, m.render.theme.muted.Strikethrough(true).Padding(0, 1).Render("2 claude")) {
+		t.Fatalf("hidden provider chip is not struck through: %q", hidden)
+	}
+}
+
+// TestProviderDigits: the keys box names the digits that toggle something,
+// and widens to a range once the exact list would not fit the key column.
+func TestProviderDigits(t *testing.T) {
+	order := session.ProviderOrder()
+	all := make([]int, len(order))
+	for index := range order {
+		all[index] = index + 1
+	}
+	whole := fmt.Sprintf("1-%d", len(order))
+	for _, tc := range []struct {
+		slots []int
+		want  string
+	}{
+		{nil, whole},
+		{all, whole},
+		{[]int{1}, "1"},
+		{[]int{1, 2}, "1-2"},
+		{[]int{1, 6}, "1,6"},
+		{[]int{1, 2, 6}, "1-2,6"},
+		{[]int{2, 4, 6}, "2,4,6"},
+		{[]int{1, 2, 3, 6}, "1-3,6"},
+		{[]int{1, 2, 4, 6}, "1-6"},
+	} {
+		providers := make([]session.Provider, len(tc.slots))
+		for index, slot := range tc.slots {
+			providers[index] = order[slot-1]
+		}
+		if got := providerDigits(providers); got != tc.want {
+			t.Errorf("providerDigits(slots %v) = %q, want %q", tc.slots, got, tc.want)
+		}
 	}
 }
 

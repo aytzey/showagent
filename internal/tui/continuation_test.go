@@ -109,6 +109,30 @@ func TestContinuationChooserCreatesTheSelectedPrefix(t *testing.T) {
 	}
 }
 
+// TestContinuationHeaderNamesTheSourceSession: the chooser says which session
+// it copies from: its agent, its id and its workspace with home shortened.
+func TestContinuationHeaderNamesTheSourceSession(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home directory")
+	}
+	t.Setenv("NO_COLOR", "")
+	row := continuationFixture(t)
+	row.CWD = filepath.Join(home, "code", "api-server")
+	withFakeCommands(t, "codex", "claude")
+	m, cmd := pressContinuationKey(t, sizedModel([]session.Row{row}), 'x')
+	m = applyContinuationCommand(t, m, cmd)
+
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if len(lines) < 2 || !strings.Contains(lines[0], "Hand off to Claude") {
+		t.Fatalf("chooser title is missing:\n%s", strings.Join(lines, "\n"))
+	}
+	want := "CODEX  source · ~" + string(filepath.Separator) + filepath.Join("code", "api-server")
+	if got := strings.TrimSpace(lines[1]); got != want {
+		t.Fatalf("chooser source line = %q, want %q", got, want)
+	}
+}
+
 func TestContinuationCancelDiscardsLateLoadsAndReadFailures(t *testing.T) {
 	row := continuationFixture(t)
 	m, cmd := pressContinuationKey(t, sizedModel([]session.Row{row}), 'n')

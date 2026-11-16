@@ -146,6 +146,16 @@ func ValidateCompound(row Row, agent Provider) error {
 	return validateLaunch(agent, row.resumeCWD())
 }
 
+// ValidateHandoff reports why converting row to target and then opening the
+// copy would fail, so a caller can refuse before anything is written. The
+// copy inherits the source workspace, which target's CLI is launched from.
+func ValidateHandoff(row Row, target Provider) error {
+	if err := conversionTargetError(target); err != nil {
+		return err
+	}
+	return validateLaunch(target, row.CWD)
+}
+
 func validateLaunch(provider Provider, cwd string) error {
 	command := providerCommand(provider)
 	if command == "" {
