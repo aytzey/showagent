@@ -24,23 +24,23 @@ const (
 
 // PrintTable renders the plain, unstyled table used when output is piped or
 // 'showagent list' runs. width is the terminal width; values <= 0 fall back
-// to 120. Session ids are always printed in full so the output stays usable
-// with 'showagent resume <id>'.
+// to 120. Session ids and agent names are always printed in full so the
+// output stays usable with 'showagent resume <id>' and 'convert --to <agent>'.
 func PrintTable(w io.Writer, width int, rows []session.Row) {
 	if width <= 0 {
 		width = 120
 	}
-	idWidth := len("ID")
+	idWidth, agentWidth := len("ID"), tableProviderWidth
 	for _, row := range rows {
-		if n := lipgloss.Width(session.SafeDisplayText(row.ID)); n > idWidth {
-			idWidth = n
-		}
+		idWidth = max(idWidth, lipgloss.Width(session.SafeDisplayText(row.ID)))
+		agentWidth = max(agentWidth, lipgloss.Width(string(row.Provider)))
 	}
-	_, _ = fmt.Fprintln(w, plainLine(width, idWidth, "ID", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
+	_, _ = fmt.Fprintln(w, plainLine(width, idWidth, agentWidth, "ID", "AGENT", "UPDATED", "WORKSPACE", "USER MESSAGE"))
 	for _, row := range rows {
 		_, _ = fmt.Fprintln(w, plainLine(
 			width,
 			idWidth,
+			agentWidth,
 			session.SafeDisplayText(row.ID),
 			string(row.Provider),
 			localTime(row.LastAt),
@@ -50,16 +50,16 @@ func PrintTable(w io.Writer, width int, rows []session.Row) {
 	}
 }
 
-// plainLine lays out one plain-table row. The id column is never truncated;
-// the workspace and message columns absorb whatever width remains.
-func plainLine(width, idWidth int, id, provider, date, cwd, preview string) string {
-	rest := width - gutterWidth - idWidth - tableProviderWidth - tableDateWidth - 4
+// plainLine lays out one plain-table row. The id and agent columns are never
+// truncated; the workspace and message columns absorb whatever width remains.
+func plainLine(width, idWidth, agentWidth int, id, provider, date, cwd, preview string) string {
+	rest := width - gutterWidth - idWidth - agentWidth - tableDateWidth - 4
 	cw := clamp(rest/2, 10, 46)
 	vw := max(1, rest-cw-1)
 	line := "  " + fmt.Sprintf(
 		"%-*s %-*s %-*s %-*s %s",
 		idWidth, id,
-		tableProviderWidth, truncateCells(provider, tableProviderWidth),
+		agentWidth, provider,
 		tableDateWidth, truncateCells(date, tableDateWidth),
 		cw, truncateMiddle(cwd, cw),
 		truncateCells(preview, vw),
@@ -115,7 +115,7 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 	preview := emptyFallback(session.SafeDisplayText(previewFor(row, mode)))
 
 	if selected {
-		line := composeLine(width, withWorkspace, "❯ ", providerPlainLabel(string(row.Provider), pw), date, workspace, preview)
+		line := composeLine(width, withWorkspace, "❯ ", providerPlainLabel(th, string(row.Provider), pw), date, workspace, preview)
 		return th.selected.Width(width).Render(line)
 	}
 
@@ -131,12 +131,23 @@ func renderTableRow(th *theme, width int, row session.Row, mode previewMode, sel
 }
 
 func providerBadge(th *theme, provider string, width int) string {
-	label := providerPlainLabel(provider, width)
+	label := providerPlainLabel(th, provider, width)
 	return th.badgeFor(session.Provider(provider)).Width(width).Render(label)
 }
 
-func providerPlainLabel(provider string, width int) string {
-	return centerCell(" "+strings.ToUpper(provider)+" ", width)
+// providerPlainLabel is the badge text laid out in width: centered on a filled
+// badge, left-aligned where badges are plain text. A name too long for the
+// padded form drops the padding and then its trailing letters, so a badge
+// reads "OPENCODE" or "ANTIGRAV" rather than ending in an ellipsis.
+func providerPlainLabel(th *theme, provider string, width int) string {
+	name := strings.ToUpper(provider)
+	if th.plainBadges {
+		return padCells(ansi.Truncate(name, width, ""), width)
+	}
+	if lipgloss.Width(name)+2 <= width {
+		name = " " + name + " "
+	}
+	return centerCell(ansi.Truncate(name, width, ""), width)
 }
 
 func renderWorkspaceCell(th *theme, cwd string, width int) string {
@@ -218,9 +229,11 @@ func relativeTime(value time.Time) string {
 	}
 	d := time.Since(value)
 	switch {
-	case d < 0:
+	case d < -time.Minute:
 		return value.Local().Format("Jan 02")
 	case d < time.Minute:
+		// A session written a moment ago can carry a stamp slightly ahead of
+		// the clock: each copied turn is stamped one millisecond later.
 		return "just now"
 	case d < time.Hour:
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))

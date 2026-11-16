@@ -451,12 +451,13 @@ func TestNoDeleteToolExposed(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"list_sessions":     true,
-		"get_transcript":    true,
-		"get_user_messages": true,
-		"branch_session":    true,
-		"convert_session":   true,
-		"resume_command":    true,
+		"list_sessions":      true,
+		"get_transcript":     true,
+		"get_user_messages":  true,
+		"preview_conversion": true,
+		"branch_session":     true,
+		"convert_session":    true,
+		"resume_command":     true,
 	}
 	if len(tools.Tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools.Tools), len(want))
@@ -478,10 +479,12 @@ func TestProviderToolSchemasAdvertiseRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	advertised := 0
 	for _, tool := range tools.Tools {
-		if tool.Name != "list_sessions" && tool.Name != "convert_session" {
+		if tool.Name != "list_sessions" && tool.Name != "convert_session" && tool.Name != "preview_conversion" {
 			continue
 		}
+		advertised++
 		data, err := json.Marshal(tool)
 		if err != nil {
 			t.Fatal(err)
@@ -491,6 +494,9 @@ func TestProviderToolSchemasAdvertiseRegistry(t *testing.T) {
 				t.Fatalf("%s schema does not advertise provider %q: %s", tool.Name, provider, data)
 			}
 		}
+	}
+	if advertised != 3 {
+		t.Fatalf("checked %d provider-taking tools, want 3", advertised)
 	}
 }
 
@@ -502,7 +508,7 @@ func TestReadOnlyServerOmitsWriteTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"list_sessions": true, "get_transcript": true, "get_user_messages": true, "resume_command": true}
+	want := map[string]bool{"list_sessions": true, "get_transcript": true, "get_user_messages": true, "preview_conversion": true, "resume_command": true}
 	if len(tools.Tools) != len(want) {
 		t.Fatalf("read-only tool count = %d, want %d", len(tools.Tools), len(want))
 	}

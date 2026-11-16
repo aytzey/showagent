@@ -2,10 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+
+	"github.com/aytzey/showagent/internal/session"
 )
 
 // keyMap holds every binding the picker reacts to. It satisfies help.KeyMap so
@@ -19,6 +23,7 @@ type keyMap struct {
 	Search    key.Binding
 	Import    key.Binding
 	Resume    key.Binding
+	Copy      key.Binding
 	Collapse  key.Binding
 	Compound  key.Binding
 	Target    key.Binding
@@ -42,6 +47,7 @@ func defaultKeys() keyMap {
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Import:   key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "import")),
 		Resume:   key.NewBinding(key.WithKeys("enter", "ctrl+m"), key.WithHelp("enter", "resume")),
+		Copy:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy command")),
 		Collapse: key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "collapse")),
 		Compound: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "compound")),
 		Target:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "target")),
@@ -84,7 +90,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Page, k.Search, k.Import},
 		{k.Resume, k.Collapse, k.Compound, k.Convert, k.Branch},
 		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo},
-		{k.Providers, k.Rescan, k.Help, k.Quit},
+		{k.Copy, k.Providers, k.Rescan, k.Help, k.Quit},
 	}
 }
 
@@ -100,8 +106,9 @@ type keyHint struct{ key, desc, value string }
 
 var keyGroupTitles = []string{"SESSION", "HAND OFF", "FIND", "MORE"}
 
-// keyGroups lists every picker key in four fixed groups with live values, so
-// the box shows the current target, turns, preview and mode.
+// keyGroups lists the picker keys in four fixed groups with live values, so
+// the box shows the current target, turns, preview and mode. The key that
+// hides the box sits in its border.
 func (m model) keyGroups() [][]keyHint {
 	target := string(m.selectedHandoffTarget())
 	resume := keyHint{"enter", "resume", ""}
@@ -115,20 +122,52 @@ func (m model) keyGroups() [][]keyHint {
 	if selected, ok := m.list.SelectedItem().(item); ok && m.selectedConversionPreview(selected.row) != nil {
 		handoff.desc = "confirm →"
 	}
-	agents := "1"
-	if n := len(discoveredProviders(m.allRows)); n > 1 {
-		agents = fmt.Sprintf("1-%d", min(n, 9))
-	}
+	agents := providerDigits(discoveredProviders(m.allRows))
 	preview := modeShort(m.mode)
 	if m.mode == bothMessages {
 		preview = "both"
 	}
 	return [][]keyHint{
-		{resume, {"n", "branch", ""}, {"C", "compound", ""}, {"d", "delete", ""}},
+		{resume, {"c", "copy cmd", ""}, {"n", "branch", ""}, {"d", "delete", ""}},
 		{handoff, {"o", "target", target}, {"t", "turns", m.handoff.Label()}, {"i", "import", ""}},
 		{{"/", "search", ""}, {"p", "preview", preview}, {agents, "agents", ""}, {"space", "collapse", ""}},
-		{{"y", "mode", resumeModeLabel(m.dangerous)}, {"r", "rescan", ""}, {"?", "hide keys", ""}, {"q", "quit", ""}},
+		{{"y", "mode", resumeModeLabel(m.dangerous)}, {"C", "compound", ""}, {"r", "rescan", ""}, {"q", "quit", ""}},
 	}
+}
+
+// providerDigits is the keys-box label for the provider toggles. Digits are
+// fixed registry slots, so it names the slots that have sessions as compact
+// runs ("1-2,6") and widens to the covering range when that would not fit the
+// key column.
+func providerDigits(providers []session.Provider) string {
+	order := session.ProviderOrder()
+	var slots []int
+	for _, provider := range providers {
+		if slot := slices.Index(order, provider) + 1; slot >= 1 && slot <= 9 {
+			slots = append(slots, slot)
+		}
+	}
+	if len(slots) == 0 {
+		return fmt.Sprintf("1-%d", min(len(order), 9))
+	}
+	var runs []string
+	for start := 0; start < len(slots); {
+		end := start
+		for end+1 < len(slots) && slots[end+1] == slots[end]+1 {
+			end++
+		}
+		run := strconv.Itoa(slots[start])
+		if end > start {
+			run += "-" + strconv.Itoa(slots[end])
+		}
+		runs = append(runs, run)
+		start = end + 1
+	}
+	label := strings.Join(runs, ",")
+	if len(label) > len("space") {
+		return fmt.Sprintf("%d-%d", slots[0], slots[len(slots)-1])
+	}
+	return label
 }
 
 func (m model) keysPanelFits() bool {
@@ -192,11 +231,16 @@ func (m model) keysPanel() string {
 	for row := range lines {
 		cells := make([]string, len(columns))
 		for index, column := range columns {
-			cells[index] = padCells(truncateCells(column[row], widths[index]), widths[index])
+			cell := ""
+			if row < len(column) {
+				cell = column[row]
+			}
+			cells[index] = padCells(truncateCells(cell, widths[index]), widths[index])
 		}
 		lines[row] = strings.Join(cells, strings.Repeat(" ", gap))
 	}
-	return titledBox(th.keysEdge, th.boxTitle, "Keys", fitLines(lines, len(lines), innerW), m.width)
+	hide := th.keyCap.Render("?") + " " + th.keyDesc.Render("hide")
+	return titledBox(th.keysEdge, th.boxTitle, "Keys", hide, fitLines(lines, len(lines), innerW), m.width)
 }
 
 func sum(values []int) int {

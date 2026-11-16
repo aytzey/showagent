@@ -15,25 +15,36 @@ Hide
 Type "exec bash demo/run-isolated.sh --shell"
 Enter
 Sleep 1s
-Type `printf '\033[2J\033[H\n  Codex -> Claude. Bring the conversation.\n\n  Sample sessions; simulated CLI output.\n\n'`
+Type `printf '\033[2J\033[H\n  \033[1mCodex -> Claude. Bring the conversation.\033[0m\n\n  Sample sessions; simulated CLI output.\n\n'`
 Enter
 Show
-Sleep 3s
+Sleep 2.5s
 Type "showagent"
 Enter
-Sleep 1.5s
+Sleep 2.5s
 
-# The newest fixture is the Codex rate-limit session. Show the handoff early.
+# The newest fixture is the Codex rate-limit session. x asks where the new
+# session should pick up: the end, or any user message (newest first).
 Type "x"
-Sleep 4.5s
+Sleep 1.8s
+Down
+Sleep 900ms
+Up
+Sleep 700ms
+
+# enter keeps the whole conversation and shows the hand-off before any write.
+Enter
+Sleep 4s
+
+# The second x writes the Claude session and selects it.
 Type "x"
-Sleep 2s
+Sleep 2.5s
 
 # A new native-format row; resume reaches a labeled illustration stub.
 Enter
 Sleep 3.5s
 Hide
-Type `printf '\033[2J\033[H\n  Switch coding agents. Bring the conversation.\n\n  brew install aytzey/tap/showagent\n\n  github.com/aytzey/showagent\n\n  Sample sessions; simulated CLI output.\n'`
+Type `printf '\033[2J\033[H\n  \033[1mSwitch coding agents. Bring the conversation.\033[0m\n\n  brew install aytzey/tap/showagent\n\n  github.com/aytzey/showagent\n\n  Sample sessions; simulated CLI output.\n'`
 Enter
 Show
-Sleep 5s
+Sleep 4.5s

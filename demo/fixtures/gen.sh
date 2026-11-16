@@ -196,7 +196,13 @@ codex_session $((2 * H)) "1f7c9a2e-4b31-4c8e-9d02-8a5e3f6b1c44" "$WS_API" \
 	"a:Added internal/ratelimit with a token bucket keyed by API key and wired it into the charges handler as middleware." \
 	'u:429 responses should include "Retry-After" and a JSON error body' \
 	"a:Done - the middleware now writes Retry-After and a rate_limited error object. Added handler tests for both paths." \
-	"u:the redis TTL test is flaky - mock the clock instead of sleeping"
+	"u:the redis TTL test is flaky - mock the clock instead of sleeping" \
+	"a:Replaced time.Sleep with an injected clock; the TTL test is deterministic now." \
+	"u:switch the bucket to a sliding window log so bursts are smoother" \
+	"a:Rewrote the limiter as a sliding window log in a Redis sorted set. Memory per key grows with traffic." \
+	"u:p99 went from 4ms to 31ms under load - profile it" \
+	"a:ZREMRANGEBYSCORE on every request dominates. I can batch it in a Lua script." \
+	"u:move the whole window check into one Lua script"
 
 codex_session $((30 * H)) "7d3e5b90-12af-4e67-8c41-2b9f0d6a3e58" "$WS_API" \
 	"u:Migrate the orders table to UUID primary keys without downtime" \

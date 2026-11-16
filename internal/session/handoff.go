@@ -17,41 +17,59 @@ type Turn struct {
 }
 
 type HandoffOptions struct {
-	MaxTurns    int
-	ThroughUser int // One-based user message number; zero keeps the conversation's end.
+	MaxTurns int
+	// ThroughUser and BeforeUser are one-based user message numbers that end
+	// the copy early: through keeps the message as the last turn, before stops
+	// at the turn in front of it. At most one is set; zero keeps the
+	// conversation's end.
+	ThroughUser int
+	BeforeUser  int
 }
 
 func (o HandoffOptions) Label() string {
-	if o.ThroughUser > 0 {
-		label := fmt.Sprintf("through user #%d", o.ThroughUser)
-		if o.MaxTurns > 0 {
-			label += fmt.Sprintf(" · last %d", o.MaxTurns)
-		}
-		return label
-	}
-	if o.MaxTurns <= 0 {
+	var label string
+	switch {
+	case o.ThroughUser > 0:
+		label = fmt.Sprintf("through user #%d", o.ThroughUser)
+	case o.BeforeUser > 0:
+		label = fmt.Sprintf("before user #%d", o.BeforeUser)
+	case o.MaxTurns > 0:
+		return fmt.Sprintf("last %d", o.MaxTurns)
+	default:
 		return "all"
 	}
-	return fmt.Sprintf("last %d", o.MaxTurns)
+	if o.MaxTurns > 0 {
+		label += fmt.Sprintf(" · last %d", o.MaxTurns)
+	}
+	return label
 }
 
 func (o HandoffOptions) apply(turns []Turn) ([]Turn, error) {
-	if o.ThroughUser < 0 {
+	if o.ThroughUser < 0 || o.BeforeUser < 0 {
 		return nil, fmt.Errorf("user message number must be positive")
 	}
-	if o.ThroughUser > 0 {
-		users, end := 0, 0
+	if o.ThroughUser > 0 && o.BeforeUser > 0 {
+		return nil, fmt.Errorf("a copy ends either on a user message or before one, not both")
+	}
+	if number := max(o.ThroughUser, o.BeforeUser); number > 0 {
+		users, end := 0, -1
 		for index, turn := range turns {
-			if turn.Role == "user" {
-				users++
-				if users == o.ThroughUser {
-					end = index + 1
-					break
-				}
+			if turn.Role != "user" {
+				continue
+			}
+			if users++; users == number {
+				end = index
+				break
 			}
 		}
+		if end < 0 {
+			return nil, fmt.Errorf("user message #%d is not in this session", number)
+		}
+		if o.ThroughUser > 0 {
+			end++
+		}
 		if end == 0 {
-			return nil, fmt.Errorf("user message #%d is not in this session", o.ThroughUser)
+			return nil, fmt.Errorf("nothing comes before user message #%d, so there is nothing to copy", number)
 		}
 		turns = turns[:end]
 	}
@@ -64,14 +82,23 @@ func (o HandoffOptions) apply(turns []Turn) ([]Turn, error) {
 type UserMessage struct {
 	Number int    `json:"number"`
 	Text   string `json:"text"`
+	// Turns is the message's position in the conversation: how many user and
+	// assistant turns a copy ending on it keeps.
+	Turns int `json:"-"`
 }
 
-// RecentUserMessages returns redacted previews with absolute numbers, so
-// appending messages cannot shift a chosen continuation point.
-func RecentUserMessages(row Row) ([]UserMessage, error) {
+// RecentUserMessageLimit is how many user messages a listing returns unless
+// the caller asks for every one.
+const RecentUserMessageLimit = 30
+
+// UserMessages returns redacted user messages, newest first. Their numbers are
+// absolute, so appending messages cannot shift a chosen continuation point.
+// olderThan keeps only the messages numbered below it and limit caps how many
+// are returned; zero disables either. total counts every transferable turn.
+func UserMessages(row Row, olderThan, limit int) (messages []UserMessage, total int, err error) {
 	turns, err := Transcript(row)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	users := 0
 	for _, turn := range turns {
@@ -79,14 +106,23 @@ func RecentUserMessages(row Row) ([]UserMessage, error) {
 			users++
 		}
 	}
-	messages := make([]UserMessage, 0, min(users, 30))
-	for index := len(turns) - 1; index >= 0 && len(messages) < 30; index-- {
-		if turn := turns[index]; turn.Role == "user" {
-			messages = append(messages, UserMessage{Number: users, Text: RedactTranscriptText(turn.Text)})
-			users--
+	messages = []UserMessage{}
+	for index := len(turns) - 1; index >= 0 && (limit <= 0 || len(messages) < limit); index-- {
+		if turns[index].Role != "user" {
+			continue
 		}
+		if olderThan <= 0 || users < olderThan {
+			messages = append(messages, UserMessage{Number: users, Text: RedactTranscriptText(turns[index].Text), Turns: index + 1})
+		}
+		users--
 	}
-	return messages, nil
+	return messages, len(turns), nil
+}
+
+// RecentUserMessages returns the newest RecentUserMessageLimit user messages.
+func RecentUserMessages(row Row) ([]UserMessage, error) {
+	messages, _, err := UserMessages(row, 0, RecentUserMessageLimit)
+	return messages, err
 }
 
 func Convert(row Row, target Provider, options HandoffOptions) (Row, error) {

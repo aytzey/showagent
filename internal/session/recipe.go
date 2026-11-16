@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -38,6 +39,20 @@ type ResumeRecipe struct {
 // PreviewConversion extracts the transferable transcript and summarizes the
 // hand-off without writing anything into the target agent's session store.
 func PreviewConversion(row Row, target Provider, options HandoffOptions) (ConversionPreview, error) {
+	preview, err := previewCopy(row, target, options)
+	if err == nil && row.Provider == target {
+		preview.Warnings = append([]string{"target provider matches source; this creates a local branch/copy"}, preview.Warnings...)
+	}
+	return preview, err
+}
+
+// PreviewBranch is PreviewConversion for a copy that stays in the session's
+// own agent, where landing in the same agent is the point, not a warning.
+func PreviewBranch(row Row, options HandoffOptions) (ConversionPreview, error) {
+	return previewCopy(row, row.Provider, options)
+}
+
+func previewCopy(row Row, target Provider, options HandoffOptions) (ConversionPreview, error) {
 	if err := conversionTargetError(target); err != nil {
 		return ConversionPreview{}, err
 	}
@@ -71,9 +86,6 @@ func PreviewConversion(row Row, target Provider, options HandoffOptions) (Conver
 			"sidechain, subagent, cache, and checkpoint internals",
 		},
 	}
-	if row.Provider == target {
-		preview.Warnings = append(preview.Warnings, "target provider matches source; this creates a local branch/copy")
-	}
 	if strings.TrimSpace(row.resumeCWD()) == "" || strings.HasPrefix(strings.TrimSpace(row.resumeCWD()), "(") {
 		preview.Warnings = append(preview.Warnings, "source workspace is unknown; some target providers may refuse conversion")
 	}
@@ -96,6 +108,38 @@ func RecipeFor(row Row, options ResumeOptions) ResumeRecipe {
 		StorageLocation: StorageLocation(row),
 		Note:            recipeNote(row),
 	}
+}
+
+// ShellLine is the one line that resumes the session from any directory: the
+// command, prefixed with a cd into its workspace when that is known. It is
+// meant to be pasted into a shell, so it is empty when the session's path or
+// id would carry a control character into that line.
+//
+// cmd.exe and PowerShell do not share the POSIX quoting used here, so on
+// Windows the line is the command alone, and only when it needs no quoting.
+func (r ResumeRecipe) ShellLine() string {
+	return r.shellLine(runtime.GOOS == "windows")
+}
+
+func (r ResumeRecipe) shellLine(windows bool) string {
+	line := r.CommandString
+	if line == "" {
+		return ""
+	}
+	if windows {
+		if line != strings.Join(r.Command, " ") {
+			return ""
+		}
+		return line
+	}
+	// Only an absolute path means the same directory in another shell.
+	if cwd := strings.TrimSpace(r.CWD); strings.HasPrefix(cwd, "/") {
+		line = "cd " + shellQuote(cwd) + " && " + line
+	}
+	if stripTerminalControls(line, false) != line {
+		return ""
+	}
+	return line
 }
 
 func SourceLocation(row Row) string {

