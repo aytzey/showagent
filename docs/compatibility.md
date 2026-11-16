@@ -246,9 +246,8 @@ The [README GIF](demo.gif) was recorded on Linux with VHS 0.11.0 in
 It uses fabricated sessions and the real showagent binary for the continuation
 chooser, preview, and conversion. The target CLI is an explicitly labeled stub
 with no model response. The 23-second, 1200×700 GIF is about 950 KB. It is an
-illustration, not evidence
-that a real model loaded or continued an imported conversation. See the
-[recording instructions](../demo/README.md).
+illustration, not evidence that a real model loaded or continued an imported
+conversation. See the [recording instructions](../demo/README.md).
 
 ## Recording a native check
 
