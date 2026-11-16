@@ -5,9 +5,8 @@
 
 <p align="center">
 Out of Claude quota halfway through a fix? Want Codex to review what Gemini planned?<br>
-Started in Antigravity and want to finish in the terminal?<br>
 <b>showagent</b> finds every coding-agent session on your machine and continues it in another agent,<br>
-as that agent's own native session, in a few keystrokes.
+as that agent's own native session. No copy-paste, no re-explaining.
 </p>
 
 <p align="center">
@@ -19,10 +18,10 @@ as that agent's own native session, in a few keystrokes.
 </p>
 
 <p align="center">
-<b>Claude Code</b> · <b>Codex</b> · <b>Gemini CLI</b> · <b>Antigravity</b> <sup>new</sup> · <b>OpenCode</b> · <b>MiMoCode</b> · <b>Pi</b> · <b>jcode</b>
+<b>Claude Code</b> · <b>Codex</b> · <b>Gemini CLI</b> · <b>Antigravity</b> · <b>OpenCode</b> · <b>MiMoCode</b> · <b>Pi</b> · <b>jcode</b>
 </p>
 
-![showagent walkthrough using sample sessions and simulated agent output](docs/demo.gif)
+![showagent hands a Codex session to Claude Code, using sample sessions and simulated agent output](docs/demo.gif)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aytzey/showagent/main/scripts/install.sh | sh
@@ -34,6 +33,17 @@ showagent
 is a labeled stub. See [compatibility evidence](docs/compatibility.md) for what
 has been tested with real agents.</sub>
 
+<p align="center">
+<a href="#quick-start">Quick start</a> ·
+<a href="#install">Install</a> ·
+<a href="#supported-agents">Supported agents</a> ·
+<a href="#commands">Commands</a> ·
+<a href="#keybindings">Keys</a> ·
+<a href="#use-it-from-inside-your-agent-mcp">MCP</a> ·
+<a href="#how-it-compares">Compare</a> ·
+<a href="#faq">FAQ</a>
+</p>
+
 ## Why showagent
 
 Every coding agent keeps its history in its own private format. Switching
@@ -41,38 +51,47 @@ agents usually means starting over and re-explaining the task. showagent
 reads every supported store, puts all of your sessions in one picker, and
 moves a conversation between agents without leaving the terminal.
 
-- **Move conversations between agents.** Eight agents, one picker. Hand a
-  session from Claude Code to Codex, from Codex to Gemini CLI and back, or
-  carry an Antigravity conversation into any of them.
-- **Native sessions, not copy-paste.** The target agent gets a real session
-  in its own store, so `claude --resume`, `codex resume`, `gemini --resume`,
-  and the rest reopen it like any other session.
-- **Preview before anything is written.** The first `x` shows the workspace,
-  how many turns move, and what is dropped. Only the second `x` writes, and the
-  original session is never modified.
-- **Find any past session.** Group by workspace and fuzzy-search agent,
-  session ID, paths, and first/latest prompts across every agent at once.
+- **One picker for every agent.** Sessions from eight agents, grouped by
+  workspace. Search by agent, session ID, path, and first or latest prompt.
+- **Native sessions, not pasted summaries.** The target agent gets a real
+  session in its own store, so `claude --resume`, `codex resume`,
+  `gemini --resume`, and the rest reopen it like any other session.
+- **Continue from where you choose.** Pick up at the conversation's end or
+  rewind to one of the last 30 user messages. Trim a long history to its
+  latest turns.
+- **Preview before anything is written.** See the workspace, how many turns
+  move, and what is left behind. The original session is never modified.
+- **One command when you are in a hurry.**
+  `showagent convert latest --to codex --open` writes the Codex session and
+  continues there.
 - **Your agent can use it too.** `showagent mcp` lets an MCP client search
-  and read other agents' history, and request a hand-off.
+  and read other agents' history, dry-run a hand-off, and request one.
 - **Bring web chats in.** Import a public ChatGPT or Claude share link, a
   transcript file, or pasted text as a native coding-agent session.
-- **Local only.** No hosted service, telemetry, or account. See the
-  [privacy FAQ](#faq).
+- **Local only.** One static binary. No hosted service, telemetry, or
+  account. See the [privacy FAQ](#faq).
+
+Seven of the eight agents can also receive a session, so 49 hand-off
+directions are implemented. The [compatibility record](docs/compatibility.md)
+lists which of them have been checked against real CLIs.
 
 ### Typical hand-offs
 
 | You are in | You want | Press |
 |---|---|---|
-| Claude Code, out of quota mid-task | Keep going in Codex or Gemini CLI | `o` to pick the target, `x` `x` to convert, `enter` to open it |
-| Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `x`, `enter` |
-| Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `x`, `enter` |
+| Claude Code, out of quota mid-task | Keep going in Codex or Gemini CLI | `o` to pick the target, `x` `enter` `x` to convert, `enter` to open it |
+| Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `enter` `x`, `enter` |
+| Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `enter` `x`, `enter` |
 | Any agent except Antigravity | A clean branch to try another direction | `n` |
 | Any agent | Reopen a session from last week in the agent that wrote it | `/` to search, `enter` (Antigravity IDE conversations are hand-off only) |
+| Any agent | The resume command for another pane, a script, or a teammate | `c` copies it |
 
 ## Quick start
 
 You need an existing local session, the target agent's CLI on `PATH`, and its
 normal sign-in completed. Keep the original workspace available.
+
+**In the picker**
 
 ```sh
 showagent
@@ -87,28 +106,33 @@ showagent
    to write and select the new session.
 4. Press `enter` to open that new session in the target CLI.
 
-Prefer commands? The [Codex → Claude handoff guide](docs/handoff-guide.md)
-walks through selecting an explicit session ID, previewing, converting, and
-resuming it. It also explains the reverse direction and what conversion preserves.
+**In one command**
+
+```sh
+showagent convert latest --to codex --dry-run   # see what would move
+showagent convert latest --to codex --open      # write it and continue in Codex
+```
+
+`latest` is the most recently updated session on this machine, in any agent
+and any workspace. Pass an ID from `showagent list` to choose another one.
+
+The [Codex → Claude handoff guide](docs/handoff-guide.md) walks through
+selecting an explicit session ID, previewing, converting, and resuming it. It
+also explains the reverse direction and what conversion preserves.
 
 If showagent saved you a re-explanation, a ⭐ helps other people find it.
 
-The picker shows sessions as each agent's scan finishes. Codex and Claude
-summaries are cached by file identity, change time, size, and modification time;
-OpenCode and MiMoCode listings refresh when their database or WAL changes.
-OpenCode's installed version selects the adapter: pre-2.x uses its database CLI;
-2.x uses its global paginated API and native session import/export commands.
-Unchanged 2.x sessions reuse cached previews after database updates. A missing
-or malformed session preview is skipped while healthy sessions remain visible.
-Both paths run through your `opencode` CLI. OpenCode 2.x API reads may start its
-managed background service. Unknown versions are skipped during discovery and
-produce an error for transcript or conversion operations.
-Private metadata caches redact common secret patterns and live in the OS cache
-directory under `showagent/discovery-v3` (`~/.cache/showagent/discovery-v3` on
-Linux). Deleting this cache rebuilds it on the next scan. A first scan of a
-large archive can take longer; ready providers remain usable while others load.
-Leaving the picker cancels unfinished read-only database scans and cleans up
-their temporary output. Deleting a session also removes its cached preview.
+### What moves
+
+| Carried into the new session | Stays with the source agent |
+|---|---|
+| User and assistant message text in the scope you chose | Tool calls and tool results |
+| Code blocks, newlines, and indentation | Permission and approval history |
+| The workspace and a new native session ID | Runtime metadata, attachments, and encrypted reasoning |
+
+Project files are not copied, rewound, or changed; both agents work in the
+same directory. The [handoff guide](docs/handoff-guide.md#what-moves-with-the-conversation)
+has the full list.
 
 ## Install
 
@@ -128,9 +152,26 @@ On **Windows**, download and extract the `windows_amd64.zip` archive from the
 `.\showagent.exe` in PowerShell from the extracted directory. Windows support
 is **experimental**; see [platform and native-resume evidence](docs/compatibility.md).
 
-Homebrew and Go installation remain available under
-[other installation options](#other-installation-options).
-[Distribution details](docs/distribution.md) explain version differences between channels.
+### Other installation options
+
+```sh
+# Homebrew (Linux/macOS)
+brew install aytzey/tap/showagent
+
+# Go 1.26.11+
+go install github.com/aytzey/showagent/cmd/showagent@latest
+```
+
+Archives are also available for `linux`/`darwin` amd64 + arm64 and `windows`
+amd64 (experimental) on the [releases page](https://github.com/aytzey/showagent/releases/latest).
+Update a standalone install with `showagent update`, and a Homebrew install
+with `brew upgrade aytzey/tap/showagent`.
+
+Homebrew, GitHub releases, Go module versions, and MCP bundles can update on
+different schedules. Go's `@latest` follows module version resolution, which
+can differ from GitHub's latest release; check `showagent --version` and
+`showagent --help` after installing. See [distribution details](docs/distribution.md)
+for channel-specific features and update instructions.
 
 ## Supported agents
 
@@ -145,11 +186,17 @@ Homebrew and Go installation remain available under
 | jcode | `jcode` | `~/.jcode/sessions/*.json` | `JCODE_HOME` | ✅ | ✅ |
 | Pi | `pi` | `~/.pi/agent/sessions/**/*.jsonl` | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` | ✅ | ✅ |
 
-Notes:
+The table describes implemented adapters, not a claim that every provider
+version and conversion direction has passed a real CLI test. See the
+[compatibility record](docs/compatibility.md).
 
-- The table describes implemented adapters, not a claim that every provider
-  version and conversion direction has passed a real CLI test. See the
-  [compatibility record](docs/compatibility.md).
+Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
+released but **experimental**: resume runs the agent as a child process
+instead of replacing showagent.
+
+<details>
+<summary><b>Notes on each agent</b></summary>
+
 - **Antigravity** has two surfaces. Conversations from the `agy` terminal
   agent are listed with their workspace and reopen with
   `agy --conversation <id>`. Conversations from the Antigravity IDE are listed
@@ -160,66 +207,51 @@ Notes:
   create a conversation without a model turn, and in that turn the model can
   write files if the handed-off text asks it to. showagent will add this
   direction when `agy` offers a safe import path.
-- OpenCode and MiMoCode store sessions in a SQLite database, so every
+- **OpenCode and MiMoCode** store sessions in a SQLite database, so every
   operation (discover, export, import, delete) goes through their own CLI;
   showagent never writes into the database directly. OpenCode, MiMoCode and
-  jcode only appear when their CLI is installed.
-- The picker only offers hand-off targets whose CLI is on `PATH`.
-  Scripted conversion to file-backed agents can still
-  prepare a session before their CLI is installed; OpenCode and MiMoCode
-  always require their CLI because the import goes through the agent itself.
-- jcode is a niche, experimental agent CLI. Its support is auto-hidden: if no
-  `jcode` binary is on `PATH`, showagent never shows it.
-- Pi sessions are versioned JSONL trees. showagent follows Pi's active leaf
-  through `parentId` links, so abandoned branches are not previewed or moved
-  into another agent. Converted sessions use Pi's native v3 format; the
+  jcode only appear when their CLI is installed. [Discovery and caching](docs/discovery.md)
+  covers the OpenCode version adapters.
+- **Hand-off targets.** The picker only offers targets whose CLI is on
+  `PATH`. Scripted conversion to file-backed agents can still prepare a
+  session before their CLI is installed; OpenCode and MiMoCode always require
+  their CLI because the import goes through the agent itself.
+- **jcode** is a niche, experimental agent CLI. Its support is auto-hidden: if
+  no `jcode` binary is on `PATH`, showagent never shows it.
+- **Pi** sessions are versioned JSONL trees. showagent follows Pi's active
+  leaf through `parentId` links, so abandoned branches are not previewed or
+  moved into another agent. Converted sessions use Pi's native v3 format; the
   [compatibility record](docs/compatibility.md) distinguishes file conversion
   from native loader and model-continuation checks.
 - A project-local Pi `sessionDir` is visible when showagent is launched from
   that project. Like Pi itself, showagent cannot discover arbitrary custom
   session roots belonging to other projects unless one is selected globally
   with `PI_CODING_AGENT_SESSION_DIR`.
-- Platforms: Linux and macOS (amd64 + arm64). Windows (amd64) builds are
-  released but **experimental**: resume runs the agent as a child process
-  instead of replacing showagent.
 
-## Other installation options
+</details>
 
-```sh
-# Homebrew (Linux/macOS)
-brew install aytzey/tap/showagent
-
-# Go 1.26.11+
-go install github.com/aytzey/showagent/cmd/showagent@latest
-```
-
-Homebrew, GitHub releases, Go module versions, and MCP bundles can update on
-different schedules. Go's `@latest` follows module version resolution, which
-can differ from GitHub's latest release; check `showagent --version` and
-`showagent --help` after installing. See [distribution details](docs/distribution.md)
-for channel-specific features and update instructions.
-
-Archives are also available for `linux`/`darwin` amd64 + arm64 and `windows`
-amd64 (experimental) on the [releases page](https://github.com/aytzey/showagent/releases/latest).
-
-## More commands
+## Commands
 
 ```sh
 showagent                  # open the interactive picker
 showagent list             # plain table of every session
 showagent list --json      # the same, machine-readable
-showagent transcript latest --max-turns 50 --json
-                           # bounded, secret-redacted context for local handoff
 showagent resume latest    # reopen the most recent session, any agent
+showagent info latest      # exact resume command + storage location
 showagent convert SOURCE_SESSION_ID --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
+showagent convert SOURCE_SESSION_ID --to claude --open
+                           # write the Claude session and continue there
+showagent transcript latest --markdown > session.md
+                           # secret-redacted transcript to read, review, or paste
+showagent transcript latest --max-turns 50 --json
+                           # bounded, secret-redacted context for local handoff
 showagent import --url CHAT_SHARE_URL --to codex --cwd ./my-project
                            # create a native coding-agent session from a public web chat
 showagent import --file conversation.txt --into codex:EXACT_SESSION_ID
                            # add text to an existing Codex session's context
-showagent info latest      # exact resume command + storage location
 showagent mcp              # serve session history to MCP-capable agents (stdio)
-showagent mcp --read-only  # same search/transcript tools, without tools that write copies
+showagent mcp --read-only  # search, transcripts, and hand-off preview; no tools that write copies
 showagent mcp --allow-secrets
                            # explicitly allow verbatim secret-like transcript values
 showagent update           # update a standalone install (Homebrew: brew upgrade aytzey/tap/showagent)
@@ -227,7 +259,7 @@ showagent --help           # full CLI help
 ```
 
 Replace `SOURCE_SESSION_ID` with the ID you selected from `showagent list`.
-The `transcript` command is not present in older builds such as v0.11.0;
+`convert --open`, `transcript --markdown`, and the `c` key arrived in v0.16.0;
 check [distribution details](docs/distribution.md) if your help output differs.
 See [web conversation import](docs/web-import.md) for accepted transcript
 formats, security boundaries, and the difference between creating a session
@@ -240,6 +272,7 @@ and adding context to an existing one.
 | `↑/k`, `↓/j`, `pgup/pgdn` | Move through sessions |
 | `/` | Search agent, session id, paths, and first/latest user prompts (every word must match) |
 | `enter` | Resume the selected session in its own CLI |
+| `c` | Copy the command that resumes the selected session, with the `cd` into its workspace, to the clipboard |
 | `1`..`8` | Toggle fixed provider slots: Codex, Claude, jcode, OpenCode, MiMoCode, Gemini, Pi, Antigravity |
 | `p` | Cycle the preview column: first → latest → first + latest message |
 | `space` | Collapse or expand the selected workspace group |
@@ -255,6 +288,11 @@ and adding context to an existing one.
 | `?` | Hide or show the keys box (on small terminals: the full keybinding overlay) |
 | `esc` | Clear search / close overlay / cancel an armed delete (never quits) |
 | `q`, `ctrl+c` | Quit |
+
+`c` copies what `enter` would run, including the current yolo mode. Without a
+clipboard tool (a bare SSH session, a container) showagent asks the terminal
+to copy instead and shows the command. On Windows it copies the command
+without the `cd`, and only when that command needs no quoting.
 
 ## Scripting
 
@@ -277,9 +315,11 @@ are a stable contract:
 `showagent resume <id|latest> [--yolo]` resumes without the picker, so a shell
 alias can reopen your last session in one keystroke.
 
-`showagent transcript <id|latest> [--max-turns N] [--json]` exports the most
-recent turns for local tools that need a bounded context handoff. Output is
-always secret-redacted, marked as untrusted history, and capped at 500 turns.
+`showagent transcript <id|latest> [--max-turns N] [--json|--markdown]` exports
+the most recent turns. `--json` is for local tools that need a bounded context
+handoff; `--markdown` is a document for a person to read, attach to a review,
+or paste into a chat. Output is always secret-redacted, marked as untrusted
+history, and capped at 500 turns.
 
 `showagent messages <id|latest> [--json]` lists the last 30 user messages,
 newest first, with absolute message numbers. Use `--through-user N` with
@@ -297,8 +337,10 @@ retains the original values.
 `showagent convert <id|latest> --to <provider> --dry-run` prints the hand-off
 before writing anything: source session, target provider, workspace, scope,
 transferable turn count, last user ask, and the agent-specific state that will
-be dropped. Remove `--dry-run` to write the converted session, then showagent
-prints the resume recipe for the new row.
+be dropped. Remove `--dry-run` to write the converted session; showagent then
+prints the resume recipe for the new row. Use `--open` instead to write the
+session and continue in the target agent straight away. `--open` checks that
+the target CLI and the workspace are available before it writes anything.
 
 `showagent import --url <public-share-url> --to <provider> --cwd <directory>`
 creates a new native session from a ChatGPT or Claude web share. Use `--file`
@@ -317,11 +359,12 @@ pipes just work.
 ## Use it from inside your agent (MCP)
 
 `showagent mcp` runs a stdio MCP server, so an MCP client can find sessions
-from the supported local agents, read their recent transcript turns, and
-request a new native session in another agent. For example, ask it to find a
-Codex session whose first or latest prompt mentions rate limiting, then read
-that session for context. Search matches workspace and first/last user-message
-text; it does not search every message in the transcript.
+from the supported local agents, read their recent transcript turns, dry-run a
+hand-off, and request a new native session in another agent. For example, ask
+it to find a Codex session whose first or latest prompt mentions rate
+limiting, then read that session for context. Search matches workspace and
+first/last user-message text; it does not search every message in the
+transcript.
 
 The server returns a resume command for you to run. It does not launch an
 interactive agent or continue a model conversation by itself.
@@ -345,7 +388,7 @@ values are required, the user must explicitly start the server as
 `showagent mcp --allow-secrets`; an MCP tool call cannot bypass redaction.
 For clients that should never write session copies, register
 `showagent mcp --read-only`; that mode omits `branch_session` and
-`convert_session` entirely.
+`convert_session` entirely and keeps the read-only `preview_conversion`.
 
 Tools:
 
@@ -354,9 +397,13 @@ Tools:
 | `list_sessions` | Find supported local sessions — filter by provider, workspace substring, or free text over workspace + first/last user message (default 25, max 100 results) |
 | `get_transcript` | Read recent user/assistant turns (default 50, hard max 500); secrets are redacted unless the server was explicitly started with `--allow-secrets` |
 | `get_user_messages` | List the last 30 user messages, newest first, with absolute `number` values; always secret-redacted |
-| `branch_session` | Copy to the same agent; optional `through_user` ends the copy at that user message; returns the new id, file, and resume command |
-| `convert_session` | Copy to another agent; optional `through_user` ends the copy at that user message; returns the new id, file, and resume command |
+| `preview_conversion` | Dry-run a branch or conversion: reports the scope, how many turns move, the last user message in range, what is left behind, and warnings such as a missing target CLI. Writes nothing; always secret-redacted |
+| `branch_session` | Copy to the same agent; optional `through_user` ends the copy at that user message and `max_turns` keeps only the latest turns; returns the new id, file, and resume command |
+| `convert_session` | Copy to another agent; optional `through_user` ends the copy at that user message and `max_turns` keeps only the latest turns; returns the new id, file, and resume command |
 | `resume_command` | The exact shell command (and cwd) that resumes a session — returned as a string, **never executed** |
+
+`preview_conversion` and the `max_turns` scope on the two write tools arrived
+in v0.16.0.
 
 The default MCP surface is deliberately non-destructive: there is **no delete
 tool**, and it never launches or resumes an interactive agent. OpenCode storage
@@ -366,21 +413,34 @@ presses with a human watching. Branch and convert only add new sessions —
 originals are never modified — and `--read-only` removes even those additive
 tools.
 
+The [showagent-session-handoff skill](skills/showagent-session-handoff) teaches
+an agent to use these tools safely: search, preview, and only branch or
+convert after you confirm.
+
 ## How it compares
 
-[claude-squad](https://github.com/smtg-ai/claude-squad) manages parallel live
-agents with tmux and git worktrees. [ccmanager](https://github.com/kbwo/ccmanager)
-also manages live agent sessions and worktrees, without requiring tmux.
-[Agent Sessions](https://github.com/jazzyalex/agent-sessions) offers a macOS GUI
-for browsing agent history. [hstry](https://github.com/byteowlz/hstry) provides
-a shared history database, search, and native-format conversion.
+Several tools work with coding-agent sessions. They solve different problems
+and can sit side by side.
+
+| Tool | Focus | How a conversation reaches another agent |
+|---|---|---|
+| **showagent** | Terminal picker, CLI, and MCP server for sessions already on your machine; one Go binary | Writes a native session in the target agent's own store, after a preview |
+| [continues](https://github.com/yigitkonur/cli-continues) | Node.js picker and CLI covering 16 tools | Generates a structured context document and injects it into the target tool |
+| [casr](https://github.com/Dicklesworthstone/cross_agent_session_resumer) | Rust CLI (`casr list`, `casr resume <target> <session-id>`) covering 17 providers | Writes a native session through a canonical model, with read-back verification |
+| [hstry](https://github.com/byteowlz/hstry) | Shared history database and search | Native-format conversion |
+| [claude-squad](https://github.com/smtg-ai/claude-squad), [ccmanager](https://github.com/kbwo/ccmanager) | Running parallel live agents (tmux, git worktrees) | Not their focus |
+| [Agent Sessions](https://github.com/jazzyalex/agent-sessions) | macOS GUI for browsing agent history | Not its focus |
+
+This table is based on each project's README as of November 2026;
+corrections are welcome. If you need more agents than showagent supports
+today, continues and casr cover a wider set.
 
 showagent focuses on finding and continuing the sessions already on your
-machine: a terminal picker that reads existing stores, previews a handoff,
-and writes a new session for another supported agent. It can sit alongside
-the tools you use to run live tasks. Start with the
-[handoff guide](docs/handoff-guide.md) and check the
-[tested compatibility scope](docs/compatibility.md) for your workflow.
+machine: a terminal picker that reads existing stores, lets you choose where
+to continue, previews the hand-off, and writes a new session for another
+supported agent. Start with the [handoff guide](docs/handoff-guide.md) and
+check the [tested compatibility scope](docs/compatibility.md) for your
+workflow.
 
 ## Compound engineering
 
@@ -453,7 +513,8 @@ showagent. Windows remains experimental; the
 **A session is missing from the list.**
 Run `showagent list` with no sessions found and it prints exactly which
 directories were scanned and which env vars override them. `r` rescans
-in-place after you start a new conversation.
+in-place after you start a new conversation. [Discovery and caching](docs/discovery.md)
+explains how the picker fills, what is cached, and where the cache lives.
 
 ## Adding a provider
 
@@ -465,7 +526,8 @@ discovery, resume arguments, transcript extraction, and conversion.
 [`antigravity.go`](internal/session/antigravity.go) (a hand-off source only)
 are the templates. Register it in the `registry` slice and the TUI picks up badges,
 filter keys, and convert targets automatically. Add a matching env override
-so its tests stay hermetic. Issues and PRs welcome.
+so its tests stay hermetic. Issues and PRs welcome; to ask for an agent, open
+an [agent request](https://github.com/aytzey/showagent/issues/new?template=provider_request.yml).
 
 ## Building
 
@@ -488,6 +550,9 @@ Security issues and sensitive-data exposure should be reported privately; see
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Star history
+
+If showagent is useful to you, [starring the repository](https://github.com/aytzey/showagent/stargazers)
+is the simplest way to help other people find it.
 
 <a href="https://star-history.com/#aytzey/showagent&Date">
   <picture>

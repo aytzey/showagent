@@ -7,21 +7,29 @@ has not been released yet.
 
 ## Channel snapshot
 
-Checked on 2026-09-07; these are observations, not pinned upgrade targets.
+Checked on 2026-11-16; these are observations, not pinned upgrade targets.
 
 | Channel | Observed version | What to verify |
 |---|---|---|
-| GitHub latest / shell installer | v0.11.3 | All 17 published files downloaded and verified; [release workflow](https://github.com/aytzey/showagent/actions/runs/34168549236) passed |
+| GitHub latest / shell installer | v0.15.1 | 17 published files; [release workflow](https://github.com/aytzey/showagent/actions/runs/43182173549) passed |
 | `go install ...@latest` | Resolved Go module tag | `showagent --version` and `showagent --help`; this installs a tagged module, not the current `main` checkout |
-| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.11.3 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/34168872534) passed against the published archives |
-| Published MCPB files, MCP Registry and repository `server.json` | 0.11.3 | Five bundles use the same binaries as CLI downloads; [registry publication](https://github.com/aytzey/showagent/actions/runs/34168794428) passed and the live API reports this version as active/latest |
+| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.15.1 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/43183474477) passed against the published archives |
+| Published MCPB files, MCP Registry and repository `server.json` | 0.15.1 | [Registry publication](https://github.com/aytzey/showagent/actions/runs/43182927614) verified the published files and passed; the live API reports this version as active/latest; the repository `server.json` hashes match that release's `SHA256SUMS` |
 
-The v0.11.0 CLI does not have the newer `transcript` CLI command. Its MCP server
-already exposes `get_transcript`; missing a CLI subcommand does **not** mean the
-MCP transcript tool is absent. A desktop bundle installs an MCP server for its
-host application; it does not install the interactive CLI onto the user's PATH.
-Compare the feature actually advertised by each channel, rather than requiring
-unrelated packages to have identical version numbers.
+Features differ between versions, so compare the feature a channel actually
+advertises rather than requiring unrelated packages to have identical version
+numbers:
+
+- `convert --open`, `transcript --markdown`, the picker's `c` key, and the MCP
+  `preview_conversion` tool with the `max_turns` hand-off scope arrive with
+  v0.16.0. A channel still serving 0.15.x does not have them.
+- The continuation chooser (`messages`, `--through-user`) needs v0.15.0 or newer.
+- The v0.11.0 CLI does not have the `transcript` CLI command. Its MCP server
+  already exposes `get_transcript`; missing a CLI subcommand does **not** mean
+  the MCP transcript tool is absent.
+
+A desktop bundle installs an MCP server for its host application; it does not
+install the interactive CLI onto the user's PATH.
 
 ## What the release workflow builds
 

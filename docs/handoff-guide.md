@@ -98,6 +98,19 @@ the imported conversation and continue with your next request. The target's
 normal authentication, permissions, model availability, and context limits
 still apply.
 
+To write the session and continue in one step, use `--open` in place of
+`--dry-run` once the preview matches your intent (showagent v0.16.0 or newer):
+
+```sh
+showagent convert SOURCE_SESSION_ID --to claude --scope all --open
+```
+
+`--open` first checks that the `claude` CLI is on `PATH` and that the
+workspace exists; if either is missing it stops before writing anything. It
+then writes the new session and opens it in Claude Code. If the launch itself
+fails, the session has already been written and showagent prints its resume
+recipe.
+
 ### The same steps in the picker
 
 Select the source row, then press `o` until the target is `claude`. Press `t`
@@ -107,6 +120,10 @@ then `enter` to preview and `x` to create and select the new session. Press
 `enter` to resume it. `esc` backs out of search, the chooser, or the preview.
 For a same-agent branch, press `n`, choose the point, then `enter` to create it.
 Only targets with a CLI on `PATH` appear in the picker.
+
+To continue in another terminal pane instead, press `c` on the new row. It
+copies the resume command, including the `cd` into the workspace, to the
+clipboard (showagent v0.16.0 or newer).
 
 ## What moves with the conversation
 
@@ -169,4 +186,4 @@ conversations from `agy`'s own `/resume` picker (`f4`).
 | Claude is absent from the target choices | Make the `claude` executable available on `PATH` and reopen showagent. |
 | `workspace not found` | Restore access to the original workspace. Conversion does not recreate its files. |
 | Conversion succeeds but native resume fails | Keep the original session. Record the showagent version, target CLI version, OS, direction, and error; omit private transcript content when reporting the issue. Consult the compatibility record. |
-| A documented command is unknown | Compare `showagent --help` with the channel notes in [distribution details](distribution.md). In particular, v0.11.0 does not have the standalone `transcript` command. |
+| A documented command is unknown | Compare `showagent --help` with the channel notes in [distribution details](distribution.md). In particular, `convert --open` needs v0.16.0, and v0.11.0 does not have the standalone `transcript` command. |

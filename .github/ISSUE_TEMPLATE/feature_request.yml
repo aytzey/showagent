@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement or provider integration
+description: Propose a focused improvement to the picker, CLI, or MCP server
 title: "feat: "
 labels: [enhancement]
 body:

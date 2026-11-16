@@ -1,0 +1,55 @@
+name: Agent request
+description: Ask for a coding agent that showagent does not read or write yet
+title: "agent: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real transcripts, credentials, or private paths. A fabricated sample session is the most useful attachment.
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and CLI
+      description: Name, executable, and the version you use.
+      placeholder: "Example Agent, `example` 1.2.3"
+    validations:
+      required: true
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream repository or documentation
+      placeholder: https://github.com/owner/agent
+  - type: textarea
+    id: store
+    attributes:
+      label: Where and how it stores sessions
+      description: Directory or database, file format, and how one session maps to a workspace.
+      placeholder: "~/.example/sessions/<project>/<id>.jsonl, one JSON object per line"
+    validations:
+      required: true
+  - type: textarea
+    id: resume
+    attributes:
+      label: How it resumes and imports a session
+      description: The resume command, and any documented way to create or import a session without running a model turn.
+      placeholder: "example --resume <id>"
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction you need
+      options:
+        - Read and hand off from this agent
+        - Hand off into this agent
+        - Both
+    validations:
+      required: true
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help?
+      options:
+        - label: I can share a fabricated sample session
+        - label: I can test a build against the real CLI
+        - label: I can open a pull request
