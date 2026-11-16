@@ -64,21 +64,27 @@ To transfer only recent messages, use `--scope last:50` instead of
 messages; trimming can leave out earlier decisions. Keep the same scope in
 the preview and write commands.
 
-To return to an earlier topic, list the last 30 user messages and use the
-absolute number of the message you want to continue from:
+To choose an earlier point, list user messages with their absolute numbers.
+`messages` shows the newest 30 by default; add `--all` to see every message:
 
 ```sh
 showagent messages SOURCE_SESSION_ID
+showagent messages SOURCE_SESSION_ID --all
 showagent convert SOURCE_SESSION_ID --to claude --through-user 12 --dry-run
+showagent convert SOURCE_SESSION_ID --to claude --before-user 12 --dry-run
 ```
 
-This includes user message #12 and earlier context, excluding its answer and
-every later turn. Keep `--through-user 12` when removing `--dry-run`. Combining
-it with `--scope last:50` keeps the last 50 turns ending at that message.
-Without `--through-user`, conversion keeps the conversation's end. Neither
+`--through-user 12` includes user message #12 but excludes its answer and
+every later turn; `--before-user 12` leaves that message out too, ending on
+the reply before it so you can ask differently. They cannot be combined.
+Keep the chosen flag when replacing `--dry-run` with a write command.
+`--scope last:50` keeps the last 50 turns counted back from that point.
+Without either cutoff flag, conversion keeps the conversation's end. Neither
 choice restores earlier project files; the workspace stays in its current state.
+The first user message cannot be left out when nothing precedes it.
 
-When the preview matches your intent, remove `--dry-run`:
+When the preview matches your intent, remove `--dry-run`, keeping the same
+cutoff and scope. For the full-conversation preview above:
 
 ```sh
 showagent convert SOURCE_SESSION_ID --to claude --scope all
@@ -111,14 +117,44 @@ then writes the new session and opens it in Claude Code. If the launch itself
 fails, the session has already been written and showagent prints its resume
 recipe.
 
+### Branch instead of handing off
+
+A branch copies the conversation into a new session in the same agent, up to
+the point you choose. If a request took the conversation in the wrong
+direction, leave it out and ask differently while keeping the original:
+
+```sh
+showagent branch SOURCE_SESSION_ID --before-user 12 --dry-run
+showagent branch SOURCE_SESSION_ID --before-user 12 --open
+```
+
+`branch` accepts the same `--through-user`, `--before-user`, and `--scope`
+choices as `convert`. `--dry-run` writes nothing; `--open` writes the branch
+and opens it in its agent. Without either flag, it writes immediately and
+prints the resume recipe. Using the source provider as `convert --to` still
+creates a branch; `showagent branch` is the direct command. The original
+session and current project files stay as they are. Antigravity sessions
+cannot be branched.
+
 ### The same steps in the picker
 
 Select the source row, then press `o` until the target is `claude`. Press `t`
-if you want a smaller scope. Press `x` to choose the conversation's end or
-one of the last 30 user messages. Use `ctrl+d/u` to scroll a long message,
-then `enter` to preview and `x` to create and select the new session. Press
-`enter` to resume it. `esc` backs out of search, the chooser, or the preview.
-For a same-agent branch, press `n`, choose the point, then `enter` to create it.
+if you want a smaller hand-off scope. Press `x` for **Hand off to Claude ·
+choose where it picks up**, or `n` for **Branch · choose where the copy picks up**.
+Both list every user message, newest first, plus `Continue from the end`.
+
+- `↑/↓` or `pgup/pgdn` selects a message; `/` searches by words or `#N`.
+- `tab` leaves the chosen message out, ending on the preceding reply. Press
+  again to include it. This is unavailable for the first message when nothing
+  precedes it.
+- The live `keeps X of Y turns` line shows how much will be copied;
+  `ctrl+d/u` scrolls a long message.
+- `enter` finishes searching. Once search is finished, `enter` creates a
+  branch, or opens the hand-off preview. For a hand-off, press `x` again to
+  create and select the new session.
+- `esc` clears search, then cancels the chooser; it also closes the preview.
+
+Press `enter` on the new session to resume it.
 Only targets with a CLI on `PATH` appear in the picker.
 
 To continue in another terminal pane instead, press `c` on the new row. It
@@ -172,10 +208,11 @@ other supported target:
 showagent convert ANTIGRAVITY_CONVERSATION_ID --to claude --dry-run
 ```
 
-Converting *into* Antigravity is not available yet. `agy` has no way to
-create a conversation without running a model turn, and in that turn the
-model can write files if the handed-off text asks it to. Delete Antigravity
-conversations from `agy`'s own `/resume` picker (`f4`).
+Antigravity sessions cannot be branched. Converting *into* Antigravity is not
+available yet. `agy` has no way to create a conversation without running a
+model turn, and in that turn the model can write files if the handed-off text
+asks it to. Delete Antigravity conversations from `agy`'s own `/resume`
+picker (`f4`).
 
 ## If something does not work
 
@@ -186,4 +223,4 @@ conversations from `agy`'s own `/resume` picker (`f4`).
 | Claude is absent from the target choices | Make the `claude` executable available on `PATH` and reopen showagent. |
 | `workspace not found` | Restore access to the original workspace. Conversion does not recreate its files. |
 | Conversion succeeds but native resume fails | Keep the original session. Record the showagent version, target CLI version, OS, direction, and error; omit private transcript content when reporting the issue. Consult the compatibility record. |
-| A documented command is unknown | Compare `showagent --help` with the channel notes in [distribution details](distribution.md). In particular, `convert --open` needs v0.16.0, and v0.11.0 does not have the standalone `transcript` command. |
+| A documented command is unknown | Compare `showagent --help` with the channel notes in [distribution details](distribution.md). `convert --open`, `branch`, `--before-user` on `branch` and `convert`, `messages --all`, the chooser's full message list, `/` search and `tab` leave-out, and MCP `before_user` and `get_user_messages` paging need v0.16.0. v0.11.0 does not have the standalone `transcript` command. |

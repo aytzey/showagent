@@ -1,12 +1,12 @@
 <!-- mcp-name: io.github.aytzey/showagent -->
 <h1 align="center">showagent</h1>
 
-<p align="center"><b>Switch coding agents. Bring the conversation.</b></p>
+<p align="center"><b>Switch coding agents. Bring the conversation. Branch it from any message.</b></p>
 
 <p align="center">
 Out of Claude quota halfway through a fix? Want Codex to review what Gemini planned?<br>
-<b>showagent</b> finds every coding-agent session on your machine and continues it in another agent,<br>
-as that agent's own native session. No copy-paste, no re-explaining.
+<b>showagent</b> finds every coding-agent session on your machine and continues it in another agent<br>
+as a native session, or branches it from the exact message you choose. No copy-paste, no re-explaining.
 </p>
 
 <p align="center">
@@ -35,6 +35,7 @@ has been tested with real agents.</sub>
 
 <p align="center">
 <a href="#quick-start">Quick start</a> ·
+<a href="#branch-from-any-message">Branch from any message</a> ·
 <a href="#install">Install</a> ·
 <a href="#supported-agents">Supported agents</a> ·
 <a href="#commands">Commands</a> ·
@@ -56,9 +57,9 @@ moves a conversation between agents without leaving the terminal.
 - **Native sessions, not pasted summaries.** The target agent gets a real
   session in its own store, so `claude --resume`, `codex resume`,
   `gemini --resume`, and the rest reopen it like any other session.
-- **Continue from where you choose.** Pick up at the conversation's end or
-  rewind to one of the last 30 user messages. Trim a long history to its
-  latest turns.
+- **Branch from any message.** Wrong turn? Copy the session up to just before
+  it and ask differently; the original stays untouched. The same chooser sets
+  where a hand-off picks up.
 - **Preview before anything is written.** See the workspace, how many turns
   move, and what is left behind. The original session is never modified.
 - **One command when you are in a hurry.**
@@ -82,7 +83,7 @@ lists which of them have been checked against real CLIs.
 | Claude Code, out of quota mid-task | Keep going in Codex or Gemini CLI | `o` to pick the target, `x` `enter` `x` to convert, `enter` to open it |
 | Codex, stuck on a bug | A second opinion from Claude or Gemini | the same `o`, `x` `enter` `x`, `enter` |
 | Antigravity IDE | Continue the same conversation from a terminal agent | the same `o`, `x` `enter` `x`, `enter` |
-| Any agent except Antigravity | A clean branch to try another direction | `n` |
+| Any agent except Antigravity | Try another direction from any user message | `n`, choose the message, `tab` to leave it out, `enter` to branch |
 | Any agent | Reopen a session from last week in the agent that wrote it | `/` to search, `enter` (Antigravity IDE conversations are hand-off only) |
 | Any agent | The resume command for another pane, a script, or a teammate | `c` copies it |
 
@@ -101,9 +102,9 @@ showagent
    or latest user prompt. Press `enter` to finish searching, then select the
    session you want to continue.
 2. Press `o` until the target is `claude` (or another installed agent).
-3. Press `x` and choose where to continue: the conversation's end, or one of
-   the last 30 user messages. Press `enter` to review the hand-off, then `x`
-   to write and select the new session.
+3. Press `x` and choose where to continue: the conversation's end, or any
+   earlier user message (`/` searches them). Press `enter` to review the
+   hand-off, then `x` to write and select the new session.
 4. Press `enter` to open that new session in the target CLI.
 
 **In one command**
@@ -133,6 +134,50 @@ If showagent saved you a re-explanation, a ⭐ helps other people find it.
 Project files are not copied, rewound, or changed; both agents work in the
 same directory. The [handoff guide](docs/handoff-guide.md#what-moves-with-the-conversation)
 has the full list.
+
+## Branch from any message
+
+![Branch a Codex session by searching for a message and leaving user #4 out](docs/branch.gif)
+
+<sub>The demo runs the real showagent binary on sample sessions with simulated
+CLI output. It searches for "sliding", leaves user #4 out, and opens a new Codex
+session ending on the preceding reply. No model is called.</sub>
+
+A branch is a new session in the same agent, copied up to the point you choose.
+If a conversation takes a wrong turn, branch just before that message and ask
+it differently. The original stays untouched, so both lines of work remain.
+
+Press `n` on a session to open **Branch · choose where the copy picks up**.
+Press `x` for the same chooser when handing off to another agent.
+
+| Key | In the chooser |
+|---|---|
+| `↑/↓` | Choose `Continue from the end` or any user message, newest first |
+| `/` | Search the messages by words or `#N` |
+| `tab` | Leave the chosen message out: the copy ends on the reply before it, so you can ask it differently |
+| `enter` | Create the branch, or open the hand-off preview (while searching: keep the search) |
+| `esc` | Clear the search, or cancel |
+
+A live `keeps X of Y turns` line shows how much the copy keeps, and
+`ctrl+d/u` scrolls a long message.
+
+The same choice from the command line:
+
+```sh
+showagent messages latest                           # numbered user messages, newest first
+showagent branch latest --before-user 4 --dry-run   # preview what the copy keeps
+showagent branch latest --before-user 4 --open      # write the branch and open it
+showagent convert latest --to claude --before-user 4 --open
+                                                    # the same cut, handed to Claude Code
+```
+
+`--through-user N` ends the copy on message N instead of before it. A new
+branch becomes `latest`, so use the session ID from `showagent list` when you
+run more than one step.
+
+A branch carries user and assistant message text only: no tool calls, tool
+results, permissions, or attachments. Project files are never rewound; the
+workspace stays in its current state. Antigravity sessions cannot be branched.
 
 ## Install
 
@@ -238,6 +283,12 @@ showagent list             # plain table of every session
 showagent list --json      # the same, machine-readable
 showagent resume latest    # reopen the most recent session, any agent
 showagent info latest      # exact resume command + storage location
+showagent messages latest --all
+                           # every user message, newest first, with absolute numbers
+showagent branch latest --before-user 4 --dry-run
+                           # preview a same-agent copy ending before user message #4
+showagent branch latest --before-user 4 --open
+                           # write the branch and open it in its agent
 showagent convert SOURCE_SESSION_ID --to claude --dry-run
                            # preview exactly what a hand-off would carry/drop
 showagent convert SOURCE_SESSION_ID --to claude --open
@@ -259,8 +310,10 @@ showagent --help           # full CLI help
 ```
 
 Replace `SOURCE_SESSION_ID` with the ID you selected from `showagent list`.
-`convert --open`, `transcript --markdown`, and the `c` key arrived in v0.16.0;
-check [distribution details](docs/distribution.md) if your help output differs.
+`convert --open`, `transcript --markdown`, and the `c` key arrived in v0.16.0.
+So did `branch`, `--before-user` on `branch` and `convert`, `messages --all`,
+and the chooser's full message list, `/` search, and `tab` leave-out.
+Check [distribution details](docs/distribution.md) if your help output differs.
 See [web conversation import](docs/web-import.md) for accepted transcript
 formats, security boundaries, and the difference between creating a session
 and adding context to an existing one.
@@ -278,8 +331,8 @@ and adding context to an existing one.
 | `space` | Collapse or expand the selected workspace group |
 | `o` | Cycle the convert target for the selected session |
 | `t` | Cycle the convert scope: all turns, or latest 200/100/50/20/10 |
-| `x` | Choose a continuation point, `enter` to preview, then `x` to write and select the new session |
-| `n` | Choose a continuation point, then `enter` to branch in the same agent (not available for Antigravity) |
+| `x` | Choose any user message or the end, `enter` to preview the hand-off, then `x` to write and select the new session |
+| `n` | Choose any user message or the end, then `enter` to branch in the same agent (not available for Antigravity) |
 | `y` | Toggle the provider's yolo resume mode (jcode/Pi add no flag) |
 | `C` | Compound: resume with a learnings-capture prompt (see below) |
 | `i` | Import a ChatGPT/Claude share link or pasted transcript |
@@ -288,6 +341,12 @@ and adding context to an existing one.
 | `?` | Hide or show the keys box (on small terminals: the full keybinding overlay) |
 | `esc` | Clear search / close overlay / cancel an armed delete (never quits) |
 | `q`, `ctrl+c` | Quit |
+
+After `n` or `x`, use `↑/↓` or `pgup/pgdn` to choose, `/` to search by words
+or `#N`, and `tab` to leave a message out (except the first when nothing
+precedes it). `ctrl+d/u` scrolls a long message. `enter` finishes searching;
+the next `enter` creates the branch or opens the hand-off preview. `esc`
+clears search, then cancels. The chooser shows `keeps X of Y turns`.
 
 `c` copies what `enter` would run, including the current yolo mode. Without a
 clipboard tool (a bare SSH session, a container) showagent asks the terminal
@@ -321,18 +380,25 @@ handoff; `--markdown` is a document for a person to read, attach to a review,
 or paste into a chat. Output is always secret-redacted, marked as untrusted
 history, and capped at 500 turns.
 
-`showagent messages <id|latest> [--json]` lists the last 30 user messages,
-newest first, with absolute message numbers. Use `--through-user N` with
-`convert` to copy the conversation up to and including that user message.
-Its answer and all later turns are excluded. Earlier context is retained;
-`--scope last:N`, when supplied, trims that prefix. Omit `--through-user`
-to keep the conversation's end. Use the source provider as `--to` for a branch.
-These operations change conversation history only; project files are not rewound.
+`showagent messages <id|latest> [--all] [--json]` lists the last 30 user
+messages by default, newest first, with absolute message numbers. Add `--all`
+to list every user message. Both `branch` and `convert` accept
+`--through-user N` to end the copy on user message N, excluding its answer
+and all later turns, or `--before-user N` to leave that message out and keep
+the reply before it. The two flags cannot be combined. Without either, the
+copy keeps the conversation's end. `--scope last:M` counts back from the
+chosen point. A turn is one user or assistant message, not a pair.
 
-In the picker, `n` and `x` open the same message chooser. Use `↑/↓` or
-`pgup/pgdn` to choose, `ctrl+d/u` to scroll the full message preview, and
-`esc` to cancel. Message previews redact common secrets; copied history
-retains the original values.
+`showagent branch <id|latest> [--through-user N|--before-user N] [--scope all|last:N] [--dry-run|--open] [--yolo]`
+copies a session in its own agent. `--dry-run` prints a branch preview and
+writes nothing; `--open` writes and opens it in that agent. Without either,
+it writes immediately and prints the resume recipe. Converting with the
+source provider as `--to` still creates a branch; use `showagent branch` for
+that operation. Neither branching nor handing off modifies the original
+session or rewinds project files.
+
+In the picker, `n` and `x` open the same [message chooser](#branch-from-any-message).
+Message previews redact common secrets; copied history retains the original values.
 
 `showagent convert <id|latest> --to <provider> --dry-run` prints the hand-off
 before writing anything: source session, target provider, workspace, scope,
@@ -360,11 +426,11 @@ pipes just work.
 
 `showagent mcp` runs a stdio MCP server, so an MCP client can find sessions
 from the supported local agents, read their recent transcript turns, dry-run a
-hand-off, and request a new native session in another agent. For example, ask
-it to find a Codex session whose first or latest prompt mentions rate
-limiting, then read that session for context. Search matches workspace and
-first/last user-message text; it does not search every message in the
-transcript.
+branch or hand-off, and request a new native session in the same or another
+agent. For example, ask it to find a Codex session whose first or latest
+prompt mentions rate limiting, then read that session for context. Search
+matches workspace and first/last user-message text; it does not search every
+message in the transcript.
 
 The server returns a resume command for you to run. It does not launch an
 interactive agent or continue a model conversation by itself.
@@ -396,14 +462,16 @@ Tools:
 |---|---|
 | `list_sessions` | Find supported local sessions — filter by provider, workspace substring, or free text over workspace + first/last user message (default 25, max 100 results) |
 | `get_transcript` | Read recent user/assistant turns (default 50, hard max 500); secrets are redacted unless the server was explicitly started with `--allow-secrets` |
-| `get_user_messages` | List the last 30 user messages, newest first, with absolute `number` values; always secret-redacted |
-| `preview_conversion` | Dry-run a branch or conversion: reports the scope, how many turns move, the last user message in range, what is left behind, and warnings such as a missing target CLI. Writes nothing; always secret-redacted |
-| `branch_session` | Copy to the same agent; optional `through_user` ends the copy at that user message and `max_turns` keeps only the latest turns; returns the new id, file, and resume command |
-| `convert_session` | Copy to another agent; optional `through_user` ends the copy at that user message and `max_turns` keeps only the latest turns; returns the new id, file, and resume command |
+| `get_user_messages` | List up to 30 user messages per call, newest first, with absolute `number` values. When `has_older` is true, pass the lowest returned number as `older_than` for the next page; always secret-redacted |
+| `preview_conversion` | Dry-run a branch or conversion with optional `through_user`, `before_user`, and `max_turns`. Reports scope, turn count, last user message, dropped state, and warnings. Use the source agent as `target` for a branch; writes nothing and always redacts common secrets |
+| `branch_session` | Copy to the same agent; optional `through_user` ends on that user message, `before_user` ends just before it, and `max_turns` counts back from that point; returns the new id, file, and resume command |
+| `convert_session` | Copy to another agent with optional `through_user`, `before_user`, and `max_turns`, as on `branch_session`; returns the new id, file, and resume command |
 | `resume_command` | The exact shell command (and cwd) that resumes a session — returned as a string, **never executed** |
 
 `preview_conversion` and the `max_turns` scope on the two write tools arrived
-in v0.16.0.
+in v0.16.0. So did `before_user` on all three tools and `get_user_messages`
+paging with `older_than` and `has_older`. `through_user` and `before_user`
+cannot be combined; without either, `max_turns` counts back from the end.
 
 The default MCP surface is deliberately non-destructive: there is **no delete
 tool**, and it never launches or resumes an interactive agent. OpenCode storage
@@ -424,7 +492,7 @@ and can sit side by side.
 
 | Tool | Focus | How a conversation reaches another agent |
 |---|---|---|
-| **showagent** | Terminal picker, CLI, and MCP server for sessions already on your machine; one Go binary | Writes a native session in the target agent's own store, after a preview |
+| **showagent** | Terminal picker, CLI, and MCP server for sessions already on your machine; one Go binary; branches a session from any user message | Writes a native session in the target agent's own store, after a preview |
 | [continues](https://github.com/yigitkonur/cli-continues) | Node.js picker and CLI covering 16 tools | Generates a structured context document and injects it into the target tool |
 | [casr](https://github.com/Dicklesworthstone/cross_agent_session_resumer) | Rust CLI (`casr list`, `casr resume <target> <session-id>`) covering 17 providers | Writes a native session through a canonical model, with read-back verification |
 | [hstry](https://github.com/byteowlz/hstry) | Shared history database and search | Native-format conversion |
@@ -436,11 +504,11 @@ corrections are welcome. If you need more agents than showagent supports
 today, continues and casr cover a wider set.
 
 showagent focuses on finding and continuing the sessions already on your
-machine: a terminal picker that reads existing stores, lets you choose where
-to continue, previews the hand-off, and writes a new session for another
-supported agent. Start with the [handoff guide](docs/handoff-guide.md) and
-check the [tested compatibility scope](docs/compatibility.md) for your
-workflow.
+machine: a terminal picker that reads existing stores, lets you choose the
+message to continue from, branches in the same agent or previews a hand-off,
+and writes a new native session. Start with the
+[handoff guide](docs/handoff-guide.md) and check the
+[tested compatibility scope](docs/compatibility.md) for your workflow.
 
 ## Compound engineering
 
@@ -494,7 +562,16 @@ internals, approval history, encrypted reasoning blobs, or provider
 attachments: those are private to the source agent and would not replay
 correctly anyway. Branching uses the same safe user/assistant-turn projection;
 it does not byte-clone provider-private runtime metadata. `t` / `--scope` trims
-the scope to the latest N turns before converting.
+the scope to the latest N turns counted back from the chosen point.
+
+**Can I branch before a wrong turn?**
+Yes. Press `n`, choose the message (search with `/`), press `tab` to leave it
+out, and `enter` to create the branch. Or run
+`showagent branch SESSION_ID --before-user N --dry-run`, then `--open` when
+the preview matches your intent. The copy ends on the preceding reply, so you
+can ask differently; the original is untouched and project files stay in
+their current state. Antigravity sessions cannot be branched. See
+[Branch from any message](#branch-from-any-message).
 
 **What does delete actually do?**
 Codex sessions are deleted through `codex delete --force`; OpenCode through

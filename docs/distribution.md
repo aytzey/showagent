@@ -23,6 +23,10 @@ numbers:
 - `convert --open`, `transcript --markdown`, the picker's `c` key, and the MCP
   `preview_conversion` tool with the `max_turns` hand-off scope arrive with
   v0.16.0. A channel still serving 0.15.x does not have them.
+- `branch`, `--before-user` on `branch` and `convert`, `messages --all`, the
+  chooser's full user-message list with `/` search and `tab` leave-out, MCP
+  `before_user`, and `get_user_messages` paging (`older_than`, `has_older`)
+  also arrive with v0.16.0.
 - The continuation chooser (`messages`, `--through-user`) needs v0.15.0 or newer.
 - The v0.11.0 CLI does not have the `transcript` CLI command. Its MCP server
   already exposes `get_transcript`; missing a CLI subcommand does **not** mean
