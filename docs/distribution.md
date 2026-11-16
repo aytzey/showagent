@@ -11,10 +11,10 @@ Checked on 2026-11-16; these are observations, not pinned upgrade targets.
 
 | Channel | Observed version | What to verify |
 |---|---|---|
-| GitHub latest / shell installer | v0.15.1 | 17 published files; [release workflow](https://github.com/aytzey/showagent/actions/runs/43182173549) passed |
+| GitHub latest / shell installer | v0.16.0 | 17 published files; [release workflow](https://github.com/aytzey/showagent/actions/runs/43905190153) passed |
 | `go install ...@latest` | Resolved Go module tag | `showagent --version` and `showagent --help`; this installs a tagged module, not the current `main` checkout |
-| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.15.1 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/43183474477) passed against the published archives |
-| Published MCPB files, MCP Registry and repository `server.json` | 0.15.1 | [Registry publication](https://github.com/aytzey/showagent/actions/runs/43182927614) verified the published files and passed; the live API reports this version as active/latest; the repository `server.json` hashes match that release's `SHA256SUMS` |
+| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.16.0 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/43906126696) passed against the published archives |
+| Published MCPB files, MCP Registry and repository `server.json` | 0.16.0 | [Registry publication](https://github.com/aytzey/showagent/actions/runs/43905857277) verified the published files and passed; the live API reports this version as active/latest; the repository `server.json` hashes match that release's `SHA256SUMS` |
 
 Features differ between versions, so compare the feature a channel actually
 advertises rather than requiring unrelated packages to have identical version
