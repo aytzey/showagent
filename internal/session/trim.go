@@ -111,12 +111,16 @@ func CanTrimThroughUser(row Row) bool {
 }
 
 func trimRelativePath(row Row, adapter trimAdapter) (string, error) {
-	if strings.TrimSpace(row.ID) == "" || !filepath.IsAbs(row.File) || !pathWithin(adapter.root, row.File) {
-		return "", errors.New("trim requires an exact native session file inside its provider store")
-	}
 	root, err := filepath.Abs(adapter.root)
 	if err != nil {
 		return "", err
+	}
+	if !pathWithin(root, row.File) {
+		// Codex may return the physical path beneath a linked provider root.
+		root, err = filepath.EvalSymlinks(root)
+	}
+	if err != nil || strings.TrimSpace(row.ID) == "" || !filepath.IsAbs(row.File) || !pathWithin(root, row.File) {
+		return "", errors.New("trim requires an exact native session file inside its provider store")
 	}
 	relative, err := filepath.Rel(root, row.File)
 	if err != nil || !adapter.acceptPath(relative) {

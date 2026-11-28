@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -164,5 +165,48 @@ func TestCodexCompressedRevisionDoesNotExposeRetiredRollout(t *testing.T) {
 				t.Fatalf("redoing discovery changed the retired rollout: %v", readErr)
 			}
 		})
+	}
+}
+
+func TestTrimCodexResolvesCanonicalRevisionThroughLinkedSessionsRoot(t *testing.T) {
+	row, revision, _ := newCodexTrimFixture(t)
+	physicalRoot := filepath.Join(defaultCodexHome(), "sessions")
+	linkedHome := t.TempDir()
+	linkedRoot := filepath.Join(linkedHome, "sessions")
+	if err := os.Symlink(physicalRoot, linkedRoot); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("cannot create a Windows directory symlink: %v", err)
+		}
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", linkedHome)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	relative, err := filepath.Rel(physicalRoot, row.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedRow := row
+	linkedRow.File = filepath.Join(linkedRoot, relative)
+	installFakeCodexAppServer(t, row, filepath.Join(t.TempDir(), "linked-trim"), fakeCodexAppServerOptions{
+		NativeHistoryMode: "paginated", NativeTurns: testCodexNativeTurns,
+		RevertedPath: revision.File, BeforeTurn: "native-second",
+	})
+	plan, err := PlanTrim(linkedRow, HandoffOptions{BeforeUser: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := ApplyTrim(plan)
+	if err != nil || updated.ID != row.ID || !sameImportPath(updated.File, revision.File) {
+		t.Fatalf("could not resolve the committed revision within the linked store: %+v %v", updated, err)
+	}
+	if err := ValidateTrim(updated); err != nil {
+		t.Fatalf("canonical revision became ineligible for later trims: %v", err)
+	}
+	installFakeCodexAppServer(t, revision, filepath.Join(t.TempDir(), "linked-reopen"), fakeCodexAppServerOptions{
+		NativeHistoryMode: "paginated", NativeTurns: strings.SplitN(testCodexNativeTurns, ",\n", 2)[0] + "]",
+	})
+	rows := discoverCodex(linkedHome)
+	if len(rows) != 1 || rows[0].ID != row.ID || rows[0].LastUser != "keep first question" {
+		t.Fatalf("linked store did not rediscover its committed revision: %+v", rows)
 	}
 }
