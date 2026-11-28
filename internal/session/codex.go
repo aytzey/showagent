@@ -30,6 +30,10 @@ func (p codexProvider) Discover() []Row {
 	return discoverCodex(p.Home())
 }
 
+func (p codexProvider) DiscoverContext(ctx context.Context) []Row {
+	return discoverCodexContext(ctx, p.Home())
+}
+
 func (codexProvider) ResumeArgs(row Row, options ResumeOptions) []string {
 	command := []string{"codex", "resume"}
 	// ponytail: file size conservatively predicts oversized daemon history replies;
@@ -80,6 +84,9 @@ func (codexProvider) Delete(row Row) error {
 }
 
 func (codexProvider) Transcript(row Row) ([]Turn, error) {
+	if !row.HandoffOnly && codexIsRevisionPath(row.File) {
+		return codexRevisionTranscript(row)
+	}
 	return codexTranscript(row.File)
 }
 
@@ -111,6 +118,10 @@ type codexMessagePayload struct {
 }
 
 func discoverCodex(codexHome string) []Row {
+	return discoverCodexContext(context.Background(), codexHome)
+}
+
+func discoverCodexContext(ctx context.Context, codexHome string) []Row {
 	// Multica keeps daemon-managed Codex conversations in per-agent/issue
 	// stores beside the user's ordinary sessions so native Codex does not index
 	// thousands of task threads. Showagent is the explicit cross-agent history
@@ -119,11 +130,14 @@ func discoverCodex(codexHome string) []Row {
 	var rows []Row
 	multicaRoot := filepath.Join(codexHome, "multica-sessions")
 	for _, target := range codexScanTargets(codexHome) {
-		discovered := parseRowsCached(discoveryCacheKey("codex", target.Path), jsonlPaths(target.Path), parseCodex)
+		var discovered []Row
 		if target.Path == multicaRoot {
+			discovered = parseRowsCached(discoveryCacheKey("codex", target.Path), jsonlPaths(target.Path), parseCodex)
 			for index := range discovered {
 				discovered[index].HandoffOnly = true
 			}
+		} else {
+			discovered = discoverCodexRevisions(ctx, target.Path)
 		}
 		rows = append(rows, discovered...)
 	}

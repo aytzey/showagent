@@ -334,6 +334,10 @@ func TestCodexAppServerHelperProcess(t *testing.T) {
 	}
 	rejectThreadReadWithTurns := os.Getenv("SHOWAGENT_FAKE_CODEX_REJECT_READ_WITH_TURNS") == "true"
 	rejectThreadResumeWithTurns := os.Getenv("SHOWAGENT_FAKE_CODEX_REJECT_RESUME_WITH_TURNS") == "true"
+	historyMode := os.Getenv("SHOWAGENT_FAKE_CODEX_HISTORY_MODE")
+	nativeTurns := os.Getenv("SHOWAGENT_FAKE_CODEX_NATIVE_TURNS")
+	revertedPath := os.Getenv("SHOWAGENT_FAKE_CODEX_REVERT_PATH")
+	beforeTurn := os.Getenv("SHOWAGENT_FAKE_CODEX_BEFORE_TURN")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
@@ -376,7 +380,7 @@ func TestCodexAppServerHelperProcess(t *testing.T) {
 				}
 			}
 			result = map[string]any{"thread": map[string]any{
-				"id": readTarget.ID, "path": readTarget.File, "cwd": readTarget.CWD,
+				"id": readTarget.ID, "path": readTarget.File, "cwd": readTarget.CWD, "historyMode": historyMode,
 			}}
 		case "thread/resume":
 			if rejectThreadResumeWithTurns {
@@ -394,7 +398,25 @@ func TestCodexAppServerHelperProcess(t *testing.T) {
 				}
 			}
 			result = map[string]any{"thread": map[string]any{
-				"id": resumeTarget.ID, "path": resumeTarget.File, "cwd": resumeTarget.CWD,
+				"id": resumeTarget.ID, "path": resumeTarget.File, "cwd": resumeTarget.CWD, "historyMode": historyMode,
+			}}
+		case "thread/turns/list":
+			result = map[string]any{"data": json.RawMessage(nativeTurns)}
+		case "thread/revert":
+			var params struct {
+				BeforeTurnID string `json:"beforeTurnId"`
+			}
+			if json.Unmarshal(request.Params, &params) != nil || revertedPath == "" || params.BeforeTurnID != beforeTurn {
+				os.Exit(24)
+			}
+			var native []json.RawMessage
+			if json.Unmarshal([]byte(nativeTurns), &native) != nil || len(native) < 2 {
+				os.Exit(25)
+			}
+			retained, _ := json.Marshal(native[:1])
+			nativeTurns = string(retained)
+			result = map[string]any{"thread": map[string]any{
+				"id": resumeTarget.ID, "path": revertedPath, "cwd": resumeTarget.CWD, "historyMode": historyMode,
 			}}
 		case "thread/inject_items":
 			var params struct {
@@ -492,6 +514,10 @@ type fakeCodexAppServerOptions struct {
 	RejectThreadResumeWithTurns bool
 	ThreadReadTarget            *Row
 	ThreadResumeTarget          *Row
+	NativeHistoryMode           string
+	NativeTurns                 string
+	RevertedPath                string
+	BeforeTurn                  string
 }
 
 func installFakeCodexAppServer(t *testing.T, target Row, logPath string, options fakeCodexAppServerOptions) {
@@ -519,6 +545,10 @@ func installFakeCodexAppServer(t *testing.T, target Row, logPath string, options
 			"SHOWAGENT_FAKE_CODEX_RESUME_ID="+resumeTarget.ID,
 			"SHOWAGENT_FAKE_CODEX_RESUME_PATH="+resumeTarget.File,
 			"SHOWAGENT_FAKE_CODEX_RESUME_CWD="+resumeTarget.CWD,
+			"SHOWAGENT_FAKE_CODEX_HISTORY_MODE="+options.NativeHistoryMode,
+			"SHOWAGENT_FAKE_CODEX_NATIVE_TURNS="+options.NativeTurns,
+			"SHOWAGENT_FAKE_CODEX_REVERT_PATH="+options.RevertedPath,
+			"SHOWAGENT_FAKE_CODEX_BEFORE_TURN="+options.BeforeTurn,
 			fmt.Sprintf("SHOWAGENT_FAKE_CODEX_REJECT_READ_WITH_TURNS=%t", options.RejectThreadReadWithTurns),
 			fmt.Sprintf("SHOWAGENT_FAKE_CODEX_REJECT_RESUME_WITH_TURNS=%t", options.RejectThreadResumeWithTurns),
 		)

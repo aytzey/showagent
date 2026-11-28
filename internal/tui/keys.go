@@ -30,6 +30,7 @@ type keyMap struct {
 	Convert   key.Binding
 	Branch    key.Binding
 	Delete    key.Binding
+	Trim      key.Binding
 	Preview   key.Binding
 	Scope     key.Binding
 	Yolo      key.Binding
@@ -54,6 +55,7 @@ func defaultKeys() keyMap {
 		Convert:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "hand off")),
 		Branch:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "branch")),
 		Delete:   key.NewBinding(key.WithKeys("d", "delete", "backspace"), key.WithHelp("d/del", "delete")),
+		Trim:     key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "trim session")),
 		Preview:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "preview")),
 		Scope:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "scope")),
 		Yolo:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yolo")),
@@ -87,7 +89,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 // FullHelp is the multi-column layout shown when the user presses "?".
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Page, k.Search, k.Import},
+		{k.Up, k.Down, k.Page, k.Search, k.Import, k.Trim},
 		{k.Resume, k.Collapse, k.Compound, k.Convert, k.Branch},
 		{k.Delete, k.Preview, k.Target, k.Scope, k.Yolo},
 		{k.Copy, k.Providers, k.Rescan, k.Help, k.Quit},
@@ -240,7 +242,7 @@ func (m model) keysPanel() string {
 		lines[row] = strings.Join(cells, strings.Repeat(" ", gap))
 	}
 	hide := th.keyCap.Render("?") + " " + th.keyDesc.Render("hide")
-	return titledBox(th.keysEdge, th.boxTitle, "Keys", hide, fitLines(lines, len(lines), innerW), m.width)
+	return titledBox(th.keysEdge, th.boxTitle, "Keys · D trim", hide, fitLines(lines, len(lines), innerW), m.width)
 }
 
 func sum(values []int) int {
