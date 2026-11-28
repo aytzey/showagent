@@ -92,8 +92,10 @@ func TestTrimPickerBeforeOnlyRejectsTheFirstUserAndExplainsCodexRetention(t *tes
 		Row: row, Boundary: second, KeptTurns: 2, RemovedTurns: 2, KeptUserMessages: 1, RemovedUserMessages: 1,
 	}}
 	m.width, m.height = 24, 9
+	// Match the padded warning banner even in a monochrome test environment.
+	m.render.theme.deleteBanner = m.render.theme.deleteBanner.Padding(0, 1)
 	view := ansi.Strip(m.View().Content)
-	for _, want := range []string{"Trim Codex conversation", "Close the agent session.", "Old rollout kept on disk", "Removes from user #2.", "D trim · esc back"} {
+	for _, want := range []string{"Trim Codex session", "Close the agent session.", "Old rollout kept on disk", "Removes from user #2.", "D trim · esc back"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("Codex confirmation missing %q:\n%s", want, view)
 		}

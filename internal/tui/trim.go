@@ -130,9 +130,10 @@ func (m model) trimPreviewView() string {
 	preview := c.trim
 	th := m.render.theme
 	codex := c.row.Provider == session.ProviderCodex
-	title := "Permanently trim session"
+	titleWidth := m.width - th.deleteBanner.GetHorizontalFrameSize()
+	title := firstFitting(titleWidth, "Permanently trim session", "Confirm permanent trim")
 	if codex {
-		title = "Trim Codex conversation"
+		title = firstFitting(titleWidth, "Trim Codex conversation", "Trim Codex session")
 	}
 	lines := []string{th.deleteBanner.Render(title)}
 	footer := "esc back"
