@@ -210,6 +210,7 @@ func removeDiscoveryPreview(row Row, impl ProviderImpl) {
 		for _, target := range codexScanTargets(impl.Home()) {
 			roots = append(roots, target.Path)
 		}
+		removeCachedDiscoveryRow(discoveryCacheKey("codex:revisions", filepath.Join(impl.Home(), "sessions")), row.File)
 	case ProviderClaude:
 		roots = []string{impl.Home()}
 	case ProviderOpenCode, ProviderMiMo:
@@ -230,15 +231,18 @@ func removeDiscoveryPreview(row Row, impl ProviderImpl) {
 		return
 	}
 	for _, root := range roots {
-		key := discoveryCacheKey(string(row.Provider), root)
-		var cached map[string]cachedDiscoveryRow
-		if !readDiscoveryCache(key, &cached) {
-			_ = os.Remove(discoveryCachePath(key))
-			continue
-		}
-		if _, exists := cached[row.File]; exists {
-			delete(cached, row.File)
-			writeDiscoveryCache(key, cached)
-		}
+		removeCachedDiscoveryRow(discoveryCacheKey(string(row.Provider), root), row.File)
+	}
+}
+
+func removeCachedDiscoveryRow(key, path string) {
+	var cached map[string]cachedDiscoveryRow
+	if !readDiscoveryCache(key, &cached) {
+		_ = os.Remove(discoveryCachePath(key))
+		return
+	}
+	if _, exists := cached[path]; exists {
+		delete(cached, path)
+		writeDiscoveryCache(key, cached)
 	}
 }

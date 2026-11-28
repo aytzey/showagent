@@ -2,8 +2,10 @@ package session
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -84,7 +86,18 @@ type UserMessage struct {
 	Text   string `json:"text"`
 	// Turns is the message's position in the conversation: how many user and
 	// assistant turns a copy ending on it keeps.
-	Turns int `json:"-"`
+	Turns    int `json:"-"`
+	textHash [sha256.Size]byte
+}
+
+func newUserMessage(number, turns int, text string) UserMessage {
+	return UserMessage{Number: number, Text: RedactTranscriptText(text), Turns: turns, textHash: sha256.Sum256([]byte(text))}
+}
+
+// SameBoundary checks that a trim preview still refers to the message shown
+// in a chooser, including differences hidden by display redaction.
+func (m UserMessage) SameBoundary(other UserMessage) bool {
+	return m.Number == other.Number && m.Turns == other.Turns && m.textHash == other.textHash
 }
 
 // RecentUserMessageLimit is how many user messages a listing returns unless
@@ -112,7 +125,7 @@ func UserMessages(row Row, olderThan, limit int) (messages []UserMessage, total 
 			continue
 		}
 		if olderThan <= 0 || users < olderThan {
-			messages = append(messages, UserMessage{Number: users, Text: RedactTranscriptText(turns[index].Text), Turns: index + 1})
+			messages = append(messages, newUserMessage(users, index+1, turns[index].Text))
 		}
 		users--
 	}
@@ -162,9 +175,12 @@ func codexTranscript(path string) ([]Turn, error) {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
+	return readCodexTranscript(file)
+}
 
+func readCodexTranscript(reader io.Reader) ([]Turn, error) {
 	var turns []Turn
-	err = scanLines(file, func(line []byte) {
+	err := scanLines(reader, func(line []byte) {
 		var record codexLine
 		if err := json.Unmarshal(line, &record); err != nil || record.Type != "response_item" {
 			return
@@ -220,6 +236,12 @@ func keepTranscriptTurn(role, text string) bool {
 // sessions land inside another tool's session store, so a crash mid-write
 // must never leave a partial file that the other tool could try to load.
 func writeFileAtomic(path string, write func(*os.File) error) error {
+	return writeFileAtomicWith(path, write, os.Rename)
+}
+
+// publish moves the synced replacement into place and may first check that
+// the original still matches the snapshot being replaced.
+func writeFileAtomicWith(path string, write func(*os.File) error, publish func(string, string) error) error {
 	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp session file: %w", err)
@@ -241,7 +263,7 @@ func writeFileAtomic(path string, write func(*os.File) error) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", temp.Name(), err)
 	}
-	if err := os.Rename(temp.Name(), path); err != nil {
+	if err := publish(temp.Name(), path); err != nil {
 		return fmt.Errorf("rename %s: %w", path, err)
 	}
 	if runtime.GOOS != "windows" {

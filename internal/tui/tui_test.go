@@ -1692,6 +1692,65 @@ func TestSearchResultsAreNewestFirstAcrossWorkspaces(t *testing.T) {
 	}
 }
 
+func TestSearchAppliesCurrentResultsBeforeSessionActions(t *testing.T) {
+	now := time.Now()
+	rows := []session.Row{
+		{Provider: session.ProviderCodex, ID: "newest", CWD: "/p/alpha", LastAt: now, FirstUser: "fix login"},
+		{Provider: session.ProviderClaude, ID: "matching", CWD: "/p/beta", LastAt: now.Add(-time.Hour), FirstUser: "review checkout"},
+	}
+	for _, tc := range []struct {
+		name  string
+		prior string
+		query string
+		want  string
+	}{
+		{name: "replace unfiltered results", query: "checkout", want: "matching"},
+		{name: "replace empty results", prior: "missing", query: "checkout", want: "matching"},
+		{name: "apply empty results", prior: "login", query: "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizedModel(rows)
+			update := func(msg tea.Msg) {
+				updated, _ := m.Update(msg)
+				m = asModel(t, updated)
+			}
+			update(tea.KeyPressMsg(tea.Key{Code: '/'}))
+			if tc.prior != "" {
+				update(tea.PasteMsg{Content: tc.prior})
+				update(list.FilterMatchesMsg{})
+				update(tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+			}
+			update(tea.PasteMsg{Content: tc.query})
+			// Accept and act before Bubble Tea delivers the asynchronous filter result.
+			update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+			if !m.list.IsFiltered() || m.list.FilterValue() != tc.query {
+				t.Fatalf("search %q was lost on Enter: state=%s query=%q", tc.query, m.list.FilterState(), m.list.FilterValue())
+			}
+			checkSelection := func() {
+				t.Helper()
+				if tc.want == "" {
+					if m.list.SelectedItem() != nil || len(m.list.VisibleItems()) != 0 {
+						t.Fatalf("empty search still shows a session: %#v", m.list.SelectedItem())
+					}
+				} else if selected, ok := m.list.SelectedItem().(item); !ok || selected.row.ID != tc.want {
+					t.Fatalf("selected %#v, want session %q", m.list.SelectedItem(), tc.want)
+				}
+			}
+			checkSelection()
+			update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
+			if tc.want == "" {
+				if m.continuation != nil {
+					t.Fatalf("empty search opened a branch for %q", m.continuation.row.ID)
+				}
+			} else if m.continuation == nil || m.continuation.row.ID != tc.want {
+				t.Fatalf("branch chooser did not open for session %q", tc.want)
+			}
+			update(list.FilterMatchesMsg{})
+			checkSelection()
+		})
+	}
+}
+
 func TestCancelledSearchRestoresGroups(t *testing.T) {
 	rows := []session.Row{
 		{Provider: session.ProviderCodex, ID: "a", CWD: "/p/alpha", LastAt: time.Now(), File: "/t/a.jsonl", FirstUser: "alpha"},

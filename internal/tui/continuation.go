@@ -17,23 +17,24 @@ import (
 // wholeConversation is the choice that ends a copy where the session ends.
 const wholeConversation = -1
 
-// continuationChooser picks where a branch or hand-off stops: at the session's
-// end, on one of its user messages, or on the reply in front of that message.
+// continuationChooser picks a stopping point for a branch, hand-off or trim.
 type continuationChooser struct {
-	row      session.Row
-	target   session.Provider
-	kind     sessionMutation
-	messages []session.UserMessage // Every user message, newest first.
-	folded   []string              // The messages' text in lower case, for the search.
-	total    int                   // Turns a copy of the whole conversation keeps.
-	choices  []int                 // Listed rows: wholeConversation or an index into messages.
-	index    int                   // Cursor position in choices.
-	offset   int                   // First line of the message preview on screen.
-	leaveOut bool                  // Stop in front of the chosen message instead of on it.
-	search   textinput.Model
-	typing   bool // The search field has the keyboard.
-	loading  bool
-	err      error
+	row            session.Row
+	target         session.Provider
+	kind           sessionMutation
+	messages       []session.UserMessage // Every user message, newest first.
+	folded         []string              // The messages' text in lower case, for the search.
+	total          int                   // Turns a copy of the whole conversation keeps.
+	choices        []int                 // Listed rows: wholeConversation or an index into messages.
+	index          int                   // Cursor position in choices.
+	offset         int                   // First line of the message preview on screen.
+	leaveOut       bool                  // Stop in front of the chosen message instead of on it.
+	search         textinput.Model
+	typing         bool // The search field has the keyboard.
+	loading        bool
+	err            error
+	trim           *trimPreview
+	trimBeforeOnly bool
 }
 
 type continuationLoadedMsg struct {
@@ -50,11 +51,20 @@ func (m model) startContinuation(kind sessionMutation, target session.Provider) 
 	}
 	m.deleteArmed = ""
 	m.pendingConvert = nil
+	if kind == mutationTrim {
+		if m.discovering {
+			return m, m.list.NewStatusMessage("let the session scan finish before trimming")
+		}
+		if err := session.ValidateTrim(selected.row); err != nil {
+			return m, m.list.NewStatusMessage("cannot trim: " + session.SafeDisplayText(err.Error()))
+		}
+	}
 	search := textinput.New()
 	search.Prompt = "search: "
 	search.Placeholder = "words from a message, or #12"
 	search.CharLimit = 200
-	c := &continuationChooser{row: selected.row, target: target, kind: kind, search: search, loading: true}
+	c := &continuationChooser{row: selected.row, target: target, kind: kind, search: search, loading: true,
+		trimBeforeOnly: kind == mutationTrim && !session.CanTrimThroughUser(selected.row)}
 	m.continuation = c
 	return m, func() tea.Msg {
 		messages, total, err := session.UserMessages(selected.row, 0, 0)
@@ -82,10 +92,13 @@ func (c *continuationChooser) applySearch() {
 	}
 	words := strings.Fields(strings.ToLower(c.search.Value()))
 	c.choices = c.choices[:0]
-	if len(words) == 0 {
+	if len(words) == 0 && c.kind != mutationTrim {
 		c.choices = append(c.choices, wholeConversation)
 	}
 	for index, message := range c.messages {
+		if c.trimBeforeOnly && message.Number == 1 {
+			continue
+		}
 		matched := true
 		for _, word := range words {
 			if word != "#"+strconv.Itoa(message.Number) && !strings.Contains(c.folded[index], word) {
@@ -128,15 +141,31 @@ func (c *continuationChooser) fitSearch(width int) {
 	c.search.SetCursor(c.search.Position()) // Scrolls a long search to its cursor.
 }
 
-// cut is the user message the copy ends at, or nil for the whole
-// conversation, and whether the copy stops in front of that message. A
-// message with nothing before it can only be included.
+// cut returns the selected user message and whether the preceding reply is
+// the last kept turn.
 func (c *continuationChooser) cut() (message *session.UserMessage, leaveOut bool) {
 	if c.index >= len(c.choices) || c.choices[c.index] == wholeConversation {
 		return nil, false
 	}
 	message = &c.messages[c.choices[c.index]]
-	return message, c.leaveOut && message.Turns > 1
+	return message, c.trimBeforeOnly || (c.leaveOut && c.canToggleBoundary(message))
+}
+
+func (c *continuationChooser) canToggleBoundary(message *session.UserMessage) bool {
+	if message == nil || c.trimBeforeOnly {
+		return false
+	}
+	if c.kind == mutationTrim {
+		return message.Number > 1
+	}
+	return message.Turns > 1
+}
+
+func (c *continuationChooser) messageCount() int {
+	if c.trimBeforeOnly {
+		return max(0, len(c.messages)-1)
+	}
+	return len(c.messages)
 }
 
 // options adds the chosen end to a hand-off scope.
@@ -178,6 +207,9 @@ func (m model) continuationScope() session.HandoffOptions {
 func (m model) updateContinuation(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	c := m.continuation
 	keyStr := msg.String()
+	if c.trim != nil {
+		return m.updateTrimPreview(keyStr)
+	}
 	if c.loading || c.err != nil {
 		if keyStr == "esc" || keyStr == "q" {
 			m.continuation = nil
@@ -247,7 +279,7 @@ func (m model) updateContinuation(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		c.offset = max(0, c.offset-detailRows)
 	case "tab":
-		if message, _ := c.cut(); message != nil && message.Turns > 1 {
+		if message, _ := c.cut(); c.canToggleBoundary(message) {
 			c.leaveOut = !c.leaveOut
 		}
 	case "enter", "ctrl+m":
@@ -255,6 +287,9 @@ func (m model) updateContinuation(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		options := c.options(m.continuationScope())
+		if c.kind == mutationTrim {
+			return m.previewTrim(options)
+		}
 		m.continuation = nil
 		if c.kind == mutationBranch {
 			return m.startMutation(func() tea.Msg {
@@ -305,6 +340,8 @@ func (m model) continuationDetail() []string {
 	text := "Keep the conversation through its latest reply."
 	if message, _ := c.cut(); message != nil {
 		text = message.Text
+	} else if c.trimBeforeOnly && c.messageCount() == 0 {
+		text = "This session needs a later user message to trim."
 	} else if len(c.choices) == 0 {
 		text = "No user message contains these words. Change the search, or press esc to clear it."
 	}
@@ -327,8 +364,17 @@ func firstFitting(width int, forms ...string) string {
 func (m model) continuationSummary() string {
 	c := m.continuation
 	message, leaveOut := c.cut()
+	if c.kind == mutationTrim && message != nil {
+		return m.trimBoundarySummary(message.Number, leaveOut)
+	}
 	switch {
 	case len(c.choices) == 0:
+		if c.trimBeforeOnly && c.messageCount() == 0 {
+			return "There is no later user message to delete."
+		}
+		if c.kind == mutationTrim && len(c.messages) == 0 {
+			return "No user messages found."
+		}
 		return "No user message matches the search."
 	case message == nil:
 		return "The new session keeps the whole conversation."
@@ -368,6 +414,12 @@ func (m model) continuationBoxTitle() string {
 		if leaveOut {
 			state = "left out"
 		}
+		if c.kind == mutationTrim {
+			state = "kept"
+			if leaveOut {
+				state = "deleted"
+			}
+		}
 		forms = []string{
 			fmt.Sprintf("User #%d · %s · keeps %d of %d turns", message.Number, state, kept, c.total),
 			fmt.Sprintf("User #%d · %s · %d/%d turns", message.Number, state, kept, c.total),
@@ -383,21 +435,25 @@ func (m model) continuationListSummary() string {
 	c := m.continuation
 	th := m.render.theme
 	matches := len(c.choices)
+	messages := c.messageCount()
 	if c.typing {
-		return c.search.View() + th.muted.Render(fmt.Sprintf("  %d of %d match", matches, len(c.messages)))
+		return c.search.View() + th.muted.Render(fmt.Sprintf("  %d of %d match", matches, messages))
 	}
 	if value := strings.TrimSpace(c.search.Value()); value != "" {
-		line := fmt.Sprintf("search: %s · %d of %d user messages", session.SafeDisplayText(value), matches, len(c.messages))
+		line := fmt.Sprintf("search: %s · %d of %d user messages", session.SafeDisplayText(value), matches, messages)
 		if matches > 0 {
 			line += fmt.Sprintf(" · choice %d/%d", c.index+1, matches)
 		}
 		return th.muted.Render(line)
 	}
 	noun := "user messages"
-	if len(c.messages) == 1 {
+	if messages == 1 {
 		noun = "user message"
 	}
-	return th.muted.Render(fmt.Sprintf("%d %s · newest first · choice %d/%d", len(c.messages), noun, c.index+1, matches))
+	if matches == 0 {
+		return th.muted.Render(fmt.Sprintf("%d %s", messages, noun))
+	}
+	return th.muted.Render(fmt.Sprintf("%d %s · newest first · choice %d/%d", messages, noun, c.index+1, matches))
 }
 
 // continuationFooter lists the keys that act in the current state, most
@@ -412,15 +468,34 @@ func (m model) continuationFooter() string {
 		hints = []string{"enter keep search", "esc clear", "↑/↓ choose"}
 	default:
 		create := "enter create branch"
-		if c.kind == mutationConvert {
+		if c.kind != mutationBranch {
 			create = "enter preview"
 		}
-		hints = []string{create, "↑/↓ choose"}
-		if message, leaveOut := c.cut(); message != nil && message.Turns > 1 {
-			if leaveOut {
-				hints = append(hints, "tab include message")
-			} else {
-				hints = append(hints, "tab leave message out")
+		if c.kind == mutationTrim {
+			hints = []string{create}
+			if len(c.choices) == 0 {
+				hints = []string{"esc cancel"}
+				if c.search.Value() != "" {
+					hints = []string{"/ search", "esc clear search"}
+				}
+				break
+			}
+			if message, leaveOut := c.cut(); c.canToggleBoundary(message) {
+				if leaveOut {
+					hints = append(hints, "tab keep it")
+				} else {
+					hints = append(hints, "tab delete it too")
+				}
+			}
+			hints = append(hints, "↑/↓ choose")
+		} else {
+			hints = []string{create, "↑/↓ choose"}
+			if message, leaveOut := c.cut(); c.canToggleBoundary(message) {
+				if leaveOut {
+					hints = append(hints, "tab include message")
+				} else {
+					hints = append(hints, "tab leave message out")
+				}
 			}
 		}
 		cancel := "esc cancel"
@@ -441,21 +516,31 @@ func (m model) continuationFooter() string {
 
 func (m model) continuationView() string {
 	c := m.continuation
+	if c.trim != nil {
+		return m.trimPreviewView()
+	}
 	th := m.render.theme
 	title := "Branch · choose where the copy picks up"
-	if c.kind == mutationConvert {
+	reassurance := "The original session and project files stay as they are."
+	switch c.kind {
+	case mutationConvert:
 		title = "Hand off to " + session.DisplayName(c.target) + " · choose where it picks up"
+	case mutationTrim:
+		title = "Trim session · choose a user message"
+		if c.trimBeforeOnly {
+			title = "Trim session · choose the first user message to remove"
+		}
+		reassurance = "Close the session in its agent before trimming."
 	}
 	source := m.providerWord(c.row.Provider) + " " + session.SafeDisplayText(c.row.ID) +
 		th.muted.Render(" · "+collapseHome(session.SafeDisplayText(c.row.CWD)))
-	const unchanged = "The original session and project files stay as they are."
 
 	var lines []string
 	switch {
 	case c.loading:
-		lines = []string{th.title.Render(title), source, unchanged, "", "Reading the session's user messages…"}
+		lines = []string{th.title.Render(title), source, reassurance, "", "Reading the session's user messages…"}
 	case c.err != nil:
-		lines = []string{th.title.Render(title), source, unchanged, "",
+		lines = []string{th.title.Render(title), source, reassurance, "",
 			th.deleteBanner.Render("Cannot read messages: " + session.SafeDisplayText(c.err.Error()))}
 	default:
 		headerRows, listRows, detailRows := m.continuationLayout()
@@ -465,7 +550,7 @@ func (m model) continuationView() string {
 		}
 		lines = append(lines, m.continuationSummary())
 		if headerRows >= 5 {
-			lines = append(lines, unchanged, "")
+			lines = append(lines, reassurance, "")
 		}
 
 		lines = append(lines, m.continuationListSummary())

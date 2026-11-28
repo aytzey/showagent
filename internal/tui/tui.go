@@ -60,6 +60,7 @@ type sessionMutation int
 const (
 	mutationConvert sessionMutation = iota
 	mutationBranch
+	mutationTrim
 )
 
 type sessionMutationMsg struct {
@@ -507,6 +508,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.continuation.loaded(msg)
 		}
 		return m, nil
+	case trimPreviewMsg:
+		return m.applyTrimPreview(msg)
+	case trimAppliedMsg:
+		return m.finishTrim(msg)
 	case importParsedMsg:
 		return m.applyImportParsed(msg)
 	case importPlannedMsg:
@@ -581,6 +586,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// While typing a filter, every key belongs to the list.
 	if m.list.SettingFilter() {
+		if key.Matches(msg, m.list.KeyMap.AcceptWhileFiltering) {
+			// The newest filter result may still be queued when the user accepts it.
+			m.refreshSessionList()
+			if len(m.list.VisibleItems()) == 0 {
+				// Keep zero matches visible until the user edits or clears the search.
+				m.list.SetFilterState(list.FilterApplied)
+				m.list.FilterInput.Blur()
+				return m, nil
+			}
+		}
 		selected, hadSession := m.list.SelectedItem().(item)
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
@@ -684,6 +699,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.startContinuation(mutationBranch, "")
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
+	case key.Matches(msg, m.keys.Trim):
+		return m.startContinuation(mutationTrim, "")
 	case key.Matches(msg, m.keys.Yolo):
 		m.dangerous = !m.dangerous
 		return m, m.list.NewStatusMessage("resume mode: " + resumeModeLabel(m.dangerous))

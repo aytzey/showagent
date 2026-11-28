@@ -20,6 +20,7 @@ Features differ between versions, so compare the feature a channel actually
 advertises rather than requiring unrelated packages to have identical version
 numbers:
 
+- In-place history trimming (`D` in the picker) arrives with v0.17.0.
 - `convert --open`, `transcript --markdown`, the picker's `c` key, and the MCP
   `preview_conversion` tool with the `max_turns` hand-off scope arrive with
   v0.16.0. A channel still serving 0.15.x does not have them.
