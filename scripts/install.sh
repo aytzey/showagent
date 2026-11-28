@@ -12,7 +12,7 @@
 set -eu
 
 REPO="aytzey/showagent"
-MAX_METADATA_BYTES=1048576
+RELEASES_URL="https://github.com/${REPO}/releases"
 MAX_CHECKSUM_BYTES=1048576
 MAX_ARCHIVE_BYTES=67108864
 MAX_BINARY_BYTES=67108864
@@ -43,15 +43,20 @@ esac
 
 tag="${SHOWAGENT_VERSION:-}"
 if [ -z "$tag" ]; then
-    tag=$(download --max-filesize "$MAX_METADATA_BYTES" -sS "https://api.github.com/repos/${REPO}/releases/latest" |
-        sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+    # Read the public release redirect without using the GitHub REST API quota.
+    latest_url=$(download --no-location --head -sS -o /dev/null -w '%{redirect_url}' "${RELEASES_URL}/latest") ||
+        fail "could not determine the latest release tag from GitHub"
+    case "$latest_url" in
+        "${RELEASES_URL}/tag/"*) tag=${latest_url#"${RELEASES_URL}/tag/"} ;;
+        *) fail "GitHub did not return a latest release tag" ;;
+    esac
 fi
 [ -n "$tag" ] || fail "could not determine the latest release tag"
 printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
     fail "invalid release tag: ${tag}"
 
 archive="showagent_${tag}_${os}_${arch}.tar.gz"
-base_url="https://github.com/${REPO}/releases/download/${tag}"
+base_url="${RELEASES_URL}/download/${tag}"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
