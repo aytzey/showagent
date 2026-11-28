@@ -124,3 +124,45 @@ func TestTrimCodexRejectsStaleNativeProjectionBeforeRevert(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexCompressedRevisionDoesNotExposeRetiredRollout(t *testing.T) {
+	for _, nativeReader := range []bool{true, false} {
+		name := "native reader unavailable"
+		if nativeReader {
+			name = "native reader resolves the logical path"
+		}
+		t.Run(name, func(t *testing.T) {
+			row, revision, original := newCodexTrimFixture(t)
+			compressed := revision.File + ".zst"
+			// Discovery treats compressed bytes as opaque. Codex owns decoding.
+			if err := os.WriteFile(compressed, []byte{0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x00, 0x01, 0x00, 0x00}, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(revision.File); err != nil {
+				t.Fatal(err)
+			}
+			options := fakeCodexAppServerOptions{NativeHistoryMode: "paginated", NativeTurns: strings.SplitN(testCodexNativeTurns, ",\n", 2)[0] + "]"}
+			if !nativeReader {
+				options.ErrorMethod = "initialize"
+			}
+			installFakeCodexAppServer(t, revision, filepath.Join(t.TempDir(), "compressed"), options)
+			rows := discoverCodex(defaultCodexHome())
+			if len(rows) != 1 || rows[0].ID != row.ID || !sameImportPath(rows[0].File, compressed) {
+				t.Fatalf("discovery ignored the canonical compressed revision: %+v", rows)
+			}
+			turns, err := Transcript(rows[0])
+			if nativeReader {
+				if err != nil || !slices.Equal(turns, []Turn{{Role: "user", Text: "keep first question"}, {Role: "assistant", Text: "keep first answer"}}) ||
+					rows[0].LastUser != "keep first question" {
+					t.Fatalf("compressed revision did not use native retained history: %+v %+v %v", rows, turns, err)
+				}
+			} else if rows[0].FirstUser != "" || rows[0].LastUser != "" || err == nil || len(turns) != 0 {
+				t.Fatalf("unavailable native reader leaked a retired rollout: %+v %+v %v", rows, turns, err)
+			}
+			unchanged, readErr := os.ReadFile(row.File)
+			if readErr != nil || !bytes.Equal(unchanged, original) {
+				t.Fatalf("redoing discovery changed the retired rollout: %v", readErr)
+			}
+		})
+	}
+}

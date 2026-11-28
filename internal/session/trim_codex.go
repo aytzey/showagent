@@ -276,13 +276,17 @@ func applyCodexTrim(plan TrimPlan, path string) (Row, error) {
 }
 
 func rowFromCodexRevision(base Row, thread codexNativeThread, turns []Turn) (Row, error) {
-	base.File = normalizeImportPath(thread.Path)
+	base.File = codexRevisionFile(thread.Path)
 	adapter, _ := sessionTrimAdapter(base)
+	if strings.HasSuffix(base.File, ".jsonl.zst") {
+		acceptPlain := adapter.acceptPath
+		adapter.acceptPath = func(relative string) bool { return acceptPlain(strings.TrimSuffix(relative, ".zst")) }
+	}
 	path, err := trimPath(base, adapter)
-	if err != nil || !codexIsRevisionPath(path) {
+	if err != nil || codexRevisionThreadID(path) != base.ID {
 		return Row{}, errors.Join(errors.New("the Codex app-server did not return a local native revision rollout"), err)
 	}
-	updated, ok := parseCodex(path)
+	updated, ok := codexRevisionRow(path)
 	if !ok || updated.ID != base.ID {
 		return Row{}, errors.New("the Codex app-server returned a revision without the original session identity")
 	}
@@ -298,9 +302,9 @@ func codexIsRevisionPath(path string) bool {
 }
 
 func codexRevisionThreadID(path string) string {
-	stem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	stem, valid := strings.CutSuffix(strings.TrimSuffix(filepath.Base(path), ".zst"), ".jsonl")
 	base, revision, ok := strings.Cut(stem, "_")
-	if !ok || !strings.HasPrefix(base, "rollout-") || len(revision) != 36 {
+	if !valid || !ok || !strings.HasPrefix(base, "rollout-") || len(revision) != 36 || !sessionIDPattern.MatchString(revision) {
 		return ""
 	}
 	matched := sessionIDPattern.FindStringSubmatch(base + ".jsonl")
@@ -308,6 +312,35 @@ func codexRevisionThreadID(path string) string {
 		return ""
 	}
 	return matched[1]
+}
+
+// The native API can return a logical .jsonl path after the rollout is
+// compressed. Follow Codex's preference for a plain file when both exist.
+func codexRevisionFile(path string) string {
+	path = normalizeImportPath(path)
+	if !codexIsRevisionPath(path) {
+		return path
+	}
+	plain := strings.TrimSuffix(path, ".zst")
+	if _, err := os.Stat(plain); !errors.Is(err, os.ErrNotExist) {
+		return plain
+	}
+	compressed := plain + ".zst"
+	if info, err := os.Stat(compressed); err == nil && info.Mode().IsRegular() {
+		return normalizeImportPath(compressed)
+	}
+	return path
+}
+
+func codexRevisionRow(path string) (Row, bool) {
+	if !strings.HasSuffix(path, ".jsonl.zst") {
+		return parseCodex(path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return Row{}, false
+	}
+	return Row{Provider: ProviderCodex, ID: codexRevisionThreadID(path), File: path, LastAt: info.ModTime(), CWD: "(unknown cwd)"}, true
 }
 
 func codexRevisionTranscript(row Row) ([]Turn, error) {
@@ -322,7 +355,7 @@ func codexRevisionTranscript(row Row) ([]Turn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !sameImportPath(thread.Path, row.File) {
+	if !sameImportPath(codexRevisionFile(thread.Path), row.File) {
 		return nil, ErrTrimChanged
 	}
 	history, err := readCodexNativeHistory(ctx, client, row.ID)
@@ -332,7 +365,7 @@ func codexRevisionTranscript(row Row) ([]Turn, error) {
 // Native revert keeps the old rollout to supply retained offsets to the new
 // revision. A directory scan must expose only the current thread identity.
 func discoverCodexRevisions(parent context.Context, root string) []Row {
-	paths := jsonlPaths(root)
+	paths := sessionPaths(root, func(path string) bool { return filepath.Ext(path) == ".jsonl" || codexIsRevisionPath(path) })
 	revisions := make(map[string]string)
 	for _, path := range paths {
 		if id := codexRevisionThreadID(path); id != "" && path > revisions[id] {
@@ -378,7 +411,7 @@ func discoverCodexRevisions(parent context.Context, root string) []Row {
 				}
 			}
 		}
-		if row, ok := parseCodex(fallback); ok && row.ID == id {
+		if row, ok := codexRevisionRow(codexRevisionFile(fallback)); ok && row.ID == id {
 			row.FirstUser, row.LastUser = "", ""
 			active = append(active, row)
 		}
@@ -390,7 +423,7 @@ func discoverCodexRevisions(parent context.Context, root string) []Row {
 }
 
 func cachedCodexRevision(ctx context.Context, client *codexImportRPCClient, id string, thread codexNativeThread, previous map[string]cachedDiscoveryRow) (cachedDiscoveryRow, bool) {
-	path := normalizeImportPath(thread.Path)
+	path := codexRevisionFile(thread.Path)
 	stamp, exists := stampFile(path)
 	if entry, ok := previous[path]; exists && stamp.Identity != "" && ok && entry.Valid && entry.Stamp == stamp &&
 		entry.Row.File == path && entry.Row.ID == id && entry.Row.Provider == ProviderCodex {

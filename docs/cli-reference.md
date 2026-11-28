@@ -130,8 +130,9 @@ or `esc` to go back. Keep at least one user message. The session keeps its ID an
 workspace. Project changes made during the conversation still exist in the
 working directory.
 
-Codex requires paginated history and a CLI with native thread revert. This was
-verified with Codex 0.171.0 using a local sample session. The file-backed formats
+Codex requires paginated history, a plain `.jsonl` active rollout, and a CLI
+with native thread revert. This was verified with Codex 0.171.0 using a local
+sample session. The file-backed formats
 are Claude Code JSONL, Gemini CLI legacy JSON and JSONL with recognized records,
 and Pi v3 JSONL with a single line of ancestry. Gemini journals with message
 patches and Pi sessions with branches are rejected. Trimming clears Gemini's
