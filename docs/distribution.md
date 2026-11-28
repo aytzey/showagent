@@ -7,14 +7,14 @@ has not been released yet.
 
 ## Channel snapshot
 
-Checked on 2026-11-16; these are observations, not pinned upgrade targets.
+Checked on 2026-11-28.
 
 | Channel | Observed version | What to verify |
 |---|---|---|
-| GitHub latest / shell installer | v0.16.0 | 17 published files; [release workflow](https://github.com/aytzey/showagent/actions/runs/43905190153) passed |
-| `go install ...@latest` | Resolved Go module tag | `showagent --version` and `showagent --help`; this installs a tagged module, not the current `main` checkout |
-| [Homebrew tap](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) | 0.16.0 | [Linux and macOS install/test checks](https://github.com/aytzey/homebrew-tap/actions/runs/43906126696) passed against the published archives |
-| Published MCPB files, MCP Registry and repository `server.json` | 0.16.0 | [Registry publication](https://github.com/aytzey/showagent/actions/runs/43905857277) verified the published files and passed; the live API reports this version as active/latest; the repository `server.json` hashes match that release's `SHA256SUMS` |
+| GitHub latest / shell installer | v0.17.0 | The latest redirect resolves to v0.17.0. Checksums and build attestations verified for all 17 release files. [Release workflow](https://github.com/aytzey/showagent/actions/runs/46132531819) |
+| `go install ...@latest` | v0.17.0 | The Go module proxy resolves this tag, and the installed binary reports `showagent v0.17.0`. |
+| Homebrew tap | 0.17.0 | The formula points to the published archives. Both Ubuntu and macOS installed and tested the binaries. [Formula](https://github.com/aytzey/homebrew-tap/blob/main/Formula/showagent.rb) · [Install checks](https://github.com/aytzey/homebrew-tap/actions/runs/46132915433) |
+| Published MCPB files, MCP Registry and repository `server.json` | 0.17.0 | The registry reports v0.17.0 as active and latest. All five bundle hashes match `SHA256SUMS`, and the repository `server.json` matches the release asset. [Registry publication](https://github.com/aytzey/showagent/actions/runs/46132803101) |
 
 Features differ between versions, so compare the feature a channel actually
 advertises rather than requiring unrelated packages to have identical version
